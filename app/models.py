@@ -1,0 +1,70 @@
+"""Database tables — the whole spine lives here."""
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import DateTime, Float, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from .config import now
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class KV(Base):
+    """Tiny key/value store: SimpleFIN access url, owner LINE id, init flags, etc."""
+    __tablename__ = "kv"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # SimpleFIN account id
+    name: Mapped[str] = mapped_column(String(255), default="")
+    org: Mapped[str] = mapped_column(String(255), default="")
+    balance: Mapped[float] = mapped_column(Float, default=0.0)
+    available_balance: Mapped[float | None] = mapped_column(Float, nullable=True)
+    balance_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # SimpleFIN txn id
+    account_id: Mapped[str] = mapped_column(String(128), index=True)
+    amount: Mapped[float] = mapped_column(Float)  # negative = spend, positive = income
+    merchant_desc: Mapped[str] = mapped_column(Text, default="")
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # needs_context → prompted → enriched   |   auto (silent)   |   income   |   ignored
+    status: Mapped[str] = mapped_column(String(32), default="needs_context", index=True)
+    # where the charge came from: simplefin | shortcut (Apple Pay tap) | manual (told via LINE)
+    source: Mapped[str] = mapped_column(String(16), default="simplefin", index=True)
+
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_seq: Mapped[int | None] = mapped_column(nullable=True)  # 1..n order shown to the user
+    prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class SavingsPlan(Base):
+    __tablename__ = "savings_plan"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    target: Mapped[float] = mapped_column(Float, default=0.0)
+    cadence: Mapped[str] = mapped_column(String(32), default="biweekly")  # biweekly | monthly | percent
+    allocated: Mapped[float] = mapped_column(Float, default=0.0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BudgetPeriod(Base):
+    __tablename__ = "budget_periods"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    income_basis: Mapped[float] = mapped_column(Float, default=0.0)
+    allowance: Mapped[float] = mapped_column(Float, default=0.0)
+    spent: Mapped[float] = mapped_column(Float, default=0.0)

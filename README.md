@@ -19,6 +19,7 @@ A standalone LINE bot that watches your bank through SimpleFIN, texts you to ask
 - **Overspend nudges** — she checks every 6h and pings you once at 80% and once at 100% of the biweekly allowance (no spam).
 - **Onboarding interview** — on first contact she asks your fixed monthly costs + savings goal and stores them. Income she figures out herself from your deposits.
 - **Apple Card month-end reconciliation** — when the SimpleFIN statement lands (5th of month), live-captured taps/manual logs are matched to it, the bank record is kept as truth (inheriting your note + category), and the duplicate is dropped from all totals.
+- **Deploy pings** — on each new Railway deploy she LINEs you the commit message (from `RAILWAY_GIT_COMMIT_MESSAGE`) so you know the push went live. Once per commit, idempotent across restarts; silent on the very first deploy (the greeting already confirms she's alive).
 
 ## Coming next (Phase 2)
 
