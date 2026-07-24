@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
     ANTHROPIC_API_KEY: str
-    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-latest"
+    ANTHROPIC_MODEL: str = "claude-sonnet-5"
 
     LINE_CHANNEL_ACCESS_TOKEN: str
     LINE_CHANNEL_SECRET: str
