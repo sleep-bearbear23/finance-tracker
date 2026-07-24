@@ -133,7 +133,7 @@ async def answer_question(question: str, data_context: str) -> str:
         f"這是你手上的相關資料（金額都是真的，請根據它回答，不要編造）：\n{data_context}\n\n"
         "用你的口氣回答他，數字要準。"
     )
-    return await _say(instr, max_tokens=500)
+    return await _say(instr, max_tokens=900)
 
 
 async def greet() -> str:
@@ -150,7 +150,7 @@ async def report(kind: str, data_text: str) -> str:
         f"用你的口氣幫默默做一份{label}的理財報告：先講重點，點出花太兇的地方，該唸就唸，"
         "最後一句總結或給個建議。可以分行，但不要落落長。"
     )
-    return await _say(instr, max_tokens=600)
+    return await _say(instr, max_tokens=900)
 
 
 async def overspend_nudge(status: dict, level: str) -> str:
