@@ -18,6 +18,14 @@ from .models import Account
 
 _CARD_WORDS = ("freedom", "credit", "card", "visa", "mastercard", "amex", "discover")
 
+# Same account wearing two names: the manual-ledger name (left keywords) is the SAME account as
+# a bank-synced one (right keywords) — e.g. Momo's J.P. Morgan investment IS Chase "Self-Directed
+# (7435)". If any left-keyword hits the manual name and any right-keyword hits a synced name,
+# the manual copy is dropped (synced wins).
+_ALIASES = [
+    (("jpmorgan", "jpmorganinvestment", "investment"), ("selfdirected",)),
+]
+
 
 def norm(name: str) -> str:
     return re.sub(r"[^a-z0-9一-鿿]+", "", (name or "").lower())
@@ -31,12 +39,16 @@ def _amt(a) -> float:
 
 
 def _dupes(manual_name: str, synced_norms: list[str]) -> bool:
-    """True if this manual account looks like one the bank already syncs (same/contained name)."""
+    """True if this manual account looks like one the bank already syncs (same/contained name,
+    or a known alias like J.P. Morgan ↔ Self-Directed)."""
     m = norm(manual_name)
     if len(m) < 4:
         return False
     for s in synced_norms:
         if len(s) >= 4 and (m == s or m in s or s in m):
+            return True
+    for left, right in _ALIASES:
+        if any(k in m for k in left) and any(any(k in s for k in right) for s in synced_norms):
             return True
     return False
 
