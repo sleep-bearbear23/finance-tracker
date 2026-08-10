@@ -153,6 +153,18 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
     return await _say(instr, max_tokens=500)
 
 
+async def deploy_note(commit_message: str) -> str:
+    instr = (
+        "你（默默的理財阿姨）剛更新上線。工程師寫的更新內容是英文技術描述："
+        f"「{commit_message}」。用你的口氣、台灣繁體中文，一句話跟默默說你更新好、又上工了，"
+        "順便用他聽得懂的白話超短講一下這次大概弄了什麼，不要照抄英文、不要念技術名詞。就一句。"
+    )
+    try:
+        return await _say(instr, max_tokens=120)
+    except Exception:
+        return f"默默，阿姨更新好、又上工了。"
+
+
 async def parse_balance_update(text: str, account_names: list[str]) -> dict:
     """If the message states a NEW CURRENT BALANCE for one of Momo's known accounts, extract it.
     A purchase/expense is NOT a balance update. Returns amount=None when it isn't one."""

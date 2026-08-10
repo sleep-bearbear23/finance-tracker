@@ -105,7 +105,8 @@ async def announce_deploy():
             return  # no owner yet, or already announced this commit
         note = os.environ.get("RAILWAY_GIT_COMMIT_MESSAGE") or "有更新"
         try:
-            await line_client.push(owner, f"🚀 默默，阿姨更新好、又上工了：{note}")
+            msg = await llm.deploy_note(note)
+            await line_client.push(owner, f"🚀 {msg}")
             await set_kv(s, "notified_sha", sha)
         except Exception as e:
             print(f"[deploy] error: {e!r}")
@@ -155,12 +156,15 @@ async def ingest_tap(request: Request):
 
 
 _Q_MARKERS = ("?", "？", "嗎", "多少", "為什麼", "為何", "怎麼", "能不能", "可不可以",
-              "可以嗎", "還剩", "還能", "剩多少", "how much", "why", "can i")
+              "可以嗎", "還剩", "還能", "剩多少", "how much", "why", "can i",
+              # asset / budget / report asks — never a charge answer, even mid-enrichment
+              "淨資產", "總資產", "淨值", "資產", "身家", "net worth", "值多少",
+              "預算", "可以花", "能花", "剩多少錢", "還有多少", "報告", "結餘", "算一次", "算一下")
 
 
 def _looks_like_question(text: str) -> bool:
     t = (text or "").lower()
-    return any(m in t for m in _Q_MARKERS)
+    return any(m in t.replace(" ", "") or m in t for m in _Q_MARKERS)
 
 
 async def _route_text(session, text: str) -> str:
@@ -185,12 +189,23 @@ async def _route_text(session, text: str) -> str:
         select(Transaction.id).where(Transaction.status == "prompted").limit(1)
     )).first())
 
-    # A reply while charges are pending is almost always answering them — log it tersely,
-    # not send it into chatty budget-talk. Only bail to Q&A if it's clearly a question.
-    if has_pending and not _looks_like_question(text):
-        handled, confirm = await enrichment.handle_reply(session, text)
-        if handled and confirm:
-            return confirm
+    if has_pending:
+        # A clear question (net worth, budget, "how much", a report…) is never a charge answer,
+        # even while charges are waiting — send it straight to Q&A.
+        if _looks_like_question(text):
+            return await queries.answer(session, text)
+        # Otherwise let the model judge: is he explaining the charges, logging a new one, or asking?
+        intent = await llm.classify_intent(text, has_pending=True)
+        if intent == "answer":
+            handled, confirm = await enrichment.handle_reply(session, text)
+            if handled and confirm:
+                return confirm
+        elif intent == "log":
+            parsed = await llm.parse_manual_log(text)
+            if parsed.get("amount"):
+                t = await record.record_charge(session, parsed["amount"], parsed["merchant"], "manual")
+                return await llm.manual_confirm(t)
+        return await queries.answer(session, text)
 
     intent = await llm.classify_intent(text, has_pending=False)
     if intent == "log":
