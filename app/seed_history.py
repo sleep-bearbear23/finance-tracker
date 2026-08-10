@@ -6,12 +6,22 @@ from Sep 2025; income rows give the 收入 tab an actual record for 2026.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import select
 
+from . import categories, prefs
 from .config import TZ
-from .models import Snapshot, Transaction
+from .db import get_kv, set_kv
+from .models import MerchantMemory, Snapshot, Transaction
+
+# Momo's known work payers, lifted from the 2026 income record — money from these is real pay.
+# Everything else that comes in (friends' Zelle bill-splits, transfers) is NOT assumed to be income.
+INCOME_SOURCES = [
+    "Jump Deer Media", "Yue Zhou", "Checkout Productions", "Ever After Production",
+    "Bad Larry", "Anastasia Wibisono", "Horizon Vista", "Exact Film",
+]
 
 # (day, net_worth, assets, debts) — computed from the Notion 帳務 2025 per-account snapshots.
 SNAP_HISTORY = [
@@ -80,6 +90,43 @@ async def backfill(session) -> int:
         ))
         added += 1
 
+    # Seed the known work payers (merge, so Momo's later additions survive).
+    srcs = prefs._load_list(await get_kv(session, "cfg_income_sources"))
+    have = {prefs._norm(x) for x in srcs}
+    for name in INCOME_SOURCES:
+        if prefs._norm(name) not in have:
+            srcs.append(name)
+    await set_kv(session, "cfg_income_sources", json.dumps(srcs))
+
     if added:
         await session.commit()
     return added
+
+
+async def reclassify_income(session) -> int:
+    """One-time: money that was auto-marked income but isn't from a known work payer (and wasn't
+    confirmed by Momo) gets pulled back out of income. Runs once, guarded by a KV flag."""
+    if await get_kv(session, "income_cleanup_v1") == "1":
+        return 0
+    rows = (await session.execute(
+        select(Transaction).where(
+            Transaction.amount > 0,
+            Transaction.status == "income",
+            Transaction.source.in_(("simplefin", "screenshot")),
+        )
+    )).scalars().all()
+    moved = 0
+    for t in rows:
+        if await prefs.is_work_income_source(session, t.merchant_desc):
+            continue  # from a known work payer — keep as income
+        mem = await session.get(MerchantMemory, categories.merchant_key(t.merchant_desc))
+        if mem is not None and mem.is_income is True:
+            continue  # Momo already confirmed this sender is income — keep
+        t.status = "ignored"
+        t.category = "Transfers/Ignore"
+        t.note = (t.note or "") + "（自動：非工作收入，已從收入移除）"
+        moved += 1
+    await set_kv(session, "income_cleanup_v1", "1")
+    if moved:
+        await session.commit()
+    return moved

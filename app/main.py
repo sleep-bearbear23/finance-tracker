@@ -139,6 +139,9 @@ async def lifespan(app: FastAPI):
             n = await seed_history.backfill(s)
             if n:
                 print(f"[seed] imported {n} historical row(s) from Notion")
+            m = await seed_history.reclassify_income(s)  # pull non-work money back out of income
+            if m:
+                print(f"[seed] reclassified {m} non-work deposit(s) out of income")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

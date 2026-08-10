@@ -109,6 +109,37 @@ async def _refresh_totals(session, accts) -> None:
     await set_kv(session, "cfg_total_debt", str(debt))
 
 
+async def get_income_sources(session) -> list:
+    """Normalized name tokens of Momo's known work payers (productions, producers)."""
+    return _load_list(await get_kv(session, "cfg_income_sources"))
+
+
+async def add_income_source(session, name) -> str | None:
+    name = (name or "").strip()
+    if not name:
+        return None
+    items = _load_list(await get_kv(session, "cfg_income_sources"))
+    key = _norm(name)
+    if key and not any(_norm(x) == key for x in items):
+        items.append(name)
+        await set_kv(session, "cfg_income_sources", json.dumps(items))
+    return name
+
+
+async def is_work_income_source(session, desc: str) -> bool:
+    """True if a bank/description looks like it came from a known work payer.
+    Uses normalized substring match, so 'ZELLE PAYMENT FROM JUMP DEER MEDIA INC 123'
+    still matches the stored 'Jump Deer Media'."""
+    d = _norm(desc)
+    if not d:
+        return False
+    for src in await get_income_sources(session):
+        s = _norm(src)
+        if len(s) >= 4 and s in d:
+            return True
+    return False
+
+
 async def pending_invoices(session) -> list:
     """Expected freelance payments Momo is still waiting on (not yet marked received)."""
     prof = await get_income_profile(session)
