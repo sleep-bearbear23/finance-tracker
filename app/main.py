@@ -12,6 +12,7 @@ from . import (
     enrichment,
     line_client,
     llm,
+    memory,
     onboarding,
     queries,
     reconcile,
@@ -189,17 +190,20 @@ async def webhook(request: Request):
                 await onboarding.start(s, user_id)
                 continue
 
-            # Auto-tap from the iOS Shortcut: a specially-marked LINE message.
+            # Auto-tap from the iOS Shortcut: a specially-marked LINE message (not conversation).
             tap = record.parse_tap_message(text)
             if tap and record.coerce_amount(tap["amount"]) is not None:
                 await record.record_charge(s, tap["amount"], tap["merchant"], "shortcut", tap["card"])
                 continue  # no reply — she folds it into the grouped "what did you buy?" prompt
+
+            await memory.remember(s, "user", text)  # log real conversation for context
 
             # Onboarding interview (collect fixed costs + savings goal) takes priority.
             if await onboarding.is_pending(s):
                 msg, _done = await onboarding.handle(s, text)
                 if reply_token:
                     await line_client.reply(reply_token, msg)
+                await memory.remember(s, "assistant", msg)
                 continue
 
             try:
@@ -209,5 +213,6 @@ async def webhook(request: Request):
                 answer = "阿姨這邊有點凸槌，等一下再問我一次好無？"
             if reply_token:
                 await line_client.reply(reply_token, answer)
+            await memory.remember(s, "assistant", answer)
 
     return {"ok": True}

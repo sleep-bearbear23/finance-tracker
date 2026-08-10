@@ -1,6 +1,8 @@
 """Category taxonomy + a cheap keyword guess used at ingest time."""
 from __future__ import annotations
 
+import re
+
 CATEGORIES = [
     "Food & Groceries",
     "Eating Out",
@@ -79,3 +81,34 @@ def guess(merchant: str) -> str | None:
         if kw in m:
             return cat
     return None
+
+
+# Descriptions that mean "money just moved between accounts" — a credit-card payment,
+# an internal transfer, autopay. These are NOT spending and NOT income; they're noise.
+_TRANSFER_KEYWORDS = [
+    "payment thank you", "payment - thank you", "autopay", "auto pay", "auto-pay",
+    "online payment", "mobile payment", "web payment", "web pymt", "bill pay",
+    "card payment", "credit card payment", "crd payment", "pymt", "epay", "e-payment",
+    "ach payment", "ach pmt", "chase credit crd", "internal transfer", "online transfer",
+    "acct transfer", "acct xfer", "account transfer", "transfer to", "transfer from",
+    "to savings", "from savings", "to checking", "from checking",
+]
+
+
+FIXED_HINT = {"Rent & Utilities", "Subscriptions"}  # categories that are recurring/necessary
+
+
+def is_transfer(merchant: str) -> bool:
+    m = (merchant or "").lower()
+    return any(kw in m for kw in _TRANSFER_KEYWORDS)
+
+
+def merchant_key(merchant: str) -> str:
+    """Normalize a raw bank description into a stable key for merchant memory.
+    Drops store numbers/punctuation so 'WHOLEFOODS #382' and 'WHOLEFOODS #911' match,
+    but keeps sender names distinct so 'ZELLE FROM JOHN' ≠ 'ZELLE FROM MARY'."""
+    s = (merchant or "").lower()
+    s = re.sub(r"\d+", "", s)                          # drop store/ref numbers
+    s = re.sub(r"[^a-z一-鿿 ]+", " ", s)       # keep letters (incl. Chinese) + spaces
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:120] or "unknown"

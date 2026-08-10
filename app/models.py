@@ -51,6 +51,27 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Message(Base):
+    """Rolling conversation log so she remembers what was just said (e.g. a report she sent)."""
+    __tablename__ = "messages"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    role: Mapped[str] = mapped_column(String(16))  # 'user' | 'assistant'
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class MerchantMemory(Base):
+    """What Momo has told her about a merchant/sender, so she never re-asks.
+    is_income: None = a spending merchant, True = real income source, False = payback/transfer."""
+    __tablename__ = "merchant_memory"
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)  # normalized merchant/sender
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_income: Mapped[bool | None] = mapped_column(nullable=True)
+    necessary: Mapped[bool] = mapped_column(default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class SavingsPlan(Base):
     __tablename__ = "savings_plan"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

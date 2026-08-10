@@ -60,8 +60,11 @@ async def _anchor(session) -> date:
 
 
 async def income_basis_biweekly(session, days: int = INCOME_WINDOW_DAYS) -> float:
+    # Only confirmed income counts — not paybacks, transfers, or card payments.
     since = now() - timedelta(days=days)
-    rows = (await session.execute(select(Transaction).where(Transaction.amount > 0))).scalars().all()
+    rows = (await session.execute(
+        select(Transaction).where(Transaction.amount > 0, Transaction.status == "income")
+    )).scalars().all()
     total = 0.0
     for t in rows:
         d = aware(t.posted_at or t.created_at)

@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from . import budget, line_client, llm
+from . import budget, line_client, llm, memory
 from .config import aware, now
 from .db import get_kv
 from .models import Transaction
@@ -63,4 +63,5 @@ async def run_report(session, kind: str) -> str:
     owner = await get_kv(session, "owner_user_id")
     if owner:
         await line_client.push(owner, text)
+        await memory.remember(session, "assistant", text)  # so replies to the report land in context
     return text

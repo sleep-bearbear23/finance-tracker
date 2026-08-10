@@ -6,10 +6,10 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
-from . import line_client, llm
+from . import categories, line_client, llm, memory
 from .config import aware, now, settings
 from .db import get_kv
-from .models import Transaction
+from .models import MerchantMemory, Transaction
 
 OWNER_KEY = "owner_user_id"
 
@@ -44,6 +44,7 @@ async def flush_pending(session) -> None:
 
     text = await llm.enrichment_prompt(rows)
     await line_client.push(owner, text)
+    await memory.remember(session, "assistant", text)
 
 
 async def handle_reply(session, reply_text: str) -> tuple[bool, str | None]:
@@ -68,8 +69,37 @@ async def handle_reply(session, reply_text: str) -> tuple[bool, str | None]:
                 r.note = m["note"]
             if m.get("category"):
                 r.category = m["category"]
-        r.status = "enriched"
-    await session.commit()
+            is_income = m.get("is_income")
+        else:
+            is_income = None
 
+        # Set the transaction's fate, and remember this merchant/sender so she never re-asks.
+        if r.amount > 0:  # money in — was it real income or just a payback/transfer?
+            if is_income is True:
+                r.status, r.category = "income", "Income"
+            elif is_income is False:
+                r.status, r.category = "ignored", "Transfers/Ignore"
+            else:
+                r.status = "enriched"
+        else:
+            r.status = "enriched"
+
+        await _remember(session, r, is_income)
+
+    await session.commit()
     confirm = await llm.enrichment_confirm(batch)
     return True, confirm
+
+
+async def _remember(session, txn, is_income) -> None:
+    """Save what we just learned about this merchant/sender for next time."""
+    key = categories.merchant_key(txn.merchant_desc)
+    mem = await session.get(MerchantMemory, key)
+    if mem is None:
+        mem = MerchantMemory(key=key)
+        session.add(mem)
+    mem.category = txn.category
+    mem.note = txn.note
+    mem.is_income = is_income
+    mem.necessary = (txn.category in categories.FIXED_HINT)
+    mem.updated_at = now()

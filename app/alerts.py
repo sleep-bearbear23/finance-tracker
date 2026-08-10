@@ -1,7 +1,7 @@
 """Proactive overspend nudges — she pings you when the biweekly allowance runs hot."""
 from __future__ import annotations
 
-from . import budget, line_client, llm
+from . import budget, line_client, llm, memory
 from .db import get_kv, set_kv
 
 
@@ -26,4 +26,5 @@ async def check(session) -> None:
 
     msg = await llm.overspend_nudge(b, level)
     await line_client.push(owner, msg)
+    await memory.remember(session, "assistant", msg)
     await set_kv(session, key, (already + "," + level).strip(","))

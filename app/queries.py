@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from . import budget, llm
+from . import budget, llm, memory
 from .config import aware, now
 from .models import Account, Transaction
 
@@ -71,4 +71,5 @@ async def build_context(session) -> str:
 
 async def answer(session, question: str) -> str:
     ctx = await build_context(session)
-    return await llm.answer_question(question, ctx)
+    convo = await memory.recent(session, 8)
+    return await llm.answer_question(question, ctx, convo)

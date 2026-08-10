@@ -26,20 +26,25 @@ def _fmt(txns) -> str:
     lines = []
     for i, t in enumerate(txns, 1):
         amt = abs(t.amount)
-        lines.append(f"{i}. ${amt:.2f} — {t.merchant_desc or '(no merchant)'}")
+        arrow = "收到" if t.amount > 0 else "花了"
+        lines.append(f"{i}. {arrow} ${amt:.2f} — {t.merchant_desc or '(不明)'}")
     return "\n".join(lines)
 
 
 async def enrichment_prompt(txns) -> str:
     body = _fmt(txns)
     n = len(txns)
-    if n == 1:
-        instr = f"剛剛出現一筆新的刷卡：\n{body}\n用你的口氣問默默這筆買了什麼。一句就好。"
-    else:
-        instr = (
-            f"剛剛一次出現 {n} 筆新的刷卡：\n{body}\n"
-            "用你的口氣一則訊息問默默每一筆各買了什麼。把編號列出來讓他好一筆一筆回。"
-        )
+    has_income = any(t.amount > 0 for t in txns)
+    has_spend = any(t.amount < 0 for t in txns)
+    ask = []
+    if has_spend:
+        ask.append("花錢的那幾筆各是買了什麼")
+    if has_income:
+        ask.append("收到錢的那幾筆是他自己的收入、還是別人還他錢或轉帳")
+    instr = (
+        f"剛剛出現 {n} 筆新的帳，要默默交代一下：\n{body}\n\n"
+        f"用你的口氣一則訊息問他：{'；'.join(ask)}。把編號列出來讓他好一筆一筆回。簡短就好。"
+    )
     return await _say(instr)
 
 
@@ -58,13 +63,17 @@ async def parse_reply(txns, reply: str) -> dict[int, dict]:
     cats = ", ".join(CATEGORIES)
     system = (
         "You extract structured data. Return ONLY valid JSON, no prose, no code fences.\n"
-        "Given numbered charges and the user's reply, output an object keyed by the charge number "
-        '(as a string), each value {"note": "<what was bought, short>", "category": "<one of the allowed categories>"}.\n'
-        "If the reply says to ignore/skip a charge, use category \"Transfers/Ignore\".\n"
-        "If a charge is not addressed in the reply, omit it.\n"
+        "Each numbered item is marked 花了 (money out) or 收到 (money in). Given the user's reply, "
+        'output an object keyed by the number (as a string), each value '
+        '{"note": "<short>", "category": "<one allowed category>", "is_income": <true|false|null>}.\n'
+        "For 花了 items: fill note + category; is_income = null.\n"
+        "For 收到 items: if the user says it is their OWN income/earnings/pay/client payment, "
+        'is_income = true and category "Income"; if it is someone paying them back, a refund, or a transfer, '
+        'is_income = false and category "Transfers/Ignore".\n'
+        "If an item is not addressed in the reply, omit it.\n"
         f"Allowed categories: {cats}"
     )
-    user = f"Charges:\n{body}\n\nUser reply:\n{reply}\n\nJSON:"
+    user = f"Items:\n{body}\n\nUser reply:\n{reply}\n\nJSON:"
     raw = await _say(user, system=system, max_tokens=600)
     raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
@@ -74,7 +83,11 @@ async def parse_reply(txns, reply: str) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for k, v in data.items():
         try:
-            out[int(k)] = {"note": v.get("note"), "category": v.get("category")}
+            out[int(k)] = {
+                "note": v.get("note"),
+                "category": v.get("category"),
+                "is_income": v.get("is_income"),
+            }
         except Exception:
             continue
     return out
@@ -127,11 +140,13 @@ async def manual_confirm(t) -> str:
     return await _say(instr, max_tokens=200)
 
 
-async def answer_question(question: str, data_context: str) -> str:
+async def answer_question(question: str, data_context: str, convo: str = "") -> str:
+    convo_block = f"你們最近的對話（最舊到最新，你就是阿姨）：\n{convo}\n\n" if convo else ""
     instr = (
-        f"默默問你：「{question}」\n\n"
-        f"這是你手上的相關資料（金額都是真的，請根據它回答，不要編造）：\n{data_context}\n\n"
-        "用你的口氣回答他，數字要準。"
+        f"{convo_block}"
+        f"默默現在說：「{question}」\n\n"
+        f"這是你手上的財務資料（金額都是真的，請根據它回答，不要編造）：\n{data_context}\n\n"
+        "用你的口氣回答他，數字要準。如果他是在回你剛剛講的話或你發的報告，要接得上、知道他在講哪件事。"
     )
     return await _say(instr, max_tokens=900)
 
