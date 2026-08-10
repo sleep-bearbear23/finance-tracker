@@ -153,18 +153,61 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
     return await _say(instr, max_tokens=500)
 
 
+async def parse_balance_update(text: str, account_names: list[str]) -> dict:
+    """If the message states a NEW CURRENT BALANCE for one of Momo's known accounts, extract it.
+    A purchase/expense is NOT a balance update. Returns amount=None when it isn't one."""
+    names = "、".join(account_names)
+    system = (
+        "You decide if the user is telling their bookkeeper the CURRENT BALANCE of one of their "
+        f"existing accounts. Their accounts: {names}.\n"
+        "Return ONLY JSON, no prose, no code fences: "
+        '{"name": "<one of the accounts, or null>", "amount": <number or null>, '
+        '"type": "cash" | "credit" | null}.\n'
+        "Set name+amount ONLY when they state what an account now holds or now owes "
+        "(e.g. 'apple card 現在欠 600', 'chase 支票剩 4200', 'my apple cash is 1500 now'). "
+        "type='credit' if it's what they OWE on a card, 'cash' if it's money they HAVE, else null.\n"
+        "If it's a purchase, an expense, a question, or doesn't clearly name one of the accounts, "
+        'return {"name": null, "amount": null, "type": null}.'
+    )
+    raw = (await _say(text, system=system, max_tokens=80)).strip()
+    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        d = json.loads(raw)
+        amt = d.get("amount")
+        return {
+            "name": d.get("name"),
+            "amount": float(amt) if amt is not None else None,
+            "type": d.get("type"),
+        }
+    except Exception:
+        return {"name": None, "amount": None, "type": None}
+
+
+async def balance_ack(name: str, amount: float, typ, added: bool) -> str:
+    what = "欠款" if typ == "credit" else "餘額"
+    verb = "新記了一個帳戶" if added else "更新了"
+    instr = (
+        f"默默剛跟你說他的「{name}」{what}現在是 ${amount:.0f}，你{verb}。"
+        "用你的口氣簡短回一句確認記好了，這種阿姨看不到的帳（像 Apple）本來就要靠他報你才知道，"
+        "可以順口叮嚀他記得有變動就跟你講。一兩句就好。"
+    )
+    return await _say(instr, max_tokens=160)
+
+
 async def profile_ack(s: dict) -> str:
     cad = "每月" if s.get("savings_cadence") == "monthly" else "每兩週"
     gig_line = f"，接下來有 {s['n_gigs']} 筆預期進帳約 ${s['gig_sum']:.0f}" if s.get("n_gigs") else ""
+    acct_line = f"；{s['n_accts']} 個帳戶合計可動用現金約 ${s['cash_on_hand']:.0f}" if s.get("n_accts") else ""
+    debt_line = f"（卡債／欠款約 ${s['total_debt']:.0f}）" if s.get("total_debt") else ""
     instr = (
         "默默剛把他的財務底細一次填給你了，數字如下（都是真的，你要收下當作以後抓預算的依據）：\n"
         f"今年到目前實收約 ${s['ytd_income']:.0f}；淡月底收入約 ${s['monthly_baseline']:.0f}／月；"
-        f"每月固定開銷約 ${s['fixed_total']:.0f}；存錢目標 ${s['savings_amount']:.0f}（{cad}）；"
-        f"手上現金約 ${s['cash_on_hand']:.0f}{gig_line}。\n"
+        f"每月固定開銷約 ${s['fixed_total']:.0f}；存錢目標 ${s['savings_amount']:.0f}（{cad}）"
+        f"{acct_line}{debt_line}{gig_line}。\n"
         "用你的口氣回他一則就好：跟他確認你收到了、以後會照這些數字幫他盯，順口唸一句關心一下。"
         "不要把每個數字整包再唸一遍，簡短。"
     )
-    return await _say(instr, max_tokens=220)
+    return await _say(instr, max_tokens=240)
 
 
 async def greet() -> str:

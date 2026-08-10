@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from .db import get_kv, set_kv
 
@@ -11,6 +12,10 @@ def _f(v, default=0.0) -> float:
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[^a-z0-9一-鿿]+", "", (name or "").lower())
 
 
 async def get_prefs(session) -> dict:
@@ -30,18 +35,20 @@ async def set_prefs(session, fixed_monthly=None, savings_amount=None, savings_ca
         await set_kv(session, "cfg_savings_cadence", savings_cadence)
 
 
+def _load_list(raw):
+    try:
+        v = json.loads(raw) if raw else []
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
 async def get_income_profile(session) -> dict:
     """The forward-looking income picture Momo set in the starter pack."""
-    raw = await get_kv(session, "cfg_upcoming")
-    try:
-        upcoming = json.loads(raw) if raw else []
-        if not isinstance(upcoming, list):
-            upcoming = []
-    except Exception:
-        upcoming = []
     return {
         "monthly_baseline": _f(await get_kv(session, "cfg_monthly_baseline"), 0.0),
-        "upcoming": upcoming,
+        "upcoming": _load_list(await get_kv(session, "cfg_upcoming")),
+        "accounts": _load_list(await get_kv(session, "cfg_accounts")),
         "ytd_income": _f(await get_kv(session, "cfg_ytd_income"), 0.0),
         "cash_on_hand": _f(await get_kv(session, "cfg_cash_on_hand"), 0.0),
         "emergency_target": _f(await get_kv(session, "cfg_emergency_target"), 0.0),
@@ -74,3 +81,48 @@ async def set_income_profile(session, data: dict) -> None:
             if amt > 0:
                 clean.append({"amount": amt, "when": u.get("when"), "note": u.get("note")})
         await set_kv(session, "cfg_upcoming", json.dumps(clean))
+
+    accts = data.get("accounts")
+    if accts is not None:
+        clean = []
+        for a in (accts if isinstance(accts, list) else []):
+            try:
+                amt = float(a.get("amount"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if amt > 0:
+                typ = "credit" if a.get("type") == "credit" else "cash"
+                clean.append({"name": a.get("name"), "type": typ, "amount": amt})
+        await set_kv(session, "cfg_accounts", json.dumps(clean))
+        await _refresh_totals(session, clean)
+
+
+async def _refresh_totals(session, accts) -> None:
+    cash = sum(float(a["amount"]) for a in accts if a.get("type") != "credit")
+    debt = sum(float(a["amount"]) for a in accts if a.get("type") == "credit")
+    await set_kv(session, "cfg_cash_on_hand", str(cash))
+    await set_kv(session, "cfg_total_debt", str(debt))
+
+
+async def update_account(session, name, amount, typ=None) -> dict:
+    """Set the current balance of one named account (e.g. Apple Card), matching by name.
+    Adds it if she hasn't heard of it. Keeps the cash/debt totals in sync."""
+    accts = _load_list(await get_kv(session, "cfg_accounts"))
+    key = _norm(name)
+    hit = None
+    for a in accts:
+        if _norm(a.get("name")) == key:
+            hit = a
+            break
+    if hit is None:
+        hit = {"name": name, "type": typ or "cash", "amount": 0.0}
+        accts.append(hit)
+        added = True
+    else:
+        added = False
+    hit["amount"] = float(amount)
+    if typ in ("cash", "credit"):
+        hit["type"] = typ
+    await set_kv(session, "cfg_accounts", json.dumps(accts))
+    await _refresh_totals(session, accts)
+    return {"name": hit["name"], "amount": float(amount), "type": hit["type"], "added": added}

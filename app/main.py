@@ -166,7 +166,21 @@ def _looks_like_question(text: str) -> bool:
 async def _route_text(session, text: str) -> str:
     """Route an incoming LINE message to: answer pending charges / log a new expense / Q&A."""
     from sqlalchemy import select
+    from . import prefs
     from .models import Transaction
+
+    # Balance update for a manually-tracked account (e.g. Apple, which she can't sync).
+    # Gated: needs a number AND a message that names one of his known accounts, so it never
+    # grabs an expense log or a question.
+    if any(ch.isdigit() for ch in text):
+        prof = await prefs.get_income_profile(session)
+        names = [a.get("name") for a in prof.get("accounts", []) if a.get("name")]
+        if names:
+            upd = await llm.parse_balance_update(text, names)
+            if upd.get("amount") is not None and upd.get("name"):
+                res = await prefs.update_account(session, upd["name"], upd["amount"], upd.get("type"))
+                return await llm.balance_ack(res["name"], res["amount"], res["type"], res["added"])
+
     has_pending = bool((await session.execute(
         select(Transaction.id).where(Transaction.status == "prompted").limit(1)
     )).first())

@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from . import budget, llm, memory
+from . import budget, llm, memory, networth, prefs
 from .config import aware, now
 from .models import Account, Transaction
 
@@ -40,9 +40,27 @@ async def build_context(session) -> str:
     lines.append(f"本月支出合計：${sum(month_by_cat.values()):.2f}")
     lines.append(f"最近 14 天支出：${biweek_total:.2f}")
 
+    # Net worth: one authoritative figure that already includes Apple and anything else the
+    # bank sync can't reach, so she never answers "身家" off the Chase balances alone.
+    nw = {}
+    try:
+        nw = await networth.compute(session)
+        if nw["rows"]:
+            lines.append("你名下所有帳戶（含 Apple 這種阿姨沒法直接看、要自己記著的）：")
+            for r in nw["rows"]:
+                lines.append(f"  - {r['name']}（{r['kind']}）: ${abs(r['amount']):.2f}")
+            lines.append(
+                f"淨資產 ＝ 現金/存款合計 ${nw['assets']:.2f} − 卡債/欠款 ${nw['debts']:.2f} "
+                f"＝ ${nw['net']:.2f}。"
+                "（默默問淨資產／身家／net worth 就報這個數字。Apple 那些他自己給的也已經算進去了，"
+                "不要只算 Chase、也不要漏掉卡債。）"
+            )
+    except Exception:
+        pass
+
     accts = (await session.execute(select(Account))).scalars().all()
-    if accts:
-        lines.append("帳戶餘額：")
+    if accts and nw.get("source") == "ledger":
+        lines.append("（銀行即時餘額，僅供參考，已經反映在上面的淨資產快照裡，不要重複加）：")
         for a in accts:
             lines.append(f"  - {a.name}: ${a.balance:.2f}")
 

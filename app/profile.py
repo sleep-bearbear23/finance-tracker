@@ -62,6 +62,8 @@ def summarize(data: dict, fixed_total=None) -> dict:
         gig_sum = sum(float(u.get("amount") or 0) for u in up if isinstance(u, dict))
     except (TypeError, ValueError):
         gig_sum = 0.0
+    accts = data.get("accounts") or []
+    n_accts = sum(1 for a in accts if isinstance(a, dict) and a.get("amount"))
     return {
         "ytd_income": data.get("ytd_income") or 0,
         "monthly_baseline": data.get("monthly_baseline") or 0,
@@ -70,5 +72,7 @@ def summarize(data: dict, fixed_total=None) -> dict:
         "savings_cadence": data.get("savings_cadence") or "monthly",
         "n_gigs": n_gigs,
         "gig_sum": gig_sum,
+        "n_accts": n_accts,
         "cash_on_hand": data.get("cash_on_hand") or 0,
+        "total_debt": data.get("total_debt") or 0,
     }
