@@ -48,12 +48,13 @@ async def build_context(session) -> str:
 
     try:
         b = await budget.status(session)
-        if b["allowance"]:
-            lines.append(
-                f"本期預算（{b['period_start']}~{b['period_end']}）：可花 ${b['allowance']:.0f}，"
-                f"已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天；"
-                f"每兩週存錢目標 ${b['savings_biweekly']:.0f}"
-            )
+        lines.append(
+            f"本期預算（{b['period_start']}~{b['period_end']}）算法："
+            f"每兩週收入基準 ${b['income_biweekly']:.0f}，減固定支出 ${b['fixed_biweekly']:.0f}，"
+            f"減存錢目標 ${b['savings_biweekly']:.0f}，等於可花 ${b['allowance']:.0f}；"
+            f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天。"
+            "（如果默默問預算是怎麼算出來的，就照這幾個數字誠實拆給他看。）"
+        )
     except Exception:
         pass
 
