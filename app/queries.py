@@ -46,9 +46,10 @@ async def build_context(session) -> str:
     try:
         nw = await networth.compute(session)
         if nw["rows"]:
-            lines.append("你名下所有帳戶（含 Apple 這種阿姨沒法直接看、要自己記著的）：")
+            lines.append("你名下所有帳戶（Chase 是銀行自動同步的，Apple 那些是默默自己報的）：")
             for r in nw["rows"]:
-                lines.append(f"  - {r['name']}（{r['kind']}）: ${abs(r['amount']):.2f}")
+                src = r.get("src", "")
+                lines.append(f"  - {r['name']}（{r['kind']}{'·同步' if src=='同步' else ''}）: ${abs(r['amount']):.2f}")
             lines.append(
                 f"淨資產 ＝ 現金/存款合計 ${nw['assets']:.2f} − 卡債/欠款 ${nw['debts']:.2f} "
                 f"＝ ${nw['net']:.2f}。"
