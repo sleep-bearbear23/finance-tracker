@@ -163,6 +163,42 @@ async def api_trends(request: Request):
         return {"net_worth_series": net_series, "category_spend": category_spend, "monthly": monthly}
 
 
+@router.get("/api/income")
+async def api_income(request: Request):
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        rows = (await s.execute(
+            select(Transaction).where(Transaction.amount > 0, Transaction.status == "income")
+        )).scalars().all()
+        rows = sorted(rows, key=lambda t: aware(t.posted_at or t.created_at) or now(), reverse=True)
+        received, total = [], 0.0
+        for t in rows:
+            d = aware(t.posted_at or t.created_at)
+            amt = abs(t.amount)
+            total += amt
+            method, note = "", (t.note or "")
+            if "｜" in note:
+                method, note = note.split("｜", 1)
+            received.append({
+                "date": d.strftime("%Y-%m-%d") if d else "",
+                "name": t.merchant_desc, "method": method, "note": note, "amount": round(amt, 2),
+            })
+        pend = await prefs.pending_invoices(s)
+        today_ym = now().strftime("%Y-%m")
+        expected = [{
+            "note": p.get("note") or "某案", "amount": float(p.get("amount") or 0),
+            "when": p.get("when"),
+            "overdue": bool(p.get("when") and str(p.get("when"))[:7] < today_ym),
+        } for p in pend]
+        return {
+            "received": received,
+            "received_total": round(total, 2),
+            "expected": expected,
+            "expected_total": round(sum(e["amount"] for e in expected), 2),
+        }
+
+
 @router.get("/api/brain")
 async def api_brain(request: Request):
     if not _authorized(request):

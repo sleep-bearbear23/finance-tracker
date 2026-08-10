@@ -21,6 +21,7 @@ from . import (
     reconcile,
     record,
     reports,
+    seed_history,
     simplefin,
 )
 from .config import now, settings
@@ -133,6 +134,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_reminder_job, "cron", hour=settings.REMINDER_HOUR, id="reminder")
     scheduler.add_job(_snapshot_job, "cron", hour=23, minute=45, id="snapshot")  # daily net-worth point
     scheduler.start()
+    try:
+        async with Session() as s:  # one-time Notion history import (idempotent)
+            n = await seed_history.backfill(s)
+            if n:
+                print(f"[seed] imported {n} historical row(s) from Notion")
+    except Exception as e:
+        print(f"[seed] error: {e!r}")
     try:
         async with Session() as s:  # seed today's trend point on boot so the chart isn't empty
             await dashboard.write_snapshot(s)

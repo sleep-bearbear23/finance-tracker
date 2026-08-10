@@ -89,6 +89,7 @@
 
   <div class="tabs">
     <button id="tab-money" class="on" onclick="showTab('money')">總覽</button>
+    <button id="tab-income" onclick="showTab('income')">收入</button>
     <button id="tab-brain" onclick="showTab('brain')">訓練輪 · 她怎麼算的</button>
   </div>
 
@@ -134,6 +135,20 @@
     </div>
   </section>
 
+  <!-- ───────── INCOME ───────── -->
+  <section id="income" class="hidden">
+    <div class="stats" id="incStats"></div>
+    <div class="card">
+      <h2>今年收入紀錄（已入帳）</h2>
+      <div class="scroll" id="incReceived" style="max-height:460px"></div>
+    </div>
+    <div class="card">
+      <h2>預期收入 · 待收款（預留欄位）</h2>
+      <div id="incExpected"></div>
+      <div class="note">已排定的預期收入在上面；下方是空的預留欄位，接到新案子跟阿姨講一聲（例：「下個月接了一支 MV 大概 $2000」）就會自動補進來。</div>
+    </div>
+  </section>
+
   <!-- ───────── BRAIN ───────── -->
   <section id="brain" class="hidden">
     <div class="card">
@@ -176,12 +191,13 @@ const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).
 const el = id => document.getElementById(id);
 async function getJSON(path){ const r = await fetch(path,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
+const TABS = {money:'財務總覽', income:'收入紀錄', brain:'訓練輪 · 她怎麼算的'};
 function showTab(t){
-  el('money').classList.toggle('hidden', t!=='money');
-  el('brain').classList.toggle('hidden', t!=='brain');
-  el('tab-money').classList.toggle('on', t==='money');
-  el('tab-brain').classList.toggle('on', t==='brain');
-  el('title').textContent = t==='money' ? '財務總覽' : '訓練輪 · 她怎麼算的';
+  for(const k in TABS){
+    el(k).classList.toggle('hidden', k!==t);
+    el('tab-'+k).classList.toggle('on', k===t);
+  }
+  el('title').textContent = TABS[t];
 }
 
 Chart.defaults.font.family = 'system-ui,-apple-system,"PingFang TC",sans-serif';
@@ -272,6 +288,34 @@ async function loadTrends(){
   } else { el('monthChart').parentElement.innerHTML='<div class="empty">還沒有足夠的每月資料。</div>'; }
 }
 
+async function loadIncome(){
+  const d = await getJSON('/api/income');
+  el('incStats').innerHTML = [
+    ['今年已入帳', F0(d.received_total), `${d.received.length} 筆`],
+    ['待收款（預期）', F0(d.expected_total), `${d.expected.length} 筆`],
+    ['合計（含待收）', F0(d.received_total + d.expected_total), '']
+  ].map(([k,v,sub])=>`<div class="stat"><div class="k">${k}</div><div class="v sm">${v}</div>${sub?`<div class="sub">${sub}</div>`:''}</div>`).join('');
+  el('incStats').style.gridTemplateColumns='repeat(3,1fr)';
+
+  el('incReceived').innerHTML = d.received.length ? `<table>
+    <thead><tr><th>日期</th><th>項目</th><th>方式</th><th class="num">金額</th></tr></thead><tbody>`+
+    d.received.map(r=>`<tr><td>${esc(r.date)}</td><td>${esc(r.name)}<div class="tag">${esc(r.note)}</div></td>
+      <td>${esc(r.method||'—')}</td><td class="num pos">${F(r.amount)}</td></tr>`).join('')+
+    `<tr><td></td><td><b>合計</b></td><td></td><td class="num"><b>${F(d.received_total)}</b></td></tr></tbody></table>`
+    : '<div class="empty" style="padding:14px">今年還沒有入帳紀錄。</div>';
+
+  let rows = d.expected.map(e=>
+    `<div class="row"><span class="l">${esc(e.note)}${e.overdue?'<span class="chip warn">該進來了</span>':''}
+       <span class="tag"> · 預計 ${esc(e.when||'時間未定')}</span></span>
+     <span class="r">${F(e.amount)}</span></div>`).join('');
+  const blanks = Math.max(3, 6 - d.expected.length);
+  for(let i=0;i<blanks;i++)
+    rows += `<div class="row" style="opacity:.45"><span class="l" style="color:var(--muted)">預留欄位 —</span><span class="r" style="color:var(--muted)">$—</span></div>`;
+  if(d.expected.length)
+    rows += `<div class="row"><span class="l"><b>待收款合計</b></span><span class="r"><b>${F(d.expected_total)}</b></span></div>`;
+  el('incExpected').innerHTML = rows;
+}
+
 async function loadBrain(){
   const d = await getJSON('/api/brain');
 
@@ -341,7 +385,7 @@ async function loadBrain(){
 }
 
 (async function(){
-  try{ await loadMoney(); await loadTrends(); await loadBrain(); }
+  try{ await loadMoney(); await loadTrends(); await loadIncome(); await loadBrain(); }
   catch(e){ el('asof').innerHTML = '<span class="err">載入失敗（'+e.message+'）。連結可能過期了。</span>'; }
 })();
 </script>
