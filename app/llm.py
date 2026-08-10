@@ -153,6 +153,20 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
     return await _say(instr, max_tokens=500)
 
 
+async def profile_ack(s: dict) -> str:
+    cad = "每月" if s.get("savings_cadence") == "monthly" else "每兩週"
+    gig_line = f"，接下來有 {s['n_gigs']} 筆預期進帳約 ${s['gig_sum']:.0f}" if s.get("n_gigs") else ""
+    instr = (
+        "默默剛把他的財務底細一次填給你了，數字如下（都是真的，你要收下當作以後抓預算的依據）：\n"
+        f"今年到目前實收約 ${s['ytd_income']:.0f}；淡月底收入約 ${s['monthly_baseline']:.0f}／月；"
+        f"每月固定開銷約 ${s['fixed_total']:.0f}；存錢目標 ${s['savings_amount']:.0f}（{cad}）；"
+        f"手上現金約 ${s['cash_on_hand']:.0f}{gig_line}。\n"
+        "用你的口氣回他一則就好：跟他確認你收到了、以後會照這些數字幫他盯，順口唸一句關心一下。"
+        "不要把每個數字整包再唸一遍，簡短。"
+    )
+    return await _say(instr, max_tokens=220)
+
+
 async def greet() -> str:
     instr = "默默第一次傳訊息給你（他的理財阿姨）。用你的口氣打個招呼，順便虧他一下說你要開始盯他花錢了。兩三句。"
     return await _say(instr)

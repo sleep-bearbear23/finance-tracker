@@ -15,6 +15,7 @@ from . import (
     llm,
     memory,
     onboarding,
+    profile,
     queries,
     reconcile,
     record,
@@ -268,6 +269,16 @@ async def webhook(request: Request):
             if tap and record.coerce_amount(tap["amount"]) is not None:
                 await record.record_charge(s, tap["amount"], tap["merchant"], "shortcut", tap["card"])
                 continue  # no reply — she folds it into the grouped "what did you buy?" prompt
+
+            # Starter-pack block pasted in from the survey: store it as budgeting inputs.
+            prof = profile.parse(text)
+            if prof is not None:
+                summary = await profile.apply(s, prof)
+                ack = await llm.profile_ack(summary)
+                if reply_token:
+                    await line_client.reply(reply_token, ack)
+                await memory.remember(s, "assistant", ack)
+                continue
 
             await memory.remember(s, "user", text)  # log real conversation for context
 

@@ -48,12 +48,16 @@ async def build_context(session) -> str:
 
     try:
         b = await budget.status(session)
+        basis = (
+            f"收入基準 ${b['income_biweekly']:.0f}／兩週"
+            f"（預期 ${b['income_expected']:.0f}＋實際入帳 ${b['income_actual']:.0f} 各半抓的）"
+        )
         lines.append(
             f"本期預算（{b['period_start']}~{b['period_end']}）算法："
-            f"每兩週收入基準 ${b['income_biweekly']:.0f}，減固定支出 ${b['fixed_biweekly']:.0f}，"
+            f"{basis}，減固定支出 ${b['fixed_biweekly']:.0f}，"
             f"減存錢目標 ${b['savings_biweekly']:.0f}，等於可花 ${b['allowance']:.0f}；"
             f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天。"
-            "（如果默默問預算是怎麼算出來的，就照這幾個數字誠實拆給他看。）"
+            "（如果默默問預算是怎麼算出來的，就照這幾個數字誠實拆給他看，不要自己另外加減。）"
         )
     except Exception:
         pass
