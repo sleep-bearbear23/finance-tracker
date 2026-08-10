@@ -153,6 +153,15 @@ async def ingest_tap(request: Request):
     return {"ok": True}
 
 
+_Q_MARKERS = ("?", "？", "嗎", "多少", "為什麼", "為何", "怎麼", "能不能", "可不可以",
+              "可以嗎", "還剩", "還能", "剩多少", "how much", "why", "can i")
+
+
+def _looks_like_question(text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in _Q_MARKERS)
+
+
 async def _route_text(session, text: str) -> str:
     """Route an incoming LINE message to: answer pending charges / log a new expense / Q&A."""
     from sqlalchemy import select
@@ -161,13 +170,15 @@ async def _route_text(session, text: str) -> str:
         select(Transaction.id).where(Transaction.status == "prompted").limit(1)
     )).first())
 
-    intent = await llm.classify_intent(text, has_pending)
-
-    if intent == "answer":
+    # A reply while charges are pending is almost always answering them — log it tersely,
+    # not send it into chatty budget-talk. Only bail to Q&A if it's clearly a question.
+    if has_pending and not _looks_like_question(text):
         handled, confirm = await enrichment.handle_reply(session, text)
         if handled and confirm:
             return confirm
-    elif intent == "log":
+
+    intent = await llm.classify_intent(text, has_pending=False)
+    if intent == "log":
         parsed = await llm.parse_manual_log(text)
         if parsed.get("amount"):
             t = await record.record_charge(session, parsed["amount"], parsed["merchant"], "manual")

@@ -146,10 +146,11 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
     instr = (
         f"{convo_block}"
         f"默默現在說：「{question}」\n\n"
-        f"這是你手上的財務資料（金額都是真的，請根據它回答，不要編造）：\n{data_context}\n\n"
-        "用你的口氣回答他，數字要準。如果他是在回你剛剛講的話或你發的報告，要接得上、知道他在講哪件事。"
+        f"這是系統給你的資料（金額都是真的，要用這個，不要自己算）：\n{data_context}\n\n"
+        "回他一句就好，像在傳 LINE。他問什麼你就答什麼，不要把整包預算重講一遍、也不要在對話裡自己一直加減算餘額。"
+        "如果他是在回你剛剛的話，接得上就好。"
     )
-    return await _say(instr, max_tokens=900)
+    return await _say(instr, max_tokens=500)
 
 
 async def greet() -> str:
