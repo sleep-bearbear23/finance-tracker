@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Shared secret for the iOS Shortcut -> /ingest/tap endpoint (Apple Card real-time)
     INGEST_TOKEN: str = ""
 
+    # Secret that unlocks the web dashboard (empty = dashboard disabled)
+    DASHBOARD_TOKEN: str = ""
+
     TIMEZONE: str = "America/Los_Angeles"
     POLL_INTERVAL_MIN: int = 15
     DEBOUNCE_MINUTES: int = 5

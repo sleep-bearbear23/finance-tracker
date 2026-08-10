@@ -81,6 +81,21 @@ class SavingsPlan(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Snapshot(Base):
+    """A daily point so the dashboard can draw a net-worth / budget trend over time."""
+    __tablename__ = "snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)  # 'YYYY-MM-DD', one row per day
+    net_worth: Mapped[float] = mapped_column(Float, default=0.0)
+    assets: Mapped[float] = mapped_column(Float, default=0.0)
+    debts: Mapped[float] = mapped_column(Float, default=0.0)
+    cash: Mapped[float] = mapped_column(Float, default=0.0)
+    allowance: Mapped[float] = mapped_column(Float, default=0.0)
+    spent: Mapped[float] = mapped_column(Float, default=0.0)
+    income_biweekly: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class BudgetPeriod(Base):
     __tablename__ = "budget_periods"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

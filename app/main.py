@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 
 from . import (
     alerts,
+    dashboard,
     enrichment,
     line_client,
     llm,
@@ -82,6 +83,14 @@ async def _reconcile_job():
             print(f"[reconcile] error: {e!r}")
 
 
+async def _snapshot_job():
+    async with Session() as s:
+        try:
+            await dashboard.write_snapshot(s)
+        except Exception as e:
+            print(f"[snapshot] error: {e!r}")
+
+
 async def _reminder_job():
     async with Session() as s:
         try:
@@ -122,7 +131,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_monthly_job, "cron", day=1, hour=9, id="monthly")
     scheduler.add_job(_reconcile_job, "cron", day=5, hour=9, id="reconcile")
     scheduler.add_job(_reminder_job, "cron", hour=settings.REMINDER_HOUR, id="reminder")
+    scheduler.add_job(_snapshot_job, "cron", hour=23, minute=45, id="snapshot")  # daily net-worth point
     scheduler.start()
+    try:
+        async with Session() as s:  # seed today's trend point on boot so the chart isn't empty
+            await dashboard.write_snapshot(s)
+    except Exception as e:
+        print(f"[snapshot:boot] error: {e!r}")
     await announce_deploy()  # ping Momo that this deploy is live (once per commit)
     print("秀琴阿姨 is on duty.")
     yield
@@ -130,6 +145,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(dashboard.router)  # /dash + /api/* (token-gated)
 
 
 @app.get("/")
