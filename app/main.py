@@ -21,6 +21,7 @@ from . import (
     reconcile,
     record,
     reports,
+    seed_applecard,
     seed_history,
     simplefin,
 )
@@ -142,6 +143,12 @@ async def lifespan(app: FastAPI):
             m = await seed_history.reclassify_income(s)  # pull non-work money back out of income
             if m:
                 print(f"[seed] reclassified {m} non-work deposit(s) out of income")
+            a = await seed_applecard.backfill(s)  # Apple Card statements 2025-01 → 2026-07
+            if a:
+                print(f"[seed] imported {a} Apple Card transaction(s)")
+            lb = await seed_applecard.apply_labels(s)  # Momo's labeling-session answers, if present
+            if lb:
+                print(f"[seed] applied labels to {lb} Apple Card row(s)")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:
