@@ -87,6 +87,8 @@ async def expected_income_biweekly(session, horizon_days: int = EXPECT_HORIZON_D
     baseline = p["monthly_baseline"]
     booked: dict[str, float] = {}
     for u in p["upcoming"]:
+        if (u.get("status") or "pending") == "received":
+            continue  # already landed as a real deposit — don't count it as still-expected
         w = u.get("when")
         try:
             amt = float(u.get("amount") or 0)

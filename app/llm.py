@@ -147,10 +147,63 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
         f"{convo_block}"
         f"默默現在說：「{question}」\n\n"
         f"這是系統給你的資料（金額都是真的，要用這個，不要自己算）：\n{data_context}\n\n"
-        "回他一句就好，像在傳 LINE。他問什麼你就答什麼，不要把整包預算重講一遍、也不要在對話裡自己一直加減算餘額。"
+        "先把他問的那個數字直接答出來（像在傳 LINE，一兩句）。他問待收款／還沒收到的薪水／入帳後會有多少，"
+        "就照資料裡那份待收款清單跟合計講給他，不要說你不清楚、也不要拿預算的收入基準去搪塞。"
+        "不要把整包預算重講一遍、不要自己一直加減，也不要每次都碎念叫他別規劃——答完正事再順一句就好。"
         "如果他是在回你剛剛的話，接得上就好。"
     )
     return await _say(instr, max_tokens=500)
+
+
+async def parse_invoice_command(text: str, pending: list) -> dict:
+    """Detect if Momo is (a) saying a pending expected payment has now landed, or
+    (b) telling her about a NEW expected payment. Returns action=None otherwise."""
+    lst = "、".join(
+        f"{p.get('note') or '某案'}(${float(p.get('amount') or 0):.0f})" for p in pending
+    ) or "（目前沒有待收款）"
+    system = (
+        "The user is a freelancer talking to their bookkeeper about expected payments (invoices/gigs). "
+        f"Currently-pending expected payments: {lst}.\n"
+        "Decide the message's intent. Return ONLY JSON, no prose, no code fences:\n"
+        '{"action": "received" | "add" | null, "which": "<name of the pending item, for received>", '
+        '"amount": <number or null>, "when": "YYYY-MM" | null, "note": "<short name, for add>"}.\n'
+        "action='received': they say one of the pending payments HAS NOW landed / been paid / 到帳 / "
+        "入帳 / 收到了. Put the matching item's name in 'which'.\n"
+        "action='add': they mention a NEW gig/payment they now expect, with an amount. Fill amount/when/note.\n"
+        "action=null: it's a QUESTION (e.g. 還沒收到的薪水有多少), an expense, or unrelated. "
+        "When unsure, use null."
+    )
+    raw = (await _say(text, system=system, max_tokens=100)).strip()
+    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        d = json.loads(raw)
+        amt = d.get("amount")
+        return {
+            "action": d.get("action"),
+            "which": d.get("which"),
+            "amount": float(amt) if amt is not None else None,
+            "when": d.get("when"),
+            "note": d.get("note"),
+        }
+    except Exception:
+        return {"action": None, "which": None, "amount": None, "when": None, "note": None}
+
+
+async def invoice_ack(kind: str, item: dict) -> str:
+    nm = item.get("note") or "那筆"
+    amt = float(item.get("amount") or 0)
+    if kind == "received":
+        instr = (
+            f"默默的「{nm}」那筆預期收入 ${amt:.0f} 終於入帳了，你把它從待收款劃掉、之後就當實際收入算。"
+            "用你的口氣簡短回一句，替他開心一下、記好了。一兩句就好。"
+        )
+    else:
+        wn = item.get("when") or "時間未定"
+        instr = (
+            f"默默剛接了一筆新案子／新的預期收入：{nm}，大約 ${amt:.0f}，預計 {wn} 入帳，你記進待收款了。"
+            "用你的口氣簡短回一句確認記好了，可以順口提醒錢到手再算數。一兩句就好。"
+        )
+    return await _say(instr, max_tokens=160)
 
 
 async def deploy_note(commit_message: str) -> str:

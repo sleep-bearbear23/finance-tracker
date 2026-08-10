@@ -64,6 +64,35 @@ async def build_context(session) -> str:
         for a in accts:
             lines.append(f"  - {a.name}: ${a.balance:.2f}")
 
+    # Pending invoices: money Momo is owed / expects soon but that hasn't actually landed yet.
+    # This is REAL money-in-waiting — different from the budget income basis. Answer "還沒收到的
+    # 薪水 / 待收款 / 入帳後我會有多少" from THIS list, never from the income basis.
+    try:
+        pend = await prefs.pending_invoices(session)
+        if pend:
+            today_ym = now().strftime("%Y-%m")
+            total = 0.0
+            lines.append("還沒入帳的預期收入（待收款，錢還沒真的進來、還在等對方付）：")
+            for p in pend:
+                amt = float(p.get("amount") or 0)
+                total += amt
+                nm = p.get("note") or "某案"
+                wn = p.get("when") or "時間未定"
+                overdue = "，這筆照理該進來了、幫默默確認收到沒" if (p.get("when") and str(p.get("when"))[:7] < today_ym) else ""
+                lines.append(f"  - {nm}：${amt:.2f}，預計 {wn}{overdue}")
+            cash_now = (nw.get("assets", 0.0) - nw.get("debts", 0.0)) if nw else 0.0
+            lines.append(f"待收款合計：${total:.2f}。")
+            lines.append(
+                f"如果這些都入帳，默默手上大概會有 ${cash_now + total:.2f}"
+                f"（現在淨資產 ${cash_now:.2f} ＋ 待收款 ${total:.2f}）。"
+            )
+            lines.append(
+                "（默默問「還沒收到的薪水／待收款／有多少在路上／入帳後會有多少」，就照這個清單和合計老實回答他，"
+                "這是他實際被欠的錢，跟下面預算用的收入基準是兩回事，不要混、也不要跟他說你不清楚。）"
+            )
+    except Exception:
+        pass
+
     try:
         b = await budget.status(session)
         basis = (
@@ -75,7 +104,8 @@ async def build_context(session) -> str:
             f"{basis}，減固定支出 ${b['fixed_biweekly']:.0f}，"
             f"減存錢目標 ${b['savings_biweekly']:.0f}，等於可花 ${b['allowance']:.0f}；"
             f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天。"
-            "（如果默默問預算是怎麼算出來的，就照這幾個數字誠實拆給他看，不要自己另外加減。）"
+            "（這個收入基準只是用來抓每期能花多少的，不是默默實際被欠的錢；他問待收款請看上面那份清單。"
+            "如果他問預算怎麼算，就照這幾個數字誠實拆給他看，不要自己另外加減。）"
         )
     except Exception:
         pass

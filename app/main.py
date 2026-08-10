@@ -167,6 +167,11 @@ def _looks_like_question(text: str) -> bool:
     return any(m in t.replace(" ", "") or m in t for m in _Q_MARKERS)
 
 
+# Words that hint Momo is reporting an invoice landing or a new booking (not just asking).
+_INVOICE_HINTS = ("入帳", "到帳", "收到了", "付了", "付款", "進來了", "匯了", "匯款",
+                  "接了", "接到", "新的案子", "新案子", "下個月有", "談成", "簽了", "款到")
+
+
 async def _route_text(session, text: str) -> str:
     """Route an incoming LINE message to: answer pending charges / log a new expense / Q&A."""
     from sqlalchemy import select
@@ -184,6 +189,19 @@ async def _route_text(session, text: str) -> str:
             if upd.get("amount") is not None and upd.get("name"):
                 res = await prefs.update_account(session, upd["name"], upd["amount"], upd.get("type"))
                 return await llm.balance_ack(res["name"], res["amount"], res["type"], res["added"])
+
+    # Invoice tracking: a pending payment landed, or a new expected payment came up.
+    # Gated on invoice-ish words so ordinary chat/questions don't pay for the extra parse.
+    if any(h in text for h in _INVOICE_HINTS):
+        pend = await prefs.pending_invoices(session)
+        cmd = await llm.parse_invoice_command(text, pend)
+        if cmd.get("action") == "received" and cmd.get("which"):
+            hit = await prefs.mark_invoice(session, cmd["which"], "received")
+            if hit:
+                return await llm.invoice_ack("received", hit)
+        elif cmd.get("action") == "add" and cmd.get("amount"):
+            item = await prefs.add_invoice(session, cmd["amount"], cmd.get("when"), cmd.get("note"))
+            return await llm.invoice_ack("add", item)
 
     has_pending = bool((await session.execute(
         select(Transaction.id).where(Transaction.status == "prompted").limit(1)

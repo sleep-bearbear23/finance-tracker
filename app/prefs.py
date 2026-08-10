@@ -71,7 +71,7 @@ async def set_income_profile(session, data: dict) -> None:
             await set_kv(session, k, str(v))
     up = data.get("upcoming")
     if up is not None:
-        # keep only clean {amount, when, note} rows
+        # keep only clean {amount, when, note, status} rows
         clean = []
         for u in (up if isinstance(up, list) else []):
             try:
@@ -79,7 +79,12 @@ async def set_income_profile(session, data: dict) -> None:
             except (TypeError, ValueError, AttributeError):
                 continue
             if amt > 0:
-                clean.append({"amount": amt, "when": u.get("when"), "note": u.get("note")})
+                clean.append({
+                    "amount": amt,
+                    "when": u.get("when"),
+                    "note": u.get("note"),
+                    "status": u.get("status") or "pending",
+                })
         await set_kv(session, "cfg_upcoming", json.dumps(clean))
 
     accts = data.get("accounts")
@@ -102,6 +107,49 @@ async def _refresh_totals(session, accts) -> None:
     debt = sum(float(a["amount"]) for a in accts if a.get("type") == "credit")
     await set_kv(session, "cfg_cash_on_hand", str(cash))
     await set_kv(session, "cfg_total_debt", str(debt))
+
+
+async def pending_invoices(session) -> list:
+    """Expected freelance payments Momo is still waiting on (not yet marked received)."""
+    prof = await get_income_profile(session)
+    return [u for u in prof["upcoming"] if (u.get("status") or "pending") != "received"]
+
+
+async def mark_invoice(session, which, status="received") -> dict | None:
+    """Flip a pending invoice's status (e.g. it finally landed). Match by note, then by amount."""
+    items = _load_list(await get_kv(session, "cfg_upcoming"))
+    key = _norm(which)
+    hit = None
+    if key:
+        for u in items:
+            n = _norm(u.get("note"))
+            if n and (key in n or n in key):
+                hit = u
+                break
+    if hit is None:
+        try:
+            amt = float(re.sub(r"[^0-9.]", "", str(which)))
+        except (TypeError, ValueError):
+            amt = None
+        if amt:
+            for u in items:
+                if abs(float(u.get("amount") or 0) - amt) < 0.5:
+                    hit = u
+                    break
+    if hit is None:
+        return None
+    hit["status"] = status
+    await set_kv(session, "cfg_upcoming", json.dumps(items))
+    return hit
+
+
+async def add_invoice(session, amount, when=None, note=None) -> dict:
+    """Record a new expected payment Momo just booked."""
+    items = _load_list(await get_kv(session, "cfg_upcoming"))
+    item = {"amount": float(amount), "when": when, "note": note, "status": "pending"}
+    items.append(item)
+    await set_kv(session, "cfg_upcoming", json.dumps(items))
+    return item
 
 
 async def update_account(session, name, amount, typ=None) -> dict:
