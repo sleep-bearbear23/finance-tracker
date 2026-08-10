@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from uuid import uuid4
 
-from . import categories
-from .config import now
+from sqlalchemy import select
+
+from . import categories, classify
+from .config import TZ, aware, now
 from .models import Transaction
 
 
@@ -27,6 +30,41 @@ def parse_tap_message(text: str) -> dict | None:
         "merchant": parts[1] if len(parts) > 1 else "",
         "card": parts[2] if len(parts) > 2 and parts[2] else None,
     }
+
+
+def _parse_date(s):
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").replace(hour=12, tzinfo=TZ)
+    except Exception:
+        return now()
+
+
+async def record_screenshot(session, date_str, merchant, amount):
+    """Log a transaction read off a screenshot, skipping anything we already have."""
+    merchant = (merchant or "").strip()
+    target = round(abs(float(amount)), 2)
+    key = categories.merchant_key(merchant)
+    d0 = _parse_date(date_str)
+
+    rows = (await session.execute(select(Transaction))).scalars().all()
+    for r in rows:
+        rd = aware(r.posted_at or r.created_at)
+        if not (rd and rd.date() == d0.date() and round(abs(r.amount), 2) == target):
+            continue
+        kb = categories.merchant_key(r.merchant_desc)
+        # same amount+date and the merchant keys match or one prefixes the other (city/format drift)
+        if key == kb or (len(key) >= 4 and len(kb) >= 4 and (key.startswith(kb) or kb.startswith(key))):
+            return None  # duplicate — already have it (SimpleFIN or an earlier screenshot)
+
+    status, category, note = await classify.classify(session, merchant, amount, backfill=False)
+    t = Transaction(
+        id=f"screenshot:{uuid4().hex[:16]}", account_id="screenshot", amount=amount,
+        merchant_desc=merchant, posted_at=d0, category=category, note=note,
+        status=status, source="screenshot",
+    )
+    session.add(t)
+    await session.commit()
+    return t
 
 
 def get_ci(data: dict, key: str):

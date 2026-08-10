@@ -104,11 +104,9 @@ def is_transfer(merchant: str) -> bool:
 
 
 def merchant_key(merchant: str) -> str:
-    """Normalize a raw bank description into a stable key for merchant memory.
-    Drops store numbers/punctuation so 'WHOLEFOODS #382' and 'WHOLEFOODS #911' match,
+    """Normalize a raw description into a stable key for merchant memory + dedup.
+    Drops digits, spaces and punctuation so 'WHOLEFOODS #382' and 'Whole Foods' match,
     but keeps sender names distinct so 'ZELLE FROM JOHN' ≠ 'ZELLE FROM MARY'."""
     s = (merchant or "").lower()
-    s = re.sub(r"\d+", "", s)                          # drop store/ref numbers
-    s = re.sub(r"[^a-z一-鿿 ]+", " ", s)       # keep letters (incl. Chinese) + spaces
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"[^a-z一-鿿]+", "", s)  # keep only letters (incl. Chinese)
     return s[:120] or "unknown"

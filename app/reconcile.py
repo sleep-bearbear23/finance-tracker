@@ -28,7 +28,7 @@ def _matches(bank, live, day_tol: int = DAY_TOL) -> bool:
 async def reconcile(session) -> int:
     rows = (await session.execute(select(Transaction).where(Transaction.amount < 0))).scalars().all()
     bank = [t for t in rows if t.source == "simplefin"]
-    live = [t for t in rows if t.source in ("shortcut", "manual") and t.status != "reconciled"]
+    live = [t for t in rows if t.source in ("shortcut", "manual", "screenshot") and t.status != "reconciled"]
 
     merged = 0
     for b in bank:

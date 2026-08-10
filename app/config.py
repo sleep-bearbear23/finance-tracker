@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     POLL_INTERVAL_MIN: int = 15
     DEBOUNCE_MINUTES: int = 5
     BACKFILL_DAYS: int = 45
+    REMINDER_HOUR: int = 21  # local hour she nudges "send me today's screenshot"
 
 
 settings = Settings()  # reads env / .env

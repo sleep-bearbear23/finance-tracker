@@ -1,12 +1,13 @@
 """All Claude calls: persona messages, reply parsing, intent routing, Q&A."""
 from __future__ import annotations
 
+import base64
 import json
 
 from anthropic import AsyncAnthropic
 
 from .categories import CATEGORIES
-from .config import settings
+from .config import now, settings
 from .persona import PERSONA_SYSTEM
 
 _client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -204,6 +205,51 @@ async def onboarding_done(prefs_now: dict) -> str:
         f"設定好了：每月固定支出約 ${prefs_now['fixed_monthly']:.0f}，"
         f"存錢目標 ${prefs_now['savings_amount']:.0f}（{prefs_now['savings_cadence']}）。"
         "用你的口氣跟默默確認一下，順便撂話說以後會幫他盯緊緊。"
+    )
+    return await _say(instr, max_tokens=200)
+
+
+async def parse_screenshot(image_bytes: bytes, media_type: str) -> list[dict]:
+    """Read a bank/credit-card screenshot and pull out the transactions."""
+    b64 = base64.b64encode(image_bytes).decode()
+    today = now().date().isoformat()
+    system = (
+        "You read a bank or credit-card transaction screenshot and extract every transaction. "
+        "Return ONLY a JSON array, no prose, no code fences. Each element: "
+        '{"date": "YYYY-MM-DD", "merchant": "<merchant/description>", "amount": <positive number>, '
+        '"direction": "out" | "in"}. '
+        "direction is 'out' for a purchase/charge/debit, 'in' for a payment/deposit/refund/credit. "
+        f"Today is {today}; if a row has no year, assume the current year. "
+        "Ignore balances, headers, totals, and pending-only rows without an amount."
+    )
+    if media_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
+        media_type = "image/jpeg"
+    resp = await _client.messages.create(
+        model=MODEL, max_tokens=2000, system=system,
+        messages=[{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+            {"type": "text", "text": "Extract the transactions as JSON."},
+        ]}],
+    )
+    raw = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+async def daily_reminder() -> str:
+    instr = "現在是晚上，該提醒默默把今天的帳單截圖傳給你看了。用你的口氣催他一句，兇一點但別太長。"
+    return await _say(instr, max_tokens=150)
+
+
+async def screenshot_ack(n_recorded: int, n_dupes: int) -> str:
+    extra = f"，另外有 {n_dupes} 筆是重複的我幫你跳過了" if n_dupes else ""
+    instr = (
+        f"默默剛傳了帳單截圖，你看完記了 {n_recorded} 筆新的{extra}。"
+        "如果沒有要追問的，用你的口氣簡短回一句說記好了。"
     )
     return await _say(instr, max_tokens=200)
 

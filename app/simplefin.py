@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from . import categories
+from . import classify
 from .config import TZ, now, settings
 from .db import get_kv, set_kv
-from .models import Account, MerchantMemory, Transaction
+from .models import Account, Transaction
 
 _ACCESS_KEY = "simplefin_access_url"
 _INIT_KEY = "initialized"
@@ -85,35 +85,9 @@ async def ingest(session) -> int:
             if tx.get("posted"):
                 posted = datetime.fromtimestamp(int(tx["posted"]), tz=timezone.utc).astimezone(TZ)
             desc = tx.get("description", "") or tx.get("payee", "") or ""
-            key = categories.merchant_key(desc)
-            mem = await session.get(MerchantMemory, key)
-            note = None
-
-            if categories.is_transfer(desc):
-                # money moving between your own accounts (card payment, transfer) — never counts
-                status, category = "ignored", "Transfers/Ignore"
-            elif mem is not None:
-                # she's been told about this merchant/sender before — apply it, don't re-ask
-                if mem.is_income is True:
-                    status, category, note = "income", "Income", mem.note
-                elif mem.is_income is False:
-                    status, category, note = "ignored", "Transfers/Ignore", mem.note
-                else:
-                    status, category, note = "auto", (mem.category or categories.guess(desc)), mem.note
-            elif amount > 0:
-                # unknown money-in: silently assume income on backfill, else ask (income or payback?)
-                if not initialized:
-                    status, category = "income", "Income"
-                else:
-                    status, category = "needs_context", None
-                    new_needs += 1
-            else:
-                # spend: silent on history backfill, otherwise ask what it was
-                if not initialized:
-                    status, category = "auto", categories.guess(desc)
-                else:
-                    status, category = "needs_context", categories.guess(desc)
-                    new_needs += 1
+            status, category, note = await classify.classify(session, desc, amount, backfill=not initialized)
+            if status == "needs_context":
+                new_needs += 1
 
             session.add(Transaction(
                 id=tx["id"], account_id=acct["id"], amount=amount,

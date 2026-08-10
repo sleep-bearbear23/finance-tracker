@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, Response
@@ -80,6 +81,18 @@ async def _reconcile_job():
             print(f"[reconcile] error: {e!r}")
 
 
+async def _reminder_job():
+    async with Session() as s:
+        try:
+            owner = await get_kv(s, enrichment.OWNER_KEY)
+            if owner:
+                msg = await llm.daily_reminder()
+                await line_client.push(owner, msg)
+                await memory.remember(s, "assistant", msg)
+        except Exception as e:
+            print(f"[reminder] error: {e!r}")
+
+
 async def announce_deploy():
     """On a new Railway deploy, tell Momo the commit message. Idempotent per commit."""
     sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
@@ -106,6 +119,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_weekly_job, "cron", day_of_week="sun", hour=18, id="weekly")
     scheduler.add_job(_monthly_job, "cron", day=1, hour=9, id="monthly")
     scheduler.add_job(_reconcile_job, "cron", day=5, hour=9, id="reconcile")
+    scheduler.add_job(_reminder_job, "cron", hour=settings.REMINDER_HOUR, id="reminder")
     scheduler.start()
     await announce_deploy()  # ping Momo that this deploy is live (once per commit)
     print("秀琴阿姨 is on duty.")
@@ -161,6 +175,48 @@ async def _route_text(session, text: str) -> str:
     return await queries.answer(session, text)
 
 
+async def _handle_image(session, event) -> None:
+    """Read a transaction screenshot, log what's new (skipping dupes), then follow up."""
+    reply_token = event.get("replyToken")
+    mid = event.get("message", {}).get("id")
+    try:
+        img, media = await line_client.get_content(mid)
+        parsed = await llm.parse_screenshot(img, media)
+    except Exception as e:
+        print(f"[image] error: {e!r}")
+        if reply_token:
+            await line_client.reply(reply_token, "阿姨這張看不太清楚，重拍一張清楚一點的給我齁。")
+        return
+
+    recorded, dupes = [], 0
+    for t in parsed:
+        amt = record.coerce_amount(t.get("amount"))
+        if amt is None:
+            continue
+        out_ = str(t.get("direction", "out")).lower().startswith("out")
+        signed = -abs(amt) if out_ else abs(amt)
+        made = await record.record_screenshot(session, t.get("date"), t.get("merchant") or "", signed)
+        if made:
+            recorded.append(made)
+        else:
+            dupes += 1
+
+    pend = [r for r in recorded if r.status == "needs_context"]
+    if pend:
+        bid, stamp = str(uuid4()), now()
+        for seq, r in enumerate(pend, 1):
+            r.batch_id, r.batch_seq, r.prompted_at, r.status = bid, seq, stamp, "prompted"
+        await session.commit()
+        head = f"收到，記了 {len(recorded)} 筆" + (f"（{dupes} 筆重複跳過）" if dupes else "") + "。\n"
+        out = head + await llm.enrichment_prompt(pend)
+    else:
+        out = await llm.screenshot_ack(len(recorded), dupes)
+
+    if reply_token:
+        await line_client.reply(reply_token, out)
+    await memory.remember(session, "assistant", out)
+
+
 @app.post("/line/webhook")
 async def webhook(request: Request):
     body = await request.body()
@@ -171,7 +227,13 @@ async def webhook(request: Request):
     payload = await request.json()
     async with Session() as s:
         for event in payload.get("events", []):
-            if event.get("type") != "message" or event.get("message", {}).get("type") != "text":
+            if event.get("type") != "message":
+                continue
+            mtype = event.get("message", {}).get("type")
+            if mtype == "image":
+                await _handle_image(s, event)
+                continue
+            if mtype != "text":
                 continue
             user_id = (event.get("source") or {}).get("userId")
             reply_token = event.get("replyToken")

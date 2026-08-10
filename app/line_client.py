@@ -12,6 +12,7 @@ from .config import settings
 
 _PUSH = "https://api.line.me/v2/bot/message/push"
 _REPLY = "https://api.line.me/v2/bot/message/reply"
+_CONTENT = "https://api-data.line.me/v2/bot/message/{}/content"
 
 
 def _strip_md(text: str) -> str:
@@ -53,6 +54,16 @@ async def push(user_id: str, text: str) -> None:
         r = await c.post(_PUSH, headers=_headers(), json={"to": user_id, "messages": messages})
     if r.status_code >= 300:
         print(f"[line] push failed {r.status_code}: {r.text}")
+
+
+async def get_content(message_id: str) -> tuple[bytes, str]:
+    """Download an image (or other media) the user sent, via the LINE content endpoint."""
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.get(
+            _CONTENT.format(message_id),
+            headers={"Authorization": f"Bearer {settings.LINE_CHANNEL_ACCESS_TOKEN}"},
+        )
+    return r.content, r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
 
 
 async def reply(reply_token: str, text: str) -> None:
