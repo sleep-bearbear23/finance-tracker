@@ -221,17 +221,18 @@ async def deploy_note(commit_message: str) -> str:
 async def parse_balance_update(text: str, account_names: list[str]) -> dict:
     """If the message states a NEW CURRENT BALANCE for one of Momo's known accounts, extract it.
     A purchase/expense is NOT a balance update. Returns amount=None when it isn't one."""
-    names = "、".join(account_names)
+    names = "、".join(account_names) or "（尚無已知帳戶）"
     system = (
-        "You decide if the user is telling their bookkeeper the CURRENT BALANCE of one of their "
-        f"existing accounts. Their accounts: {names}.\n"
+        "You decide if the user is telling their bookkeeper the CURRENT BALANCE of a bank account "
+        f"or the amount owed on a credit card. Known accounts (may be empty): {names}.\n"
         "Return ONLY JSON, no prose, no code fences: "
-        '{"name": "<one of the accounts, or null>", "amount": <number or null>, '
-        '"type": "cash" | "credit" | null}.\n'
-        "Set name+amount ONLY when they state what an account now holds or now owes "
-        "(e.g. 'apple card 現在欠 600', 'chase 支票剩 4200', 'my apple cash is 1500 now'). "
-        "type='credit' if it's what they OWE on a card, 'cash' if it's money they HAVE, else null.\n"
-        "If it's a purchase, an expense, a question, or doesn't clearly name one of the accounts, "
+        '{"name": "<account name>", "amount": <number or null>, "type": "cash" | "credit" | null}.\n'
+        "Set name+amount when they state what an account now holds or a card now owes "
+        "(e.g. 'apple card 現在欠 600', 'chase 支票剩 4200', 'freedom 卡欠 210', 'my apple cash is 1500'). "
+        "Use the matching known account's name if it's one of them; otherwise use the NEW account "
+        "name exactly as they said it (they may be recording a card/account for the first time).\n"
+        "type='credit' if it's money OWED on a card, 'cash' if it's money they HAVE, else null.\n"
+        "If it's a purchase, an expense, a question, or not clearly an account balance, "
         'return {"name": null, "amount": null, "type": null}.'
     )
     raw = (await _say(text, system=system, max_tokens=80)).strip()

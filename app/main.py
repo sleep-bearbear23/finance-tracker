@@ -198,6 +198,10 @@ def _looks_like_question(text: str) -> bool:
 _INVOICE_HINTS = ("入帳", "到帳", "收到了", "付了", "付款", "進來了", "匯了", "匯款",
                   "接了", "接到", "新的案子", "新案子", "下個月有", "談成", "簽了", "款到")
 
+# Words that hint Momo is stating an account balance / card debt (lets a first account be set by chat).
+_BALANCE_HINTS = ("欠", "餘額", "戶頭", "帳戶", "存款", "balance", "剩下", "現在有", "現在是",
+                  "卡債", "card", "checking", "saving", "venmo", "apple", "chase")
+
 
 async def _route_text(session, text: str) -> str:
     """Route an incoming LINE message to: answer pending charges / log a new expense / Q&A."""
@@ -205,13 +209,13 @@ async def _route_text(session, text: str) -> str:
     from . import prefs
     from .models import Transaction
 
-    # Balance update for a manually-tracked account (e.g. Apple, which she can't sync).
-    # Gated: needs a number AND a message that names one of his known accounts, so it never
-    # grabs an expense log or a question.
+    # Balance update for a manually-tracked account (card debt, cash on hand, Apple, etc.).
+    # Runs when there's a number AND the message either names a known account or clearly talks
+    # about a balance — so even the FIRST account (e.g. a card she doesn't know yet) can be set.
     if any(ch.isdigit() for ch in text):
         prof = await prefs.get_income_profile(session)
         names = [a.get("name") for a in prof.get("accounts", []) if a.get("name")]
-        if names:
+        if names or any(k in text.lower() for k in _BALANCE_HINTS):
             upd = await llm.parse_balance_update(text, names)
             if upd.get("amount") is not None and upd.get("name"):
                 res = await prefs.update_account(session, upd["name"], upd["amount"], upd.get("type"))
