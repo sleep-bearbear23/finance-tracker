@@ -19,7 +19,8 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import accounts as acct, budget, categories, networth, period as P, prefs, taxonomy
+from . import (accounts as acct, budget, categories, facts as F, networth,
+               period as P, prefs, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -66,7 +67,7 @@ def _deny():
 # ── the trend snapshot ───────────────────────────────────────────────
 async def write_snapshot(session) -> None:
     """Upsert today's point so the net-worth / budget trend keeps growing."""
-    nw = await networth.compute(session)
+    nw = (await F.build(session)).nw
     try:
         b = await budget.status(session)
     except Exception:
@@ -224,13 +225,13 @@ async def api_overview(request: Request):
     if not _authorized(request):
         return _deny()
     async with Session() as s:
-        nw = await networth.compute(s)
+        f = await F.build(s)
+        nw = f.nw
         pending = await _pending_block(s, nw)
         try:
             b = await budget.status(s)
         except Exception:
             b = None
-        accts = (await s.execute(select(Account))).scalars().all()
         return {
             "as_of": now().isoformat(),
             "net_worth": nw["net"],
@@ -240,10 +241,12 @@ async def api_overview(request: Request):
             "invest": nw["invest"],
             "runway_net": nw["runway_net"],
             "haircut": nw["haircut"],
+            # ONE account list. There used to be a second one here ("synced", straight
+            # off the Account table, un-deduplicated) and the two disagreed on screen.
             "accounts": nw["rows"],
-            "synced": [{"name": a.name, "balance": a.balance} for a in accts],
             "pending": pending,
             "budget": b,
+            "audit": f.audit(),
         }
 
 
@@ -256,35 +259,17 @@ async def api_trends(request: Request):
         net_series = [{"day": r.day, "net": round(r.net_worth, 2),
                        "assets": round(r.assets, 2), "debts": round(r.debts, 2)} for r in snaps]
 
-        txns = (await s.execute(select(Transaction))).scalars().all()
-        since_cat = now() - timedelta(days=90)
-        cat = defaultdict(float)
-        monthly_in = defaultdict(float)
-        monthly_out = defaultdict(float)
-        for t in txns:
-            d = aware(t.posted_at or t.created_at)
-            if not d:
-                continue
-            ym = d.strftime("%Y-%m")
-            if _spend_ok(t):
-                monthly_out[ym] += abs(t.amount)
-                if d >= since_cat:
-                    cat[t.category or "未分類"] += abs(t.amount)
-            elif t.amount > 0 and t.status == "income":
-                monthly_in[ym] += t.amount
-
-        cat_sorted = sorted(cat.items(), key=lambda x: -x[1])
-        category_spend = [{"category": c, "amount": round(a, 2)} for c, a in cat_sorted]
-        months = sorted(set(monthly_in) | set(monthly_out))[-6:]
-        monthly = [{"month": m, "income": round(monthly_in.get(m, 0.0), 2),
-                    "spend": round(monthly_out.get(m, 0.0), 2)} for m in months]
-
-        # half-month flows — the app's cadence (1–15 / 16–月底), 12 periods = 6 months
-        keys = P.last_n(budget.current_key(), 12)
-        fl = await budget.flows(s, keys)
-        flows = [fl[k] for k in keys]
-        return {"net_worth_series": net_series, "category_spend": category_spend,
-                "monthly": monthly, "flows": flows}
+        # Every series below comes from the same Facts object. Previously the monthly
+        # bars summed abs(amount) on posted_at while the half-month flows used the budget
+        # helpers — so a returned $1,047 Amazon order showed as spending in one chart and
+        # as a credit in the other, in the same response.
+        f = await F.build(s)
+        keys = P.last_n(budget.current_key(), 12)   # 12 half-months = 6 months
+        return {"net_worth_series": net_series,
+                "category_spend": f.category_spend(90),
+                "monthly": f.monthly(6),
+                "flows": f.flows(keys),
+                "audit": f.audit()}
 
 
 @router.get("/api/income")
@@ -292,9 +277,11 @@ async def api_income(request: Request):
     if not _authorized(request):
         return _deny()
     async with Session() as s:
-        rows = (await s.execute(
-            select(Transaction).where(Transaction.amount > 0, Transaction.status == "income")
-        )).scalars().all()
+        # budget.is_income, not status == "income": a 劇組報帳 or a friend's Zelle is
+        # money in and is not earnings. The old filter counted both.
+        rows = [t for t in (await s.execute(
+            select(Transaction).where(Transaction.amount > 0))).scalars().all()
+            if budget.is_income(t)]
         rows = sorted(rows, key=lambda t: aware(t.posted_at or t.created_at) or now(), reverse=True)
         received, total = [], 0.0
         for t in rows:
@@ -358,7 +345,10 @@ async def api_ledger(request: Request):
         rows = (await s.execute(select(Transaction))).scalars().all()
 
         def eff(t):
-            return aware(t.posted_at or t.created_at)
+            # budget.eff_date, not posted_at: a refund belongs to the month of the charge
+            # it reverses, or the month filter here disagrees with the charts.
+            d = budget.eff_date(t)
+            return aware(t.effective_at or t.posted_at or t.created_at) if d else None
 
         # account facet key: bank rows by account_id; others by source
         def acct_key(t):
@@ -430,18 +420,14 @@ async def api_accounts(request: Request):
     if not _authorized(request):
         return _deny()
     async with Session() as s:
-        reg, buckets = await acct.build(s)
-    real = [a for a in reg.values() if a["kind"] in ("cash", "credit")]
-    records = [a for a in reg.values() if a["kind"] == "record" and a["n_txns"]]
-    cash = sum(a["balance"] or 0 for a in real if a["kind"] == "cash")
-    debt = sum(a["balance"] or 0 for a in real if a["kind"] == "credit")
-    order = {"cash": 0, "credit": 1}
-    real.sort(key=lambda a: (order.get(a["kind"], 2), -(a["balance"] or 0)))
+        f = await F.build(s)
+    # real_accounts() includes 'invest'. The old filter here was ("cash", "credit"), which
+    # is why Self-Directed vanished from this card while still counting toward net worth.
     return {
-        "accounts": [_acct_public(a) for a in real],
-        "records": [_acct_public(a) for a in records],
-        "cash_total": round(cash, 2), "debt_total": round(debt, 2),
-        "net": round(cash - debt, 2),
+        "accounts": [_acct_public(a) for a in f.real_accounts()],
+        "records": [_acct_public(a) for a in f.record_accounts()],
+        **f.totals(),
+        "audit": f.audit(),
     }
 
 
@@ -478,38 +464,16 @@ async def api_account(request: Request):
     f_cat = q.get("category") or None
 
     async with Session() as s:
-        reg, buckets = await acct.build(s)
-        if aid not in reg:
-            return JSONResponse({"error": "unknown account"}, status_code=404)
-        a = reg[aid]
-        rows = buckets.get(aid, [])
+        f = await F.build(s)
+    if aid not in f.registry:
+        return JSONResponse({"error": "unknown account"}, status_code=404)
+    a = f.registry[aid]
+    rows = f.buckets.get(aid, [])
+    keys = P.last_n(budget.current_key(), n_periods)
 
-        keys = P.last_n(budget.current_key(), n_periods)
-
-    # per-period in/out for THIS account (rows are already scoped to it)
-    lo, _ = P.key_bounds(keys[0])
-    _, hi = P.key_bounds(keys[-1])
-    series = {k: {"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
-                  "income": 0.0, "spend": 0.0} for k in keys}
-    cats: dict[str, float] = {}
-    cat_since = (now().date() - timedelta(days=90)).isoformat()
-    for t in rows:
-        d = budget.eff_date(t)
-        if not d:
-            continue
-        if lo <= d <= hi:
-            k = P.key_for(d)
-            if k in series:
-                if budget.is_spend(t):
-                    series[k]["spend"] += abs(t.amount)
-                elif budget.is_income(t):
-                    series[k]["income"] += t.amount
-        if budget.is_spend(t) and d.isoformat() >= cat_since:
-            cats[t.category or "未分類"] = cats.get(t.category or "未分類", 0.0) + abs(t.amount)
-    for v in series.values():
-        v["income"] = round(v["income"], 2)
-        v["spend"] = round(v["spend"], 2)
-
+    # Same helpers as every other chart — this used to sum abs(t.amount), so a refund
+    # on this page ADDED to spending while the ledger total below it subtracted.
+    series = f.flows(keys, account_id=aid)
     curve = _reconstruct(rows, a["balance"] or 0.0, a["kind"], keys, a["first"], a["last"])
 
     # ledger for this account, newest first, with optional search/category filter
@@ -531,10 +495,9 @@ async def api_account(request: Request):
 
     return {
         "account": _acct_public(a),
-        "series": [series[k] for k in keys],
+        "series": series,
         "curve": curve,
-        "categories": [{"category": c, "label": taxonomy.label(c), "amount": round(v, 2)}
-                       for c, v in sorted(cats.items(), key=lambda x: -x[1])],
+        "categories": f.category_spend(90, account_id=aid),
         "ledger": [{"date": d.isoformat(), "merchant": t.merchant_desc, "amount": round(t.amount, 2),
                     "category": c, "status": t.status, "source": t.source, "note": t.note}
                    for d, c, t in page],
@@ -549,7 +512,8 @@ async def api_brain(request: Request):
     if not _authorized(request):
         return _deny()
     async with Session() as s:
-        nw = await networth.compute(s)
+        f = await F.build(s)
+        nw = f.nw
         prof = await prefs.get_income_profile(s)
         pr = await prefs.get_prefs(s)
         try:

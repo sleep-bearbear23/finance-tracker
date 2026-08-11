@@ -415,6 +415,20 @@ const CATCOLOR = {}; let _ci = 0;
 const catColor = c => CATCOLOR[c] || (CATCOLOR[c] = CATCOLORS[(_ci++) % CATCOLORS.length]);
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
+// If two blocks ever disagree again, say so on screen rather than showing two numbers
+// and letting Momo work out which one lied.
+function showAudit(problems){
+  const seen=[...new Set((problems||[]).filter(Boolean))];
+  let bar=document.getElementById('auditBar');
+  if(!seen.length){ if(bar) bar.remove(); return; }
+  if(!bar){
+    bar=document.createElement('div'); bar.id='auditBar';
+    bar.style.cssText='flex:0 0 auto;background:rgba(255,176,46,.12);border:1px solid rgba(255,176,46,.35);'
+      +'color:#ffb02e;border-radius:10px;padding:7px 12px;font-size:12px;line-height:1.5';
+    document.querySelector('.app').insertBefore(bar, document.querySelector('.screen'));
+  }
+  bar.innerHTML='⚠️ 數字對不起來：'+seen.map(esc).join('｜');
+}
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function getJSON(p){ const r=await fetch(p,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
@@ -502,6 +516,7 @@ async function loadHome(){
   const [o,t,acc,rec] = await Promise.all([
     getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts'), getJSON('/api/ledger?limit=25')]);
   el('asof').textContent='更新於 '+new Date(o.as_of).toLocaleString('zh-TW',{hour12:false});
+  showAudit([...(o.audit||[]),...(t.audit||[]),...(acc.audit||[])]);
 
   if(o.budget){
     const b=o.budget, over=b.remaining<0;
@@ -521,8 +536,9 @@ async function loadHome(){
 
   el('nwBig').textContent=F0(o.net_worth);
   el('nwChips').innerHTML=
-    `<span class="pill mint">現金 <b>${F0(o.assets)}</b></span>
-     <span class="pill pink">卡債 <b>${F0(o.debts)}</b></span>`+
+    `<span class="pill mint">現金 <b>${F0(o.spendable)}</b></span>`+
+    (o.invest?`<span class="pill">投資 <b>${F0(o.invest)}</b></span>`:'')+
+    `<span class="pill pink">卡債 <b>${F0(o.debts)}</b></span>`+
     (o.pending.total?`<span class="pill warnp">待收 <b>${F0(o.pending.total)}</b></span>
      <span class="pill">入帳後 <b>${F0(o.pending.projected)}</b></span>`:'');
   const ns=t.net_worth_series;
@@ -540,12 +556,13 @@ async function loadHome(){
         scales:{x:{display:false},y:{display:false}}}});
   }
 
-  el('acctTotals').textContent=`現金 ${F0(acc.cash_total)} · 卡債 ${F0(acc.debt_total)}`;
+  el('acctTotals').textContent=`現金 ${F0(acc.cash_total)}`
+    + (acc.invest_total?` · 投資 ${F0(acc.invest_total)}`:'') + ` · 卡債 ${F0(acc.debt_total)}`;
   el('acctBox').innerHTML= acc.accounts.length ? acc.accounts.map(a=>{
-    const owe=a.kind==='credit', warn=a.coverage_note;
+    const owe=a.kind==='credit', inv=a.kind==='invest', warn=a.coverage_note;
     return `<div class="arow" onclick="go('#/a/${encodeURIComponent(a.id)}')">
-      <i class="dot" style="background:${owe?'var(--s3)':'var(--s1)'}"></i>
-      <span class="an">${esc(a.name)}<span class="sub">${esc(a.balance_src)} · ${a.n_txns} 筆${warn?` · <span style="color:var(--warn)">${esc(warn)}</span>`:''}</span></span>
+      <i class="dot" style="background:${owe?'var(--s3)':inv?'var(--s5)':'var(--s1)'}"></i>
+      <span class="an">${esc(a.name)}<span class="sub">${esc(a.balance_src)}${inv?' · 投資，不算可動用':''} · ${a.n_txns} 筆${warn?` · <span style="color:var(--warn)">${esc(warn)}</span>`:''}</span></span>
       <span class="av ${owe?'neg':''}">${owe?'-':''}${F(a.balance||0)}</span><span class="caret">›</span></div>`;
   }).join('') : '<div class="empty">還沒有帳戶資料。</div>';
 

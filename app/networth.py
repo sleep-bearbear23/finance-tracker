@@ -22,8 +22,10 @@ norm = acct.norm
 _KIND_LABEL = {"cash": "現金", "credit": "欠款", "invest": "投資"}
 
 
-async def compute(session) -> dict:
-    reg = await acct.registry(session)
+async def compute(session, reg: dict | None = None) -> dict:
+    # `reg` lets a caller that already built the registry (app.facts) avoid a second
+    # pass — and, more importantly, guarantees both are looking at the same one.
+    reg = reg if reg is not None else await acct.registry(session)
     real = [a for a in reg.values() if a["kind"] in ("cash", "credit", "invest")]
 
     assets = debts = spendable = runway = invest = 0.0

@@ -272,7 +272,9 @@ def _looks_like_question(text: str) -> bool:
 
 # Words that hint Momo is reporting an invoice landing or a new booking (not just asking).
 _INVOICE_HINTS = ("入帳", "到帳", "收到了", "付了", "付款", "進來了", "匯了", "匯款",
-                  "接了", "接到", "新的案子", "新案子", "下個月有", "談成", "簽了", "款到")
+                  "接了", "接到", "新的案子", "新案子", "下個月有", "談成", "簽了", "款到",
+                  # a booked payment can also CHANGE — amount revised, date slipped
+                  "變成", "改成", "改為", "更正", "delay", "延到", "延後", "改到", "殺青", "wrap")
 
 # Words that hint Momo is stating an account balance / card debt (lets a first account be set by chat).
 _BALANCE_HINTS = ("欠", "餘額", "戶頭", "帳戶", "存款", "balance", "剩下", "現在有", "現在是",
@@ -288,7 +290,11 @@ async def _route_text(session, text: str) -> str:
     # Balance update for a manually-tracked account (card debt, cash on hand, Apple, etc.).
     # Runs when there's a number AND the message either names a known account or clearly talks
     # about a balance — so even the FIRST account (e.g. a card she doesn't know yet) can be set.
-    if any(ch.isdigit() for ch in text):
+    pend = await prefs.pending_invoices(session)
+    names_pending = [str(p.get("note") or "") for p in pend if p.get("note")]
+    about_invoice = any(n and prefs._norm(n) in prefs._norm(text) for n in names_pending)
+
+    if any(ch.isdigit() for ch in text) and not about_invoice:
         prof = await prefs.get_income_profile(session)
         names = [a.get("name") for a in prof.get("accounts", []) if a.get("name")]
         if names or any(k in text.lower() for k in _BALANCE_HINTS):
@@ -299,13 +305,20 @@ async def _route_text(session, text: str) -> str:
 
     # Invoice tracking: a pending payment landed, or a new expected payment came up.
     # Gated on invoice-ish words so ordinary chat/questions don't pay for the extra parse.
-    if any(h in text for h in _INVOICE_HINTS):
-        pend = await prefs.pending_invoices(session)
+    if about_invoice or any(h in text for h in _INVOICE_HINTS):
         cmd = await llm.parse_invoice_command(text, pend)
         if cmd.get("action") == "received" and cmd.get("which"):
             hit = await prefs.mark_invoice(session, cmd["which"], "received")
             if hit:
                 return await llm.invoice_ack("received", hit)
+        elif cmd.get("action") == "update" and cmd.get("which"):
+            hit = await prefs.update_invoice(session, cmd["which"], cmd.get("amount"),
+                                             cmd.get("when"), cmd.get("note"))
+            if hit:
+                return await llm.invoice_ack("update", hit)
+            # nothing matched — say so instead of falling through to free-text Q&A,
+            # where she would happily claim to have changed a number she never touched
+            return await llm.invoice_miss(cmd.get("which"), await prefs.pending_invoices(session))
         elif cmd.get("action") == "add" and cmd.get("amount"):
             item = await prefs.add_invoice(session, cmd["amount"], cmd.get("when"), cmd.get("note"))
             return await llm.invoice_ack("add", item)

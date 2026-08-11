@@ -176,10 +176,15 @@ async def parse_invoice_command(text: str, pending: list) -> dict:
         "The user is a freelancer talking to their bookkeeper about expected payments (invoices/gigs). "
         f"Currently-pending expected payments: {lst}.\n"
         "Decide the message's intent. Return ONLY JSON, no prose, no code fences:\n"
-        '{"action": "received" | "add" | null, "which": "<name of the pending item, for received>", '
+        '{"action": "received" | "add" | "update" | null, '
+        '"which": "<name of the existing pending item, for received/update>", '
         '"amount": <number or null>, "when": "YYYY-MM" | null, "note": "<short name, for add>"}.\n'
         "action='received': they say one of the pending payments HAS NOW landed / been paid / 到帳 / "
         "入帳 / 收到了. Put the matching item's name in 'which'.\n"
+        "action='update': an EXISTING pending payment changed — the amount moved, the date "
+        "slipped, the name was wrong (e.g. 'Avia 從 2800 變成 2850', '那筆延到九月'). Put the "
+        "existing item's name in 'which' and the NEW amount/when in 'amount'/'when'. Prefer "
+        "'update' over 'add' whenever the message refers to a payment already on the list.\n"
         "action='add': they mention a NEW gig/payment they now expect, with an amount. Fill amount/when/note.\n"
         "action=null: it's a QUESTION (e.g. 還沒收到的薪水有多少), an expense, or unrelated. "
         "When unsure, use null."
@@ -200,6 +205,23 @@ async def parse_invoice_command(text: str, pending: list) -> dict:
         return {"action": None, "which": None, "amount": None, "when": None, "note": None}
 
 
+async def invoice_miss(which, pending: list) -> str:
+    """She was asked to change a booked payment and couldn't find it. Say that, out loud.
+
+    The alternative is falling through to free-text Q&A, where she has no tool and will
+    still sound like she did it — which is how "Avia 2800 → 2850" got acknowledged and
+    never recorded."""
+    lst = "、".join(
+        f"{p.get('note') or '某案'}(${float(p.get('amount') or 0):.0f})" for p in pending
+    ) or "（目前待收款是空的）"
+    instr = (
+        f"默默要你改一筆待收款「{which}」，但你手上的待收款清單裡找不到這筆：{lst}。"
+        "老實跟他說你沒找到、所以還沒改，請他講清楚是哪一筆或直接給你新的一筆。"
+        "用你的口氣，一兩句，不要假裝改好了。"
+    )
+    return await _say(instr, max_tokens=200)
+
+
 async def invoice_ack(kind: str, item: dict) -> str:
     nm = item.get("note") or "那筆"
     amt = float(item.get("amount") or 0)
@@ -207,6 +229,12 @@ async def invoice_ack(kind: str, item: dict) -> str:
         instr = (
             f"默默的「{nm}」那筆預期收入 ${amt:.0f} 終於入帳了，你把它從待收款劃掉、之後就當實際收入算。"
             "用你的口氣簡短回一句，替他開心一下、記好了。一兩句就好。"
+        )
+    elif kind == "update":
+        wn = item.get("when") or "時間未定"
+        instr = (
+            f"默默剛更正了一筆待收款：「{nm}」改成 ${amt:.0f}，預計 {wn}。你已經把數字改過來了。"
+            "用你的口氣簡短回一句確認改好了。一兩句就好。"
         )
     else:
         wn = item.get("when") or "時間未定"

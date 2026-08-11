@@ -1,0 +1,164 @@
+"""Dashboard consistency — the blocks must agree with each other, not just look right.
+
+Momo's report: "my investment account disappears, and data in accounts and net asset
+blocks aren't matching… the dash should be a whole database back end and each block
+draws from the same database."
+
+So these checks don't test one endpoint at a time. They call the real routes and
+cross-compare the numbers a person would read side by side on the screen.
+
+    PYTHONPATH=. python3 tests_dash.py
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+os.environ.update(
+    DATABASE_URL="sqlite+aiosqlite:////tmp/dashtest.db",
+    ANTHROPIC_API_KEY="x", LINE_CHANNEL_ACCESS_TOKEN="x", LINE_CHANNEL_SECRET="x",
+    DASHBOARD_TOKEN="tok",
+)
+Path("/tmp/dashtest.db").unlink(missing_ok=True)
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app import cleanup, dashboard, migrate, prefs, retag  # noqa: E402
+from app import facts as F  # noqa: E402
+from app.config import TZ  # noqa: E402
+from app.db import Session, engine, init_db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import Account, Transaction  # noqa: E402
+
+PASS, FAIL = [], []
+EPS = 0.011
+
+
+def check(name, cond, detail=""):
+    (PASS if cond else FAIL).append(name)
+    print(f"  {'PASS' if cond else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
+
+
+def near(a, b):
+    return abs((a or 0) - (b or 0)) < EPS
+
+
+async def seed():
+    await init_db()
+    await migrate.run(engine)
+    raw = json.loads(Path("app/data/applecard.json").read_text())
+    async with Session() as s:
+        # Momo's real shape: two synced Chase accounts (one of them a brokerage) plus
+        # three manual ones she reports herself.
+        s.add(Account(id="chk", name="Chase Total Checking (1234)", org="Chase", balance=3120.55))
+        s.add(Account(id="sd", name="Self-Directed (7435)", org="J.P. Morgan", balance=2774.10))
+        for r in raw:
+            s.add(Transaction(
+                id=r["id"], account_id="applecard", amount=r["amount"], merchant_desc=r["desc"],
+                posted_at=datetime.fromisoformat(r["date"]).replace(tzinfo=TZ),
+                category=r.get("cat"), status="auto", source="applecard"))
+        await s.commit()
+        await cleanup.ensure_accounts(s)
+        await prefs.update_account(s, "Apple Goldman Sachs Savings", 7472.63, "cash")
+        await prefs.update_account(s, "Apple Card", 2626.01, "credit")
+        await prefs.update_account(s, "Venmo", 145.28, "cash")
+        await retag.retag(s)
+        await retag.net_refunds(s)
+        await dashboard.write_snapshot(s)
+
+
+async def main():
+    await seed()
+    app.router.lifespan_context = None
+    c = TestClient(app)
+    g = lambda p: c.get(p if "?" in p else p + "?t=tok",   # noqa: E731
+                        params=None).json()
+
+    ov = g("/api/overview")
+    acc = g("/api/accounts")
+    tr = g("/api/trends")
+    led = g("/api/ledger?t=tok&limit=500")
+
+    print("\n[1] the audit the app runs on itself")
+    for name, payload in (("overview", ov), ("accounts", acc), ("trends", tr)):
+        check(f"{name} reports no internal disagreement", not payload.get("audit"),
+              "; ".join(payload.get("audit") or []))
+
+    print("\n[2] the investment account is visible everywhere it should be")
+    names = [a["name"] for a in acc["accounts"]]
+    check("Self-Directed is in the accounts list", any("Self-Directed" in n for n in names),
+          str(names))
+    check("it is typed as invest, not cash",
+          any(a["kind"] == "invest" for a in acc["accounts"]))
+    check("net-worth rows list it too",
+          any("Self-Directed" in r["name"] for r in ov["accounts"]))
+    check("accounts card and net-worth card list the SAME accounts",
+          sorted(names) == sorted(r["name"] for r in ov["accounts"]),
+          f"{sorted(names)} vs {sorted(r['name'] for r in ov['accounts'])}")
+
+    print("\n[3] every total agrees with every other total")
+    check("accounts.cash_total == overview.spendable", near(acc["cash_total"], ov["spendable"]),
+          f'{acc["cash_total"]} vs {ov["spendable"]}')
+    check("accounts.invest_total == overview.invest", near(acc["invest_total"], ov["invest"]))
+    check("accounts.debt_total == overview.debts", near(acc["debt_total"], ov["debts"]))
+    check("accounts.net == overview.net_worth", near(acc["net"], ov["net_worth"]))
+    listed = sum(a["balance"] * (-1 if a["kind"] == "credit" else 1) for a in acc["accounts"])
+    check("the account rows literally add up to net worth", near(listed, ov["net_worth"]),
+          f"{listed:.2f} vs {ov['net_worth']}")
+    check("spendable excludes the brokerage",
+          near(ov["assets"], ov["spendable"] + ov["invest"]))
+    check("runway discounts the brokerage but not cash",
+          near(ov["runway_net"],
+               ov["spendable"] + ov["invest"] * ov["haircut"] - ov["debts"]))
+
+    print("\n[4] one definition of spending, in every chart")
+    flows_spend = sum(f["spend"] for f in tr["flows"])
+    months = {m["month"]: m for m in tr["monthly"]}
+    # only months where BOTH halves are inside the 12-period window are comparable —
+    # the oldest month in the window is half-covered by construction
+    halves: dict[str, int] = {}
+    for fl in tr["flows"]:
+        halves[fl["key"][:7]] = halves.get(fl["key"][:7], 0) + 1
+    overlap = [m for m in months if halves.get(m) == 2]
+    monthly_spend = sum(months[m]["spend"] for m in overlap)
+    flows_in_overlap = sum(f["spend"] for f in tr["flows"] if f["key"][:7] in overlap)
+    check("monthly bars == half-month flows over the same months",
+          near(monthly_spend, flows_in_overlap),
+          f"{monthly_spend:.2f} vs {flows_in_overlap:.2f}")
+    check("flows total is a real number", flows_spend > 0, f"{flows_spend:.2f}")
+    check("no half-month shows negative spending",
+          all(f["spend"] >= -EPS for f in tr["flows"]),
+          str([f["key"] for f in tr["flows"] if f["spend"] < 0]))
+    check("category breakdown carries Chinese labels",
+          all(x.get("label") for x in tr["category_spend"]))
+
+    print("\n[5] the ledger agrees with the charts")
+    async with Session() as s:
+        f = await F.build(s)
+    check("ledger row count == transactions in the registry",
+          led["matched"] == len(f.txns), f'{led["matched"]} vs {len(f.txns)}')
+    check("ledger total_out == facts all-time spend",
+          near(led["total_out"], f.spend_in(f.txns and min(filter(None,
+               (__import__("app.budget", fromlist=["x"]).eff_date(t) for t in f.txns))),
+               f.today)),
+          f'{led["total_out"]}')
+
+    print("\n[6] per-account pages agree with the account list")
+    for a in acc["accounts"]:
+        d = g(f"/api/account?t=tok&id={a['id']}")
+        check(f"{a['name'][:22]}: balance matches the list",
+              near(d["account"]["balance"], a["balance"]))
+        check(f"{a['name'][:22]}: no negative half-month",
+              all(x["spend"] >= -EPS for x in d["series"]))
+
+    print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
+    if FAIL:
+        print("FAILED: " + ", ".join(FAIL))
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))

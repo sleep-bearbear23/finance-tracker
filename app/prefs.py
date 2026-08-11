@@ -148,27 +148,49 @@ async def pending_invoices(session) -> list:
     return [u for u in prof["upcoming"] if (u.get("status") or "pending") != "received"]
 
 
-async def mark_invoice(session, which, status="received") -> dict | None:
-    """Flip a pending invoice's status (e.g. it finally landed). Match by note, then by amount."""
-    items = _load_list(await get_kv(session, "cfg_upcoming"))
+def _find_invoice(items: list, which) -> dict | None:
+    """Match a pending payment by name first, then by amount."""
     key = _norm(which)
-    hit = None
     if key:
         for u in items:
             n = _norm(u.get("note"))
             if n and (key in n or n in key):
-                hit = u
-                break
+                return u
+    try:
+        amt = float(re.sub(r"[^0-9.]", "", str(which)))
+    except (TypeError, ValueError):
+        amt = None
+    if amt:
+        for u in items:
+            if abs(float(u.get("amount") or 0) - amt) < 0.5:
+                return u
+    return None
+
+
+async def update_invoice(session, which, amount=None, when=None, note=None) -> dict | None:
+    """Change an existing expected payment — the amount moved, the date slipped.
+
+    This did not exist, so "Avia 從 2800 變成 2850" had nowhere to go: the parser only
+    knew 'received' and 'add', the message fell through to free-text Q&A, and she
+    cheerfully said she'd updated it. Saying it and doing it are now the same code path."""
+    items = _load_list(await get_kv(session, "cfg_upcoming"))
+    hit = _find_invoice(items, which)
     if hit is None:
-        try:
-            amt = float(re.sub(r"[^0-9.]", "", str(which)))
-        except (TypeError, ValueError):
-            amt = None
-        if amt:
-            for u in items:
-                if abs(float(u.get("amount") or 0) - amt) < 0.5:
-                    hit = u
-                    break
+        return None
+    if amount is not None:
+        hit["amount"] = float(amount)
+    if when:
+        hit["when"] = when
+    if note:
+        hit["note"] = note
+    await set_kv(session, "cfg_upcoming", json.dumps(items))
+    return hit
+
+
+async def mark_invoice(session, which, status="received") -> dict | None:
+    """Flip a pending invoice's status (e.g. it finally landed)."""
+    items = _load_list(await get_kv(session, "cfg_upcoming"))
+    hit = _find_invoice(items, which)
     if hit is None:
         return None
     hit["status"] = status
