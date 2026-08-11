@@ -71,10 +71,8 @@
 </div></div>
 
 <script>
-const CATZH = {"Food & Groceries":"買菜/超市","Eating Out":"吃外面/外送","Coffee":"咖啡/手搖",
- "Rideshare & Transit":"交通/停車","Gas":"加油","Rent & Utilities":"帳單/固定","Subscriptions":"訂閱",
- "Shopping":"購物","Beauty":"美妝/美髮","Pets":"寵物","Art & Work Supplies":"工作/美術","Health":"健康/藥妝",
- "Fun & Going Out":"玩樂/演出","Travel":"旅行","Gifts":"送禮/請客","Life Admin":"人生行政","Transfers/Ignore":"轉帳/忽略"};
+// Categories now arrive from the server (app/taxonomy.py) as
+// {id, label, treatment, group, note} — no hardcoded copy to drift out of sync.
 const F0 = n => "$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
 const el = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -99,8 +97,9 @@ function render(){
       <div class="head"><span class="name">${esc(g.display.slice(0,52))}</span>
         <span class="amt">${F0(g.total)}${g.count>1?` · ${g.count}筆`:''}</span></div>
       <div class="meta">${esc(g.first)} ~ ${esc(g.last)} · 來源：${esc((g.sources||[]).join('/'))}</div>
-      <div class="chips">${CATS.map(c=>`<button class="chip ${answers[g.key]&&answers[g.key].cat===c?'on':''}"
-        onclick="pick('${g.key}','${c}',this)">${CATZH[c]||c}</button>`).join('')}</div>
+      <div class="chips">${CATS.map(c=>`<button class="chip ${answers[g.key]&&answers[g.key].cat===c.id?'on':''}"
+        title="${esc(c.group)}｜${esc(c.note)}"
+        onclick="pick('${g.key}','${c.id}',this)">${esc(c.label)}</button>`).join('')}</div>
       <div class="togs"><button class="tog ${answers[g.key]&&answers[g.key].nec?'on':''}"
         onclick="tog('${g.key}',this)">必要開銷</button></div>
       <input class="note" placeholder="補一句（可空）" value="${esc(answers[g.key]&&answers[g.key].note||'')}"

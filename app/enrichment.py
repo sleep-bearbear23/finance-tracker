@@ -78,7 +78,7 @@ async def handle_reply(session, reply_text: str) -> tuple[bool, str | None]:
             if is_income is True:
                 r.status, r.category = "income", "Income"
             elif is_income is False:
-                r.status, r.category = "ignored", "Transfers/Ignore"
+                r.status, r.category = "ignored", categories.TRANSFER
             else:
                 r.status = "enriched"
         else:

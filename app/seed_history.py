@@ -123,7 +123,7 @@ async def reclassify_income(session) -> int:
         if mem is not None and mem.is_income is True:
             continue  # Momo already confirmed this sender is income — keep
         t.status = "ignored"
-        t.category = "Transfers/Ignore"
+        t.category = categories.TRANSFER
         t.note = (t.note or "") + "（自動：非工作收入，已從收入移除）"
         moved += 1
     await set_kv(session, "income_cleanup_v1", "1")

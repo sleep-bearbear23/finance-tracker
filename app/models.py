@@ -45,6 +45,20 @@ class Transaction(Base):
     # where the charge came from: simplefin | shortcut (Apple Pay tap) | manual (told via LINE)
     source: Mapped[str] = mapped_column(String(16), default="simplefin", index=True)
 
+    # Money coming in is not all the same thing: pay | reimburse_work | reimburse_family
+    # | personal | refund. Only 'pay' is income; the reimburse/refund kinds cancel an
+    # earlier charge, and 'personal' is invisible. See taxonomy.INFLOW_LABEL.
+    inflow_kind: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    # For a work purchase: will a production pay this back? None = not asked yet.
+    reimbursable: Mapped[bool | None] = mapped_column(nullable=True)
+    # For a refund/reimbursement: the id of the charge it reverses, when we found it.
+    nets_txn_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # The date the budget should count this on. Only ever set for a refund: a return
+    # lands one or two months after the order, so booking the credit on the day it
+    # arrived made March look terrible and June look free. The ledger keeps the true
+    # posted_at; the budget uses this.
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     batch_seq: Mapped[int | None] = mapped_column(nullable=True)  # 1..n order shown to the user
     prompted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

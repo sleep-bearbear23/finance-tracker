@@ -10,6 +10,7 @@ the whole thing 503s so it can never be left open by accident.
 from __future__ import annotations
 
 import hmac
+import json
 from collections import defaultdict
 from datetime import timedelta
 from pathlib import Path
@@ -18,7 +19,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import accounts as acct, budget, categories, networth, period as P, prefs
+from . import accounts as acct, budget, categories, networth, period as P, prefs, taxonomy
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -26,6 +27,23 @@ from .models import Account, MerchantMemory, Message, Snapshot, Transaction
 router = APIRouter()
 _HTML = (Path(__file__).parent / "dashboard.html")
 _LABEL_HTML = (Path(__file__).parent / "label.html")
+
+
+def _cat_labels_json() -> str:
+    """id -> 中文, injected into the page so the screen never shows a raw slug."""
+    m = {cid: zh for cid, (zh, _t, _n) in taxonomy.CATEGORIES.items()}
+    m["__other"] = "其他"      # the donut's rolled-up tail
+    m["未分類"] = "未分類"
+    return json.dumps(m, ensure_ascii=False)
+
+
+def _cat_options() -> list[dict]:
+    """Category picker payload, grouped so the UI can show 固定 / 彈性 / 想要 … headers."""
+    return [
+        {"id": cid, "label": zh, "treatment": tr,
+         "group": taxonomy.TREATMENT_LABEL[tr], "note": nt}
+        for cid, (zh, tr, nt) in taxonomy.CATEGORIES.items()
+    ]
 
 
 def _authorized(request: Request) -> bool:
@@ -61,7 +79,7 @@ async def write_snapshot(session) -> None:
     row.net_worth = nw["net"]
     row.assets = nw["assets"]
     row.debts = nw["debts"]
-    row.cash = nw["assets"]
+    row.cash = nw["spendable"]  # brokerage is not grocery money
     row.allowance = b.get("allowance", 0.0)
     row.spent = b.get("spent", 0.0)
     row.income_biweekly = b.get("income_period", 0.0)
@@ -86,7 +104,7 @@ async def _pending_block(session, nw):
             "when": p.get("when"),
             "overdue": bool(p.get("when") and str(p.get("when"))[:7] < today_ym),
         })
-    cash_now = nw["assets"] - nw["debts"]
+    cash_now = nw["spendable"] - nw["debts"]
     return {"items": items, "total": round(total, 2), "projected": round(cash_now + total, 2)}
 
 
@@ -97,7 +115,7 @@ async def dash_page(request: Request):
         return Response("dashboard disabled", status_code=503)
     if not _authorized(request):
         return Response("unauthorized", status_code=403)
-    html = _HTML.read_text(encoding="utf-8")
+    html = _HTML.read_text(encoding="utf-8").replace("/*CATLABELS*/{}", _cat_labels_json())
     resp = HTMLResponse(html)
     # If they arrived with ?t=…, stash it in a cookie so the token leaves the URL bar.
     if request.query_params.get("t"):
@@ -151,7 +169,7 @@ async def api_unlabeled(request: Request):
             g["sources"] = sorted(g["sources"])
         return {"groups": out, "total": round(sum(g["total"] for g in out), 2),
                 "txns": sum(g["count"] for g in out),
-                "categories": [c for c in categories.CATEGORIES if c != "Income"]}
+                "categories": _cat_options()}
 
 
 @router.post("/api/label")
@@ -175,7 +193,7 @@ async def api_label(request: Request):
             lab = labels.get(k)
             if not lab or lab.get("cat") not in valid:
                 continue
-            if lab["cat"] == "Transfers/Ignore":
+            if lab["cat"] == categories.TRANSFER:
                 t.status = "ignored"
             t.category = lab["cat"]
             if lab.get("note"):
@@ -189,7 +207,7 @@ async def api_label(request: Request):
             if mem is None:
                 s.add(MerchantMemory(
                     key=k, category=lab["cat"], note=lab.get("note"),
-                    is_income=(False if lab["cat"] == "Transfers/Ignore" else None),
+                    is_income=(False if lab["cat"] == categories.TRANSFER else None),
                     necessary=bool(lab.get("nec")),
                 ))
                 taught += 1
@@ -218,6 +236,10 @@ async def api_overview(request: Request):
             "net_worth": nw["net"],
             "assets": nw["assets"],
             "debts": nw["debts"],
+            "spendable": nw["spendable"],
+            "invest": nw["invest"],
+            "runway_net": nw["runway_net"],
+            "haircut": nw["haircut"],
             "accounts": nw["rows"],
             "synced": [{"name": a.name, "balance": a.balance} for a in accts],
             "pending": pending,
@@ -372,14 +394,16 @@ async def api_ledger(request: Request):
             sel.append((d, ak, am, cat, t))
         sel.sort(key=lambda x: x[0], reverse=True)
 
-        total_out = sum(abs(t.amount) for d, ak, am, cat, t in sel if t.amount < 0 and t.status not in ("ignored", "reconciled"))
-        total_in = sum(t.amount for d, ak, am, cat, t in sel if t.amount > 0 and t.status == "income")
+        total_out = sum(budget.spend_amount(t) for d, ak, am, cat, t in sel if budget.is_spend(t))
+        total_in = sum(t.amount for d, ak, am, cat, t in sel if budget.is_income(t))
         page = sel[offset:offset + limit]
         return {
             "rows": [{
                 "date": d.strftime("%Y-%m-%d"), "account": am, "merchant": t.merchant_desc,
-                "amount": round(t.amount, 2), "category": cat, "status": t.status,
-                "source": t.source, "note": t.note,
+                "amount": round(t.amount, 2), "category": cat,
+                "cat_label": taxonomy.label(cat) if cat != "未分類" else cat,
+                "treatment": taxonomy.treatment(cat), "status": t.status,
+                "source": t.source, "note": t.note, "inflow": t.inflow_kind,
             } for d, ak, am, cat, t in page],
             "matched": len(sel), "offset": offset,
             "total_out": round(total_out, 2), "total_in": round(total_in, 2),
@@ -502,14 +526,14 @@ async def api_account(request: Request):
         sel.append((d, cat, t))
     sel.sort(key=lambda x: x[0], reverse=True)
     page = sel[offset:offset + limit]
-    out_total = sum(abs(t.amount) for d, c, t in sel if budget.is_spend(t))
+    out_total = sum(budget.spend_amount(t) for d, c, t in sel if budget.is_spend(t))
     in_total = sum(t.amount for d, c, t in sel if budget.is_income(t))
 
     return {
         "account": _acct_public(a),
         "series": [series[k] for k in keys],
         "curve": curve,
-        "categories": [{"category": c, "amount": round(v, 2)}
+        "categories": [{"category": c, "label": taxonomy.label(c), "amount": round(v, 2)}
                        for c, v in sorted(cats.items(), key=lambda x: -x[1])],
         "ledger": [{"date": d.isoformat(), "merchant": t.merchant_desc, "amount": round(t.amount, 2),
                     "category": c, "status": t.status, "source": t.source, "note": t.note}

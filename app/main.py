@@ -17,6 +17,7 @@ from . import (
     line_client,
     llm,
     memory,
+    migrate,
     onboarding,
     opsroom,
     profile,
@@ -24,12 +25,13 @@ from . import (
     reconcile,
     record,
     reports,
+    retag,
     seed_applecard,
     seed_history,
     simplefin,
 )
 from .config import now, settings
-from .db import Session, get_kv, init_db, set_kv
+from .db import Session, engine, get_kv, init_db, set_kv
 
 scheduler = AsyncIOScheduler(timezone=settings.TIMEZONE)
 
@@ -143,6 +145,12 @@ async def announce_deploy():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:  # add columns to tables create_all() already built (inflow_kind, …)
+        added = await migrate.run(engine)
+        if added:
+            print(f"[migrate] added {', '.join(added)}")
+    except Exception as e:
+        print(f"[migrate] error: {e!r}")
     scheduler.add_job(_poll_job, "interval", minutes=settings.POLL_INTERVAL_MIN, id="poll")
     scheduler.add_job(_flush_job, "interval", minutes=1, id="flush")
     scheduler.add_job(_alert_job, "interval", hours=6, id="alerts")
@@ -175,6 +183,14 @@ async def lifespan(app: FastAPI):
             nd = await cleanup.dedupe_ledger(s)  # drop manual copies of bank-synced accounts
             if nd:
                 print(f"[cleanup] removed {nd} duplicate ledger account(s)")
+            rt = await retag.retag(s)  # old English category names -> taxonomy ids
+            if rt:
+                print(f"[taxonomy] {rt}")
+                await opsroom.say(f"🏷️ taxonomy migration — {rt}")
+            rf = await retag.net_refunds(s)  # refunds inherit the category they reverse
+            if rf:
+                print(f"[netting] {rf}")
+                await opsroom.say(f"↩️ refund netting — {rf}")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

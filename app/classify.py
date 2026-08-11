@@ -10,14 +10,14 @@ async def classify(session, desc: str, amount: float, backfill: bool = False):
     """Return (status, category, note).
     backfill=True keeps history silent; otherwise unknown items become 'needs_context' (she asks)."""
     if categories.is_transfer(desc):
-        return "ignored", "Transfers/Ignore", None
+        return "ignored", categories.TRANSFER, None
 
     mem = await session.get(MerchantMemory, categories.merchant_key(desc))
     if mem is not None:
         if mem.is_income is True:
             return "income", "Income", mem.note
         if mem.is_income is False:
-            return "ignored", "Transfers/Ignore", mem.note
+            return "ignored", categories.TRANSFER, mem.note
         return "auto", (mem.category or categories.guess(desc)), mem.note
 
     if amount > 0:  # money in — work pay, or a payback / bill-split?
@@ -25,5 +25,5 @@ async def classify(session, desc: str, amount: float, backfill: bool = False):
         # assumed to be pay: silent history files it as a transfer, live deposits get asked.
         if await prefs.is_work_income_source(session, desc):
             return "income", "Income", None
-        return ("ignored", "Transfers/Ignore", None) if backfill else ("needs_context", None, None)
+        return ("ignored", categories.TRANSFER, None) if backfill else ("needs_context", None, None)
     return ("auto", categories.guess(desc), None) if backfill else ("needs_context", categories.guess(desc), None)

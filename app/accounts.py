@@ -28,6 +28,24 @@ _CARD_WORDS = ("card", "freedom", "credit", "visa", "mastercard", "amex", "disco
 NOTION_ID = "record:notion"
 OTHER_ID = "manual:other"
 
+# Brokerage / stock accounts. Momo's Self-Directed (7435) holds real money, but it is
+# not money she can spend this afternoon: the balance moves on its own and she has
+# decided not to touch it. So it counts toward net worth at full value, counts toward
+# emergency runway at a haircut, and never counts as spendable cash.
+_INVEST_WORDS = ("selfdirected", "self-directed", "brokerage", "投資", "股票",
+                 "jpmorganinvestment", "robinhood", "fidelity", "schwab", "vanguard",
+                 "etrade", "ira", "401k", "roth")
+
+#: How much of a market-valued balance we're willing to lean on. It can drop between
+#: the day she checks and the day she'd need it, so promising the full number would be
+#: the same kind of optimistic math we're trying to get rid of.
+INVEST_HAIRCUT = 0.85
+
+
+def is_invest(name: str) -> bool:
+    n = norm(name)
+    return any(w in n for w in (norm(w) for w in _INVEST_WORDS))
+
 # One account wearing two names: a manual-ledger name (left) is the SAME account the bank
 # already syncs (right) — e.g. Momo's "J.P. Morgan Investment" IS Chase "Self-Directed (7435)".
 # The synced copy always wins; the manual duplicate is dropped.
@@ -80,9 +98,11 @@ async def registry(session) -> dict[str, dict]:
     # 1) bank-synced accounts (Chase via SimpleFIN)
     for a in (await session.execute(select(Account))).scalars().all():
         bal = a.balance or 0.0
-        credit = is_credit(a.name) or bal < 0
+        invest = is_invest(a.name)
+        credit = (not invest) and (is_credit(a.name) or bal < 0)
         out[f"bank:{a.id}"] = {
-            "id": f"bank:{a.id}", "name": a.name or a.id, "kind": "credit" if credit else "cash",
+            "id": f"bank:{a.id}", "name": a.name or a.id,
+            "kind": "credit" if credit else "invest" if invest else "cash",
             "balance": abs(bal) if credit else bal,     # credit balance = amount owed
             "balance_src": "同步", "org": a.org or "",
             "balance_date": (aware(a.balance_date).date().isoformat() if a.balance_date else None),
@@ -105,13 +125,22 @@ async def registry(session) -> dict[str, dict]:
         if aid in out:  # same slug twice in the ledger — keep whichever states a balance
             if amt <= (out[aid]["balance"] or 0):
                 continue
+        kind = ("credit" if m.get("type") == "credit"
+                else "invest" if (m.get("type") == "invest" or is_invest(nm))
+                else "cash")
         out[aid] = {
-            "id": aid, "name": nm,
-            "kind": "credit" if m.get("type") == "credit" else "cash",
+            "id": aid, "name": nm, "kind": kind,
             "balance": amt, "balance_src": "自己報", "org": "", "balance_date": None,
             "raw_ids": set(),
         }
         known.append(norm(nm))
+
+    for a in out.values():
+        a["liquid"] = a["kind"] == "cash"
+        a["volatile"] = a["kind"] == "invest"   # balance moves without Momo doing anything
+        a["runway_value"] = round(
+            (a["balance"] or 0.0) * (INVEST_HAIRCUT if a["kind"] == "invest" else 1.0), 2
+        ) if a["kind"] in ("cash", "invest") else 0.0
     return out
 
 

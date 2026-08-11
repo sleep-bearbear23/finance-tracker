@@ -61,16 +61,23 @@ async def enrichment_confirm(txns) -> str:
 async def parse_reply(txns, reply: str) -> dict[int, dict]:
     """Map the user's free-form reply back to each numbered charge. Returns {index: {note, category}}."""
     body = _fmt(txns)
-    cats = ", ".join(CATEGORIES)
+    cats = ", ".join(f"{cid} ({zh})" for cid, (zh, _t, _n) in CATEGORIES.items())
     system = (
         "You extract structured data. Return ONLY valid JSON, no prose, no code fences.\n"
         "Each numbered item is marked 花了 (money out) or 收到 (money in). Given the user's reply, "
         'output an object keyed by the number (as a string), each value '
-        '{"note": "<short>", "category": "<one allowed category>", "is_income": <true|false|null>}.\n'
-        "For 花了 items: fill note + category; is_income = null.\n"
-        "For 收到 items: if the user says it is their OWN income/earnings/pay/client payment, "
-        'is_income = true and category "Income"; if it is someone paying them back, a refund, or a transfer, '
-        'is_income = false and category "Transfers/Ignore".\n'
+        '{"note": "<short>", "category": "<one allowed category id>", '
+        '"inflow": "<pay|reimburse_work|reimburse_family|personal|refund|null>"}.\n'
+        "For 花了 items: fill note + category; inflow = null.\n"
+        "For 收到 items, pick the inflow kind from what the user says:\n"
+        '  pay              — their OWN earnings: a client, a production, a day rate\n'
+        '  reimburse_work   — a production paying back something they bought for the job\n'
+        '  reimburse_family — parents covering a cost (car repair, a flight)\n'
+        '  personal         — a friend splitting a bill or paying them back\n'
+        '  refund           — a merchant refunding a purchase / a return\n'
+        "For 收到 items, also set category to the ORIGINAL spending category the money "
+        'reverses when it is a refund or reimbursement (e.g. a returned Amazon order is '
+        '"shopping"); use "transfer" only when money simply moved between the user\'s own accounts.\n'
         "If an item is not addressed in the reply, omit it.\n"
         f"Allowed categories: {cats}"
     )
@@ -84,10 +91,14 @@ async def parse_reply(txns, reply: str) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for k, v in data.items():
         try:
+            inflow = v.get("inflow") or None
             out[int(k)] = {
                 "note": v.get("note"),
                 "category": v.get("category"),
-                "is_income": v.get("is_income"),
+                "inflow": inflow,
+                # legacy consumers still read is_income; only real pay is income now
+                "is_income": (True if inflow == "pay"
+                              else False if inflow else v.get("is_income")),
             }
         except Exception:
             continue

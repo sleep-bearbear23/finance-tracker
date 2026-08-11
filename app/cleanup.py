@@ -76,11 +76,11 @@ async def run(session) -> tuple[int, int]:
     for t in rows:
         # Card payments / internal moves misfiled as spending → ignore. Never touch
         # rows Momo already labeled with a real category.
-        if (t.category in (None, "Transfers/Ignore")
+        if (t.category in (None, categories.TRANSFER)
                 and t.status not in ("ignored", "reconciled")
                 and categories.is_transfer(t.merchant_desc)):
             t.status = "ignored"
-            t.category = "Transfers/Ignore"
+            t.category = categories.TRANSFER
             n_xfer += 1
             continue
         # Fill empty categories with the new, wider guess. Existing labels stay.

@@ -81,7 +81,7 @@ async def build_context(session) -> str:
                 wn = p.get("when") or "時間未定"
                 overdue = "，這筆照理該進來了、幫默默確認收到沒" if (p.get("when") and str(p.get("when"))[:7] < today_ym) else ""
                 lines.append(f"  - {nm}：${amt:.2f}，預計 {wn}{overdue}")
-            cash_now = (nw.get("assets", 0.0) - nw.get("debts", 0.0)) if nw else 0.0
+            cash_now = (nw.get("spendable", 0.0) - nw.get("debts", 0.0)) if nw else 0.0
             lines.append(f"待收款合計：${total:.2f}。")
             lines.append(
                 f"如果這些都入帳，默默手上大概會有 ${cash_now + total:.2f}"

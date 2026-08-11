@@ -12,15 +12,16 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 from . import period as P
+from . import taxonomy as T
 from .config import aware, now
 from .db import get_kv
 from .models import Transaction
 from .prefs import get_income_profile, get_prefs
 
-# Rent/utilities/subscriptions are covered by the user's stated fixed costs, so they're
-# excluded from discretionary spend to avoid double-counting.
-FIXED_CATEGORIES = {"Rent & Utilities", "Subscriptions"}
-NON_SPEND_CATEGORIES = {"Income", "Transfers/Ignore"}
+# Which categories mean what is now a property of the taxonomy, not a hard-coded list
+# here — add a category and the budget follows automatically.
+FIXED_CATEGORIES = set(T.of_treatment(T.FIXED))
+NON_SPEND_CATEGORIES = set(T.of_treatment(T.SKIP))
 STATUS_EXCLUDE = {"reconciled", "ignored"}  # merged duplicates / user-ignored
 
 ACTUAL_WINDOW = 6      # trailing half-months used for "what really landed" (= 3 months)
@@ -29,23 +30,50 @@ DEFAULT_BLEND = 0.5    # how much the budget leans on actuals vs the plan
 
 
 def is_spend(t) -> bool:
-    return (
-        t.amount < 0
-        and t.status not in STATUS_EXCLUDE
-        and (t.category or "") not in NON_SPEND_CATEGORIES
-    )
+    """Rows that belong in a spending bucket — including the money that came *back*.
+
+    A refund or a production reimbursement carries the category of the charge it
+    reverses and a positive amount, so summing the bucket nets it automatically.
+    Momo returns 41% of what she buys on Amazon; counting only the outgoing side
+    overstated her spending by hundreds of dollars a month."""
+    if t.status in STATUS_EXCLUDE or (t.category or "") in NON_SPEND_CATEGORIES:
+        return False
+    if t.amount < 0:
+        return True
+    return getattr(t, "inflow_kind", None) in T.CANCELS_SPEND
+
+
+def spend_amount(t) -> float:
+    """Positive for money out, negative for money that came back."""
+    return -t.amount
 
 
 def is_discretionary(t) -> bool:
-    return is_spend(t) and (t.category or "") not in FIXED_CATEGORIES
+    """Does it eat the half-month allowance? Only the decisions Momo actually makes —
+    固定 doesn't, 工作 doesn't (that's a business cost), 不規則 doesn't (that's a shock)."""
+    return is_spend(t) and T.in_allowance(t.category)
 
 
 def is_income(t) -> bool:
-    return t.amount > 0 and t.status == "income"
+    """Only real pay. A friend's Zelle, a refund and a劇組報帳 are all money in, and
+    none of them are earnings."""
+    if t.amount <= 0:
+        return False
+    kind = getattr(t, "inflow_kind", None)
+    if kind is not None:
+        return kind == T.PAY
+    return t.status == "income"  # rows from before inflow kinds existed
 
 
 def eff_date(t) -> date | None:
-    d = aware(t.posted_at or t.created_at)
+    """Which period does this row belong to?
+
+    Almost always the day it posted. The exception is a refund: Momo's Amazon returns
+    land one to two months after the order, so counting the credit on the day it
+    arrived made March look like a blowout and June look free — June 2026 came out at
+    *minus* $132 of discretionary spend, which is not a thing that can happen. A matched
+    refund is booked back onto the month of the charge it reverses."""
+    d = aware(getattr(t, "effective_at", None) or t.posted_at or t.created_at)
     return d.date() if d else None
 
 
@@ -143,7 +171,7 @@ async def flows(session, keys: list[str], account_filter=None) -> dict[str, dict
         if k not in out:
             continue
         if is_spend(t):
-            out[k]["spend"] += abs(t.amount)
+            out[k]["spend"] += spend_amount(t)
         elif is_income(t):
             out[k]["income"] += t.amount
     for v in out.values():
@@ -164,8 +192,10 @@ async def status(session, key: str | None = None) -> dict:
     sav_p = savings_for(prefs_["savings_amount"], prefs_["savings_cadence"], key, income_p)
     allowance = max(0.0, income_p - fixed_p - sav_p)
 
-    rows = (await session.execute(select(Transaction).where(Transaction.amount < 0))).scalars().all()
-    spent = sum(abs(t.amount) for t in rows
+    # Not filtered to amount < 0: a refund inside the period has to come back off the
+    # total, otherwise a returned $200 order eats the allowance twice.
+    rows = (await session.execute(select(Transaction))).scalars().all()
+    spent = sum(spend_amount(t) for t in rows
                 if (d := eff_date(t)) and start <= d <= end and is_discretionary(t))
 
     today = now().date()

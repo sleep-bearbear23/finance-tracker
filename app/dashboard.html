@@ -406,6 +406,10 @@
 <script>
 const F = n => (n<0?"-$":"$") + Math.abs(Number(n||0)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const F0 = n => (n<0?"-$":"$") + Math.abs(Number(n||0)).toLocaleString(undefined,{maximumFractionDigits:0});
+// Category ids are stable English slugs so the data survives renames; the screen is
+// Chinese. This map is injected by the server from app/taxonomy.py — one source of truth.
+const CATZH = /*CATLABELS*/{};
+const cz = c => (c==null||c==='') ? '未分類' : (CATZH[c] || c);
 const CATCOLORS = ['#15ad81','#5b8df5','#e2477e','#c98500','#9085e9','#d95926','#17a2b8'];
 const CATCOLOR = {}; let _ci = 0;
 const catColor = c => CATCOLOR[c] || (CATCOLOR[c] = CATCOLORS[(_ci++) % CATCOLORS.length]);
@@ -547,21 +551,21 @@ async function loadHome(){
 
   el('recentBox').innerHTML= rec.rows.length ? rec.rows.map(t=>`
     <div class="arow" style="cursor:default"><i class="dot" style="background:${t.category==='未分類'?'rgba(255,255,255,.25)':catColor(t.category)}"></i>
-      <span class="an">${esc(t.merchant.slice(0,30))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.category)} · ${esc(t.account)}</span></span>
+      <span class="an">${esc(t.merchant.slice(0,30))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.cat_label||cz(t.category))} · ${esc(t.account)}</span></span>
       <span class="av ${t.amount<0?'':'pos'}">${F(t.amount)}</span></div>`).join('')
     : '<div class="empty">還沒有交易。</div>';
 
   const cs=t.category_spend.slice(0,5);
   const other=t.category_spend.slice(5).reduce((s,x)=>s+x.amount,0);
-  if(other>0) cs.push({category:'其他',amount:other});
+  if(other>0) cs.push({category:'__other',amount:other});
   el('catTotal').textContent=F0(t.category_spend.reduce((s,x)=>s+x.amount,0));
   if(cs.length){
     chart('catChart',{type:'doughnut',
-      data:{labels:cs.map(c=>c.category),datasets:[{data:cs.map(c=>c.amount),
+      data:{labels:cs.map(c=>cz(c.category)),datasets:[{data:cs.map(c=>c.amount),
         backgroundColor:cs.map(c=>catColor(c.category)),borderColor:'#1e2143',borderWidth:3,borderRadius:3}]},
       options:{cutout:'70%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
     el('catLegend').innerHTML=cs.map(c=>
-      `<div class="cl"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(c.category)}<b>${F0(c.amount)}</b></div>`).join('');
+      `<div class="cl"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(cz(c.category))}<b>${F0(c.amount)}</b></div>`).join('');
   } else el('catLegend').innerHTML='<div class="empty">近 90 天沒有支出。</div>';
 
   const fl=t.flows||[];
@@ -622,12 +626,12 @@ async function loadAccount(){
 
   const tot=d.categories.reduce((s,x)=>s+x.amount,0);
   el('aCats').innerHTML=d.categories.length? d.categories.map(c=>`
-    <div class="row"><span class="l"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(c.category)}
+    <div class="row"><span class="l"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(c.label||cz(c.category))}
       <span class="tag">${tot?Math.round(100*c.amount/tot):0}%</span></span><span class="r">${F(c.amount)}</span></div>`).join('')
     : '<div class="empty">近 90 天沒有支出。</div>';
 
   if(!aInit){
-    el('aCat').innerHTML='<option value="">所有分類</option>'+d.facet_categories.map(c=>`<option>${esc(c)}</option>`).join('');
+    el('aCat').innerHTML='<option value="">所有分類</option>'+d.facet_categories.map(c=>`<option value="${esc(c)}">${esc(cz(c))}</option>`).join('');
     aInit=true;
   }
   el('aTotals').textContent=`${d.matched.toLocaleString()} 筆 · 支出 ${F0(d.total_out)} · 進帳 ${F0(d.total_in)}`
@@ -635,7 +639,7 @@ async function loadAccount(){
   el('aTable').innerHTML=d.ledger.length? `<table>
     <thead><tr><th>日期</th><th>商家</th><th class="num">金額</th><th>分類</th><th>來源</th></tr></thead><tbody>`+
     d.ledger.map(t=>`<tr><td>${esc(t.date)}</td><td style="white-space:normal;max-width:280px">${esc(t.merchant)}</td>
-      <td class="num ${t.amount<0?'neg':'pos'}">${F(t.amount)}</td><td>${esc(t.category)}</td>
+      <td class="num ${t.amount<0?'neg':'pos'}">${F(t.amount)}</td><td>${esc(t.cat_label||cz(t.category))}</td>
       <td class="tag">${esc(t.source)}</td></tr>`).join('')+'</tbody></table>'
     : '<div class="empty" style="padding:12px">沒有符合的交易。</div>';
   el('aPrev').style.visibility=d.offset>0?'visible':'hidden';
@@ -695,7 +699,7 @@ async function loadBrain(){
      <div class="row"><span class="l">緊急預備金目標</span><span class="r">${F0(c.emergency_target)}</span></div>`;
   el('memBox').innerHTML=d.merchant_memory.length? `<table>
     <thead><tr><th>商家</th><th>分類</th><th>類型</th><th>備註</th></tr></thead><tbody>`+
-    d.merchant_memory.map(m=>`<tr><td class="mono">${esc(m.key)}</td><td>${esc(m.category||'')}</td>
+    d.merchant_memory.map(m=>`<tr><td class="mono">${esc(m.key)}</td><td>${esc(m.category?cz(m.category):'')}</td>
       <td>${m.is_income===true?'收入':m.is_income===false?'轉帳':'支出'}</td>
       <td style="white-space:normal">${esc(m.note||'')}</td></tr>`).join('')+'</tbody></table>'
     : '<div class="empty" style="padding:12px">還沒學到商家。</div>';
