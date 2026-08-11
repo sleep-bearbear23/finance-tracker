@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from . import budget, llm, memory, networth, prefs
+from . import allowance as AL, budget, llm, memory, networth, prefs, taxonomy
 from .config import aware, now
 from .models import Account, Transaction
 
@@ -27,7 +27,8 @@ async def build_context(session) -> str:
     for t in spend:
         d = eff_date(t)
         if d and d >= month_start:
-            month_by_cat[t.category or "未分類"] = month_by_cat.get(t.category or "未分類", 0.0) + abs(t.amount)
+            ck = taxonomy.label(t.category) if t.category else "未分類"
+            month_by_cat[ck] = month_by_cat.get(ck, 0.0) + abs(t.amount)
         if d and d >= biweek_start:
             biweek_total += abs(t.amount)
 
@@ -84,8 +85,9 @@ async def build_context(session) -> str:
             cash_now = (nw.get("spendable", 0.0) - nw.get("debts", 0.0)) if nw else 0.0
             lines.append(f"待收款合計：${total:.2f}。")
             lines.append(
-                f"如果這些都入帳，默默手上大概會有 ${cash_now + total:.2f}"
-                f"（現在淨資產 ${cash_now:.2f} ＋ 待收款 ${total:.2f}）。"
+                f"如果這些都入帳，默默手上可動用的現金大概會變成 ${cash_now + total:.2f}"
+                f"（現在可動用 ${cash_now:.2f} ＋ 待收款 ${total:.2f}）。"
+                "（注意：可動用現金不等於淨資產——投資帳戶不算在可動用裡。）"
             )
             lines.append(
                 "（默默問「還沒收到的薪水／待收款／有多少在路上／入帳後會有多少」，就照這個清單和合計老實回答他，"
@@ -95,20 +97,25 @@ async def build_context(session) -> str:
         pass
 
     try:
-        b = await budget.status(session)
-        basis = (
-            f"收入基準 ${b['income_period']:.0f}／半月（{b['period_label']}）"
-            f"（預期 ${b['income_expected']:.0f}＋實際入帳 ${b['income_actual']:.0f} 各半抓的）"
+        a = await AL.compute(session)
+        lines.append(
+            f"本期預算（{a['period_start']}~{a['period_end']}，{a['period_label']}，"
+            f"共 {a['days_in_period']} 天）：可花 ${a['allowance']:.0f}，已花 ${a['spent']:.0f}，"
+            f"剩 ${a['remaining']:.0f}，還有 {a['days_left']} 天"
+            + (f"，平均每天 ${a['per_day_left']:.0f}。" if a.get("per_day_left") is not None else "。")
+        )
+        lines.append("這個數字是三個角度一起看、取最緊的那個：")
+        for extra in AL.explain(a):        # explain() already walks all three lenses
+            lines.append(f"  · {extra}")
+        lines.append(
+            f"水位：可動用 ${a['reserve_total']:.0f}（現金扣掉卡債跟預留的稅），"
+            f"站在{a['standing_rung']['name'] if a['standing_rung'] else '水位以下'}，"
+            f"預計要撐 {a['periods_to_money']} 期才有下一筆錢進來。"
         )
         lines.append(
-            f"本期預算（{b['period_start']}~{b['period_end']}，{b['period_label']}，共 {b['days_in_period']} 天）算法："
-            f"{basis}，減固定支出 ${b['fixed_period']:.0f}（月 ${b['fixed_monthly']:.0f} 按天數攤到這半個月），"
-            f"減存錢目標 ${b['savings_period']:.0f}，等於可花 ${b['allowance']:.0f}；"
-            f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天"
-            + (f"，平均每天還能花 ${b['per_day_left']:.0f}。" if b.get('per_day_left') is not None else "。")
-            + "（阿姨的週期是每月 1–15 號、16–月底，不是兩週輪一次。"
-            "這個收入基準只是用來抓每期能花多少的，不是默默實際被欠的錢；他問待收款請看上面那份清單。"
-            "如果他問預算怎麼算，就照這幾個數字誠實拆給他看，不要自己另外加減。）"
+            "（阿姨的週期是每月 1–15 號、16–月底。預估收入只會用來算「要撐多久」，"
+            "永遠不會拿來把可花的錢調高——這是默默定的規矩。"
+            "如果他問預算怎麼算，就照上面三個角度誠實拆給他看，不要自己另外加減。）"
         )
     except Exception:
         pass
@@ -120,7 +127,7 @@ async def build_context(session) -> str:
             d = eff_date(t)
             ds = d.strftime("%m/%d") if d else "??"
             note = f"（{t.note}）" if t.note else ""
-            lines.append(f"  {ds} ${abs(t.amount):.2f} {t.merchant_desc} [{t.category or '未分類'}]{note}")
+            lines.append(f"  {ds} ${abs(t.amount):.2f} {t.merchant_desc} [{taxonomy.label(t.category) if t.category else '未分類'}]{note}")
 
     return "\n".join(lines)
 

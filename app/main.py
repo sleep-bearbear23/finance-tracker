@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, Response
 
 from . import (
     alerts,
+    allowance,
     cleanup,
     dashboard,
     enrichment,
@@ -187,6 +188,12 @@ async def lifespan(app: FastAPI):
             if rt:
                 print(f"[taxonomy] {rt}")
                 await opsroom.say(f"🏷️ taxonomy migration — {rt}")
+            # The budget can't start on the 1st of a period, and shouldn't pretend it did.
+            # First boot stamps 起算日 = today; everything before it is recorded, not judged.
+            if not await allowance.start_date(s):
+                d = await allowance.set_start_date(s, now().date())
+                print(f"[allowance] 起算日 set to {d}")
+                await opsroom.say(f"📐 budget start date set to {d} (first cadence pro-rates)")
             rf = await retag.net_refunds(s)  # refunds inherit the category they reverse
             if rf:
                 print(f"[netting] {rf}")

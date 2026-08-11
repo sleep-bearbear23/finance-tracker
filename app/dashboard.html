@@ -527,11 +527,25 @@ async function loadHome(){
     el('ringBig').textContent=F0(b.remaining);
     el('ringBig').className='big '+(over?'neg':'pos');
     el('ringSub').textContent=`可花 ${F0(b.allowance)}`;
+    // Three lenses decide this number; showing which one bound is the whole point —
+    // an allowance Momo can't interrogate is one she won't trust.
+    const lensRow = (b.lenses||[]).map(L=>{
+      const on = L.name===b.binding;
+      return `<div class="kv" title="${esc(L.why||'')}">
+        <span>${on?'▸ ':''}${esc(L.name)}</span>
+        <b style="color:${on?'var(--accent)':'var(--muted)'}">${F0(L.value)}</b></div>`;
+    }).join('');
     el('budgetSide').innerHTML=
       `<div class="kv"><span>已經花了</span><b>${F(b.spent)}</b></div>
        <div class="kv"><span>這期額度</span><b>${F0(b.allowance)}</b></div>
        <div class="kv"><span>每天還能花</span><b>${b.per_day_left!=null?F0(b.per_day_left):'—'}</b></div>
-       <div class="daysleft">${b.period_label||''}　${b.period_start} ~ ${b.period_end} · 剩 ${b.days_left} 天</div>`;
+       ${lensRow}
+       <div class="daysleft">${b.binding?`綁住的是「${esc(b.binding)}」：${esc(b.binding_why||'')}<br>`:''}
+         ${b.partial?`從 ${b.budget_from} 起算（這期只管 ${Math.round(b.coverage*100)}%）　`:''}
+         ${b.period_label||''}　${b.period_start} ~ ${b.period_end} · 剩 ${b.days_left} 天</div>`;
+    if(b.deficit){
+      el('ringSub').textContent = b.deficit_kind==='timing' ? '這期不夠，但錢在路上' : '這期不夠，而且沒款要進';
+    }
   }
 
   el('nwBig').textContent=F0(o.net_worth);

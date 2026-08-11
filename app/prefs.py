@@ -26,7 +26,17 @@ async def get_prefs(session) -> dict:
     }
 
 
-async def set_prefs(session, fixed_monthly=None, savings_amount=None, savings_cadence=None) -> None:
+async def set_prefs(session, values=None, *, fixed_monthly=None, savings_amount=None,
+                    savings_cadence=None) -> None:
+    """Accepts keywords or a plain dict — passing a dict positionally used to be silently
+    written into cfg_fixed_monthly as a stringified dict, which is the kind of quiet
+    corruption that shows up three screens later as a wrong allowance."""
+    if isinstance(values, dict):
+        fixed_monthly = values.get("fixed_monthly", fixed_monthly)
+        savings_amount = values.get("savings_amount", savings_amount)
+        savings_cadence = values.get("savings_cadence", savings_cadence)
+    elif values is not None:
+        raise TypeError("set_prefs(values) takes a dict")
     if fixed_monthly is not None:
         await set_kv(session, "cfg_fixed_monthly", str(fixed_monthly))
     if savings_amount is not None:

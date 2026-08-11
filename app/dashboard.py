@@ -19,8 +19,8 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import (accounts as acct, budget, categories, facts as F, networth,
-               period as P, prefs, taxonomy)
+from . import (accounts as acct, allowance, budget, categories, facts as F, fixed as FX,
+               networth, period as P, prefs, tax as TAX, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -229,8 +229,10 @@ async def api_overview(request: Request):
         nw = f.nw
         pending = await _pending_block(s, nw)
         try:
-            b = await budget.status(s)
-        except Exception:
+            b = await allowance.compute(s)
+            b["explain"] = allowance.explain(b)
+        except Exception as e:            # never blank the whole page over the budget
+            print(f"[allowance] {e!r}")
             b = None
         return {
             "as_of": now().isoformat(),
@@ -595,3 +597,19 @@ async def api_brain(request: Request):
             "ledger": ledger,
             "chat": chat,
         }
+
+
+# ── Phase B: the allowance, shown with its own reasoning ─────────────
+@router.get("/api/allowance")
+async def api_allowance(request: Request):
+    """The number, the three lenses behind it, and the sentences she'd say out loud."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        a = await allowance.compute(s, request.query_params.get("key") or None)
+        a["explain"] = allowance.explain(a)
+        a["fixed_rows"] = await FX.rows(s)
+        a["sinking_rows"] = await FX.sinking_rows(s)
+        a["renewals"] = await FX.renewals(s, within_days=120)
+        a["tax_payments_found"] = await TAX.find_prior_payments(s)
+        return a
