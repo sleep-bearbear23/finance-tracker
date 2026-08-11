@@ -18,6 +18,7 @@ from . import (
     llm,
     memory,
     onboarding,
+    opsroom,
     profile,
     queries,
     reconcile,
@@ -37,10 +38,22 @@ async def _poll_job():
     async with Session() as s:
         try:
             n = await simplefin.ingest(s)
+            await set_kv(s, "last_poll_at", now().isoformat(timespec="minutes"))
+            await set_kv(s, "last_poll_ok", "1")
             if n:
                 print(f"[poll] {n} new charge(s) awaiting context")
+                await opsroom.say(f"🏦 bank sync — {n} new charge(s) imported")
         except Exception as e:  # never let a bad poll kill the scheduler
             print(f"[poll] error: {e!r}")
+            try:
+                await set_kv(s, "last_poll_ok", "0")
+                prev = await get_kv(s, "poll_fail_reported")
+                if prev != type(e).__name__:  # report each NEW failure mode once
+                    await set_kv(s, "poll_fail_reported", type(e).__name__)
+                    await opsroom.say(f"🔴 bank sync failing — {type(e).__name__}: "
+                                      f"{str(e)[:120]}")
+            except Exception:
+                pass
 
 
 async def _flush_job():
@@ -83,8 +96,11 @@ async def _reconcile_job():
             n = await reconcile.reconcile(s)
             if n:
                 print(f"[reconcile] merged {n} live charge(s) into the statement")
+                await opsroom.say(f"🧾 Apple Card reconciled — {n} live charge(s) merged "
+                                  f"into the statement")
         except Exception as e:
             print(f"[reconcile] error: {e!r}")
+            await opsroom.say(f"🔴 reconcile failed — {type(e).__name__}: {str(e)[:120]}")
 
 
 async def _snapshot_job():
@@ -108,18 +124,17 @@ async def _reminder_job():
 
 
 async def announce_deploy():
-    """On a new Railway deploy, tell Momo the commit message. Idempotent per commit."""
+    """On a new Railway deploy, report the commit — to the 機房, not to Momo. Build talk
+    isn't 秀琴阿姨's voice (Momo's channel doctrine, 2026-08-10)."""
     sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
     if not sha:
         return  # not on Railway (local dev) — stay quiet
     async with Session() as s:
-        owner = await get_kv(s, enrichment.OWNER_KEY)
-        if not owner or await get_kv(s, "notified_sha") == sha:
-            return  # no owner yet, or already announced this commit
-        note = os.environ.get("RAILWAY_GIT_COMMIT_MESSAGE") or "有更新"
+        if await get_kv(s, "notified_sha") == sha:
+            return
+        note = os.environ.get("RAILWAY_GIT_COMMIT_MESSAGE") or "update"
         try:
-            msg = await llm.deploy_note(note)
-            await line_client.push(owner, f"🚀 {msg}")
+            await opsroom.say(f"🔧 秀琴阿姨 deployed · {note} (sha {sha[:7]})")
             await set_kv(s, "notified_sha", sha)
         except Exception as e:
             print(f"[deploy] error: {e!r}")
