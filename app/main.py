@@ -208,9 +208,11 @@ async def health_detail():
     out: dict = {"ok": True}
     try:
         async with Session() as s:
+            # by POSTED date, not created_at — a backfill import stamps thousands of old
+            # rows with today's created_at and made the control room read "1756 txns/7d"
             since = now() - timedelta(days=7)
             out["txn_7d"] = int(await s.scalar(
-                select(func.count(Transaction.id)).where(Transaction.created_at >= since)) or 0)
+                select(func.count(Transaction.id)).where(Transaction.posted_at >= since)) or 0)
             out["awaiting"] = int(await s.scalar(
                 select(func.count(Transaction.id)).where(
                     Transaction.status.in_(("needs_context", "prompted")))) or 0)
