@@ -19,8 +19,9 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import (accounts as acct, allowance, budget, categories, facts as F, fixed as FX,
-               networth, period as P, prefs, tax as TAX, taxonomy)
+from . import (accounts as acct, allowance, budget, categories, export as EX,
+               facts as F, fixed as FX, networth, period as P, prefs,
+               tax as TAX, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -613,3 +614,20 @@ async def api_allowance(request: Request):
         a["renewals"] = await FX.renewals(s, within_days=120)
         a["tax_payments_found"] = await TAX.find_prior_payments(s)
         return a
+
+
+@router.get("/api/export")
+async def api_export(request: Request):
+    """The whole internal state as one JSON file, secrets stripped.
+
+    Momo downloads this and hands it over when something on screen looks wrong — it's the
+    difference between fixing what she reports and fixing what actually happened. Add
+    ?txns=0 for a small file when only the config and balances matter."""
+    if not _authorized(request):
+        return _deny()
+    want_txns = (request.query_params.get("txns") or "1") != "0"
+    async with Session() as s:
+        data = await EX.build(s, include_txns=want_txns)
+    stamp = now().strftime("%Y%m%d-%H%M")
+    return JSONResponse(data, headers={
+        "Content-Disposition": f'attachment; filename="chen-state-{stamp}.json"'})
