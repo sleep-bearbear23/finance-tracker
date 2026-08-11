@@ -7,9 +7,33 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from . import categories
+from . import categories, prefs
 from .db import get_kv, set_kv
 from .models import Transaction
+
+# The manual-ledger accounts Momo actually has (the ones no bank sync can reach).
+# Guaranteed to exist so the dash always lists them — balances start at 0 until
+# Momo states them ("Apple Card 現在欠 600") or re-sends the starter pack.
+_KNOWN_MANUAL_ACCOUNTS = [
+    {"name": "Apple Card", "type": "credit"},
+    {"name": "Apple Goldman Sachs Savings", "type": "cash"},
+    {"name": "Venmo", "type": "cash"},
+]
+
+
+async def ensure_accounts(session) -> int:
+    """Make sure Momo's known manual accounts exist in the ledger. Returns how many were added."""
+    if await get_kv(session, "ensure_accounts_v1") == "1":
+        return 0
+    prof = await prefs.get_income_profile(session)
+    have = {prefs._norm(a.get("name")) for a in prof.get("accounts", [])}
+    added = 0
+    for a in _KNOWN_MANUAL_ACCOUNTS:
+        if prefs._norm(a["name"]) not in have:
+            await prefs.update_account(session, a["name"], 0.0, a["type"])
+            added += 1
+    await set_kv(session, "ensure_accounts_v1", "1")
+    return added
 
 
 async def run(session) -> tuple[int, int]:

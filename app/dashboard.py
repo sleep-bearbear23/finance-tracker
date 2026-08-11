@@ -295,6 +295,97 @@ async def api_income(request: Request):
         }
 
 
+_SOURCE_NAMES = {
+    "applecard": "Apple Card（帳單）",
+    "screenshot": "Apple Card（截圖）",
+    "shortcut": "Apple Pay tap",
+    "manual": "手動記帳",
+    "notion": "歷史收入（Notion）",
+}
+
+
+async def _account_names(session) -> dict[str, str]:
+    """account_id → human name (bank accounts get their synced names)."""
+    out = dict(_SOURCE_NAMES)
+    for a in (await session.execute(select(Account))).scalars().all():
+        out[a.id] = a.name or a.id
+    return out
+
+
+@router.get("/api/ledger")
+async def api_ledger(request: Request):
+    """Raw transaction browser: filter by account, month, category, or search; paginated."""
+    if not _authorized(request):
+        return _deny()
+    q = request.query_params
+    f_account = q.get("account") or None
+    f_month = q.get("month") or None          # 'YYYY-MM'
+    f_cat = q.get("category") or None         # category name, or '未分類'
+    f_text = (q.get("q") or "").strip().lower() or None
+    offset = max(0, int(q.get("offset") or 0))
+    limit = min(200, max(1, int(q.get("limit") or 100)))
+
+    async with Session() as s:
+        names = await _account_names(s)
+        rows = (await s.execute(select(Transaction))).scalars().all()
+
+        def eff(t):
+            return aware(t.posted_at or t.created_at)
+
+        # account facet key: bank rows by account_id; others by source
+        def acct_key(t):
+            return t.account_id if t.account_id in names and t.source == "simplefin" else (
+                t.account_id if t.source == "simplefin" else t.source)
+
+        enriched = []
+        months, accounts, cats = {}, {}, {}
+        for t in rows:
+            d = eff(t)
+            if not d:
+                continue
+            ak = acct_key(t)
+            am = names.get(ak, ak)
+            ym = d.strftime("%Y-%m")
+            cat = t.category or "未分類"
+            months[ym] = months.get(ym, 0) + 1
+            accounts[ak] = accounts.get(ak, {"name": am, "n": 0})
+            accounts[ak]["n"] += 1
+            cats[cat] = cats.get(cat, 0) + 1
+            enriched.append((d, ak, am, ym, cat, t))
+
+        sel = []
+        for d, ak, am, ym, cat, t in enriched:
+            if f_account and ak != f_account:
+                continue
+            if f_month and ym != f_month:
+                continue
+            if f_cat and cat != f_cat:
+                continue
+            if f_text and f_text not in (t.merchant_desc or "").lower() and f_text not in (t.note or "").lower():
+                continue
+            sel.append((d, ak, am, cat, t))
+        sel.sort(key=lambda x: x[0], reverse=True)
+
+        total_out = sum(abs(t.amount) for d, ak, am, cat, t in sel if t.amount < 0 and t.status not in ("ignored", "reconciled"))
+        total_in = sum(t.amount for d, ak, am, cat, t in sel if t.amount > 0 and t.status == "income")
+        page = sel[offset:offset + limit]
+        return {
+            "rows": [{
+                "date": d.strftime("%Y-%m-%d"), "account": am, "merchant": t.merchant_desc,
+                "amount": round(t.amount, 2), "category": cat, "status": t.status,
+                "source": t.source, "note": t.note,
+            } for d, ak, am, cat, t in page],
+            "matched": len(sel), "offset": offset,
+            "total_out": round(total_out, 2), "total_in": round(total_in, 2),
+            "facets": {
+                "accounts": [{"key": k, "name": v["name"], "n": v["n"]}
+                             for k, v in sorted(accounts.items(), key=lambda x: -x[1]["n"])],
+                "months": sorted(months.keys(), reverse=True),
+                "categories": sorted(cats.keys(), key=lambda c: -cats[c]),
+            },
+        }
+
+
 @router.get("/api/brain")
 async def api_brain(request: Request):
     if not _authorized(request):

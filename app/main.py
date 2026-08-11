@@ -153,6 +153,9 @@ async def lifespan(app: FastAPI):
             nc, nx = await cleanup.run(s)  # wider auto-labels + sweep missed card payments
             if nc or nx:
                 print(f"[cleanup] categorized {nc}, swept {nx} transfer(s) out of spending")
+            ne = await cleanup.ensure_accounts(s)  # Apple Card / GS Savings / Venmo always in ledger
+            if ne:
+                print(f"[cleanup] added {ne} known manual account(s) to the ledger")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

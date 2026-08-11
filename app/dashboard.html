@@ -89,6 +89,7 @@
 
   <div class="tabs">
     <button id="tab-money" class="on" onclick="showTab('money')">總覽</button>
+    <button id="tab-detail" onclick="showTab('detail')">明細</button>
     <button id="tab-income" onclick="showTab('income')">收入</button>
     <button id="tab-brain" onclick="showTab('brain')">訓練輪 · 她怎麼算的</button>
   </div>
@@ -132,6 +133,26 @@
     <div class="card">
       <h2>帳戶明細</h2>
       <div id="acctBox"></div>
+    </div>
+  </section>
+
+  <!-- ───────── DETAIL ───────── -->
+  <section id="detail" class="hidden">
+    <div class="card">
+      <h2>逐筆交易紀錄</h2>
+      <div class="chips-row" id="acctChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select id="fMonth" onchange="dOffset=0;loadDetail()" style="padding:8px 10px;border:1px solid var(--line);border-radius:10px;font:inherit;background:#fff;color:var(--ink)"></select>
+        <select id="fCat" onchange="dOffset=0;loadDetail()" style="padding:8px 10px;border:1px solid var(--line);border-radius:10px;font:inherit;background:#fff;color:var(--ink)"></select>
+        <input id="fQ" placeholder="搜商家/備註…" onchange="dOffset=0;loadDetail()"
+          style="flex:1;min-width:140px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;background:#fff;color:var(--ink)">
+      </div>
+      <div id="dTotals" class="note" style="margin:0 0 8px"></div>
+      <div class="scroll" style="max-height:560px" id="dTable"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="collapse-btn" style="margin:0" id="dPrev" onclick="dPage(-1)">← 前 100 筆</button>
+        <button class="collapse-btn" style="margin:0" id="dNext" onclick="dPage(1)">後 100 筆 →</button>
+      </div>
     </div>
   </section>
 
@@ -191,7 +212,7 @@ const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).
 const el = id => document.getElementById(id);
 async function getJSON(path){ const r = await fetch(path,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
-const TABS = {money:'財務總覽', income:'收入紀錄', brain:'訓練輪 · 她怎麼算的'};
+const TABS = {money:'財務總覽', detail:'逐筆明細', income:'收入紀錄', brain:'訓練輪 · 她怎麼算的'};
 function showTab(t){
   for(const k in TABS){
     el(k).classList.toggle('hidden', k!==t);
@@ -286,6 +307,43 @@ async function loadTrends(){
         scales:{x:{grid:{display:false},border:{color:css('--axis')}},
           y:{grid:{color:css('--grid')},border:{display:false},ticks:{callback:v=>F0(v)}}}}});
   } else { el('monthChart').parentElement.innerHTML='<div class="empty">還沒有足夠的每月資料。</div>'; }
+}
+
+// ---- 明細 (detail ledger) ----
+let dOffset=0, dAccount='', dInit=false;
+function dPage(dir){ dOffset=Math.max(0,dOffset+dir*100); loadDetail(); }
+function setAcct(k){ dAccount=k; dOffset=0; loadDetail(); }
+async function loadDetail(){
+  const p = new URLSearchParams();
+  if(dAccount) p.set('account',dAccount);
+  const m = el('fMonth').value; if(m) p.set('month',m);
+  const c = el('fCat').value; if(c) p.set('category',c);
+  const q = el('fQ').value.trim(); if(q) p.set('q',q);
+  p.set('offset',dOffset); p.set('limit','100');
+  const d = await getJSON('/api/ledger?'+p.toString());
+
+  el('acctChips').innerHTML = [{key:'',name:'全部帳戶',n:null}].concat(d.facets.accounts).map(a=>
+    `<button onclick="setAcct('${a.key}')" style="border:1px solid ${a.key===dAccount?'var(--accent)':'var(--line)'};
+      background:${a.key===dAccount?'var(--accent)':'#fff'};color:${a.key===dAccount?'#fff':'var(--ink)'};
+      border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer;font-family:inherit">
+      ${esc(a.name)}${a.n?` <span style="opacity:.6">${a.n}</span>`:''}</button>`).join('');
+
+  if(!dInit){
+    el('fMonth').innerHTML = '<option value="">所有月份</option>'+d.facets.months.map(m=>`<option>${m}</option>`).join('');
+    el('fCat').innerHTML = '<option value="">所有分類</option>'+d.facets.categories.map(c=>`<option>${esc(c)}</option>`).join('');
+    dInit=true;
+  }
+  el('dTotals').textContent = `符合 ${d.matched.toLocaleString()} 筆 — 支出 ${F(d.total_out)}，收入 ${F(d.total_in)}`
+    + (d.matched>100?`（顯示第 ${d.offset+1}–${Math.min(d.offset+100,d.matched)} 筆）`:'');
+  el('dTable').innerHTML = d.rows.length ? `<table>
+    <thead><tr><th>日期</th><th>帳戶</th><th>商家</th><th class="num">金額</th><th>分類</th><th>備註</th></tr></thead><tbody>`+
+    d.rows.map(t=>`<tr><td>${esc(t.date)}</td><td style="white-space:normal">${esc(t.account)}</td>
+      <td style="white-space:normal;max-width:220px">${esc(t.merchant)}</td>
+      <td class="num ${t.amount<0?'neg':'pos'}">${F(t.amount)}</td>
+      <td>${esc(t.category)}</td><td style="white-space:normal;max-width:160px;color:var(--muted)">${esc(t.note||'')}</td></tr>`).join('')+
+    '</tbody></table>' : '<div class="empty" style="padding:14px">沒有符合的交易。</div>';
+  el('dPrev').style.display = d.offset>0?'block':'none';
+  el('dNext').style.display = d.offset+100<d.matched?'block':'none';
 }
 
 async function loadIncome(){
@@ -385,7 +443,7 @@ async function loadBrain(){
 }
 
 (async function(){
-  try{ await loadMoney(); await loadTrends(); await loadIncome(); await loadBrain(); }
+  try{ await loadMoney(); await loadTrends(); await loadDetail(); await loadIncome(); await loadBrain(); }
   catch(e){ el('asof').innerHTML = '<span class="err">載入失敗（'+e.message+'）。連結可能過期了。</span>'; }
 })();
 </script>
