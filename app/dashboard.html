@@ -7,19 +7,36 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
-    --plane:#12142a; --surface:#1d2040; --inset:rgba(0,0,0,.20);
+    /* Near-black plane. Glass only reads as glass when there is real darkness behind
+       it — on the old #12142a the blur had nothing to bite on. Chart palette re-validated
+       against the new surface (#131317): all six checks pass, so the series keep their hues. */
+    --plane:#07070b; --surface:rgba(255,255,255,.045); --surface-solid:#131317;
+    --inset:rgba(0,0,0,.35);
     --ink:#f2f3fa; --ink2:#a6abce; --muted:#7b81a8;
-    --grid:rgba(255,255,255,.06); --gridstrong:rgba(255,255,255,.20); --border:rgba(255,255,255,.08);
+    --grid:rgba(255,255,255,.05); --gridstrong:rgba(255,255,255,.18); --border:rgba(255,255,255,.07);
     --accent:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
     --s1:#15ad81; --s2:#5b8df5; --s3:#e2477e; --s4:#c98500; --s5:#9085e9; --s6:#d95926; --s7:#17a2b8;
-    --r:18px; --gap:12px;
+    --r:20px; --gap:12px;
+    /* the liquid-glass shell: rim highlights + inner bloom, all inset so nothing bleeds */
+    --glass:
+      inset 3px 3px .5px -3.5px rgba(255,255,255,.55),
+      inset -3px -3px .5px -3.5px rgba(255,255,255,.45),
+      inset 1px 1px 1px -.5px rgba(255,255,255,.30),
+      inset -1px -1px 1px -.5px rgba(255,255,255,.22),
+      inset 0 0 8px 6px rgba(255,255,255,.045),
+      inset 0 0 2px 2px rgba(255,255,255,.03),
+      0 8px 28px rgba(0,0,0,.55);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;margin:0;overflow:hidden}
-  body{background:radial-gradient(1100px 480px at 85% -140px, rgba(91,141,245,.11), transparent 60%),
-       radial-gradient(900px 420px at -10% 8%, rgba(46,229,169,.07), transparent 55%), var(--plane);
-    color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;
-    font-size:14px;line-height:1.45;-webkit-text-size-adjust:100%}
+  body{background:
+       radial-gradient(900px 420px at 82% -160px, rgba(91,141,245,.14), transparent 62%),
+       radial-gradient(780px 380px at -8% 6%, rgba(46,229,169,.09), transparent 58%),
+       radial-gradient(600px 600px at 50% 120%, rgba(144,133,233,.07), transparent 60%), var(--plane);
+    color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,
+      "PingFang TC","Noto Sans TC",sans-serif;
+    font-size:14px;line-height:1.5;font-weight:380;letter-spacing:.01em;-webkit-text-size-adjust:100%;
+    -webkit-font-smoothing:antialiased}
   a{color:inherit;text-decoration:none}
 
   /* ── app frame: header + content + (mobile) nav, never scrolls ── */
@@ -29,22 +46,32 @@
     display:grid;place-items:center;font-size:17px;flex:0 0 34px}
   .brandtxt h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
   .brandtxt .quip{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.05);border:1px solid var(--border);
-    border-radius:11px;padding:3px;margin-left:auto}
-  .tabs a{font-size:12.5px;color:var(--ink2);padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer;white-space:nowrap}
-  .tabs a.on{background:var(--surface);color:var(--accent);box-shadow:inset 0 0 0 1px rgba(46,229,169,.3)}
+  .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.04);border:1px solid var(--border);
+    border-radius:999px;padding:3px;margin-left:auto;
+    -webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);
+    box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.3), 0 2px 10px rgba(0,0,0,.4)}
+  .tabs a{font-size:12.5px;color:var(--ink2);padding:6px 14px;border-radius:999px;font-weight:450;
+    letter-spacing:.02em;cursor:pointer;white-space:nowrap;transition:color .2s}
+  .tabs a.on{color:var(--accent);background:rgba(255,255,255,.06);
+    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28),
+               inset 1px 1px 1px -.5px rgba(255,255,255,.4)}
   .asof{font-size:11px;color:var(--muted);white-space:nowrap}
 
   .screen{flex:1;min-height:0;display:none}
   .screen.on{display:block}
 
   /* ── cards ── */
-  .card{background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 45%), var(--surface);
-    border:1px solid var(--border);border-radius:var(--r);padding:13px 15px;
-    box-shadow:0 10px 26px rgba(0,0,0,.26);display:flex;flex-direction:column;min-height:0;overflow:hidden}
-  .card > h2{font-size:11px;font-weight:700;color:var(--muted);margin:0 0 9px;letter-spacing:.9px;
+  .card{background:var(--surface);
+    border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;
+    -webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);
+    box-shadow:var(--glass);
+    display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
+  /* the top rim — a single hairline of light, the thing that sells the material */
+  .card::before{content:"";position:absolute;inset:0 0 auto;height:1px;border-radius:var(--r) var(--r) 0 0;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);pointer-events:none}
+  .card > h2{font-size:10.5px;font-weight:560;color:var(--muted);margin:0 0 10px;letter-spacing:1.4px;
     text-transform:uppercase;flex:0 0 auto;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-  .card > h2 .more{font-weight:600;font-size:11.5px;color:var(--accent);cursor:pointer;letter-spacing:0;text-transform:none}
+  .card > h2 .more{font-weight:500;font-size:11.5px;color:var(--accent);cursor:pointer;letter-spacing:0;text-transform:none}
   .body{flex:1;min-height:0;overflow:auto}
   .body.noscroll{overflow:hidden}
   .flexbody{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -68,20 +95,26 @@
   .ring{position:relative;flex:0 0 auto;width:min(132px,34%);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
     background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0)}
-  .ring .hole{position:absolute;inset:11px;border-radius:50%;background:#1e2143;
+  .ring .hole{position:absolute;inset:11px;border-radius:50%;background:rgba(7,7,11,.72);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     display:flex;flex-direction:column;align-items:center;justify-content:center}
   .ring .hole .lbl{font-size:10px;color:var(--muted)}
-  .ring .hole .big{font-size:22px;font-weight:750;letter-spacing:-.7px}
+  .ring .hole .big{font-size:24px;font-weight:300;letter-spacing:-1.2px;font-variant-numeric:tabular-nums}
   .ring .hole .big.pos{color:var(--accent)} .ring .hole .big.neg{color:var(--bad)}
   .ringside{flex:1;min-width:0;min-height:0;max-height:100%;overflow:auto}
   .kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
   .kv:last-of-type{border-bottom:none}
-  .kv b{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .kv b{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:450}
   .daysleft{font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.45}
   /* "how was this worked out" — the reasoning is real but it is not the headline, and
      stacking six rows plus three footnotes into one card clipped the bottom of it. */
-  .whytoggle{font-size:10.5px;color:var(--accent);cursor:pointer;margin-top:3px;
-    display:inline-flex;align-items:center;gap:4px;user-select:none}
+  .whytoggle{font-size:10.5px;color:var(--accent);cursor:pointer;margin-top:5px;
+    display:inline-flex;align-items:center;gap:5px;user-select:none;
+    padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.04);
+    -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+    box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.3);
+    transition:filter .2s}
+  .whytoggle:hover{filter:brightness(1.15)}
   .why{flex:0 0 auto;overflow:auto;max-height:42%;margin-top:8px;padding-top:8px;
     border-top:1px solid var(--grid);font-size:11.5px;color:var(--ink2);line-height:1.6}
   .why .lens{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
@@ -92,11 +125,42 @@
 
   /* net worth */
   .nwtop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;flex:0 0 auto}
-  .nwtop .big{font-size:clamp(26px,3.1vw,34px);font-weight:800;letter-spacing:-1.1px;color:var(--accent);line-height:1.05}
+  .nwtop .big{font-size:clamp(28px,3.3vw,38px);font-weight:250;letter-spacing:-1.8px;color:var(--accent);line-height:1;font-variant-numeric:tabular-nums}
   .nwtop .delta{font-size:12px;font-weight:650}
   .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto}
-  .pill{font-size:11px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06);
-    border:1px solid var(--border);color:var(--ink2);white-space:nowrap}
+  .pill{font-size:11px;padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.05);
+    border:1px solid var(--border);color:var(--ink2);white-space:nowrap;
+    -webkit-backdrop-filter:blur(10px) saturate(150%);backdrop-filter:blur(10px) saturate(150%);
+    box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.35),
+               inset -1px -1px 1px -.5px rgba(255,255,255,.18),
+               inset 0 0 6px 4px rgba(255,255,255,.035),
+               0 2px 8px rgba(0,0,0,.35)}
+  /* Ported from the 21st.dev LiquidButton: the rim highlights and inner bloom are the
+     whole trick, and they are plain inset box-shadows — no React, no Tailwind needed.
+     The SVG displacement below is progressive enhancement; the blur alone already reads
+     as glass everywhere, which matters because backdrop-filter:url() is not universal. */
+  .glass{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    padding:8px 16px;border:0;border-radius:999px;cursor:pointer;
+    font:inherit;font-size:12px;font-weight:450;letter-spacing:.02em;color:var(--ink);
+    background:rgba(255,255,255,.045);
+    -webkit-backdrop-filter:blur(14px) saturate(170%);backdrop-filter:blur(14px) saturate(170%);
+    box-shadow:inset 3px 3px .5px -3.5px rgba(255,255,255,.6),
+               inset -3px -3px .5px -3.5px rgba(255,255,255,.5),
+               inset 1px 1px 1px -.5px rgba(255,255,255,.35),
+               inset -1px -1px 1px -.5px rgba(255,255,255,.25),
+               inset 0 0 8px 6px rgba(255,255,255,.05),
+               0 3px 12px rgba(0,0,0,.45);
+    transition:transform .25s cubic-bezier(.1,.4,.2,1), filter .25s, box-shadow .25s}
+  @supports (backdrop-filter: url(#container-glass)){
+    .glass::after{content:"";position:absolute;inset:0;border-radius:inherit;z-index:-1;
+      -webkit-backdrop-filter:url(#container-glass);backdrop-filter:url(#container-glass)}
+  }
+  .glass:hover{transform:scale(1.03);filter:brightness(1.08)}
+  .glass:active{transform:scale(.98) translateY(1px);filter:brightness(.94)}
+  .glass.on{color:var(--accent);box-shadow:inset 0 0 0 1px rgba(46,229,169,.35),
+               inset 1px 1px 1px -.5px rgba(255,255,255,.4),
+               inset 0 0 10px 6px rgba(46,229,169,.07), 0 3px 12px rgba(0,0,0,.45)}
+  @media (prefers-reduced-motion: reduce){ .glass{transition:none} .glass:hover{transform:none} }
   .pill b{color:var(--ink);font-variant-numeric:tabular-nums}
   .pill.mint b{color:var(--accent)} .pill.pink b{color:var(--bad)} .pill.warnp b{color:var(--warn)}
 
@@ -107,12 +171,15 @@
   .dot{width:8px;height:8px;border-radius:3px;flex:0 0 8px}
   .arow .an{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .arow .an .sub{display:block;font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
-  .arow .av{font-variant-numeric:tabular-nums;font-weight:650;font-size:13px;white-space:nowrap}
+  .arow .av{font-variant-numeric:tabular-nums;font-weight:450;font-size:13px;white-space:nowrap}
   .arow .caret{color:var(--muted);font-size:14px}
   .row{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:13px}
   .row:last-child{border-bottom:none}
-  .row .l{color:var(--ink2);display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .row .r{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);white-space:nowrap}
+  .row .l{color:var(--ink2);display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .l > .tag,.row .l > .chip{flex:0 0 auto}
+  .row .l > .nm{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .r{font-variant-numeric:tabular-nums;font-weight:450;color:var(--ink);white-space:nowrap;flex:0 0 auto}
   .tag{font-size:10.5px;color:var(--muted)}
   .chip{display:inline-block;font-size:10px;padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.07);color:var(--ink2);margin-left:5px}
   .chip.warn{background:rgba(255,176,46,.15);color:var(--warn)}
@@ -262,6 +329,21 @@
 </style>
 </head>
 <body>
+<!-- Liquid-glass displacement, ported from the 21st.dev LiquidButton. Referenced by
+     .glass::after via backdrop-filter:url(). Browsers without SVG-filter backdrops just
+     get the blur, which is why the blur is on the element itself and not in here. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <filter id="container-glass" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05 0.05" numOctaves="1" seed="1" result="turbulence"/>
+      <feGaussianBlur in="turbulence" stdDeviation="2" result="blurredNoise"/>
+      <feDisplacementMap in="SourceGraphic" in2="blurredNoise" scale="42"
+                         xChannelSelector="R" yChannelSelector="B" result="displaced"/>
+      <feGaussianBlur in="displaced" stdDeviation="3" result="finalBlur"/>
+      <feComposite in="finalBlur" in2="finalBlur" operator="over"/>
+    </filter>
+  </defs>
+</svg>
 <div class="app">
   <div class="topbar">
     <div class="avatar">👩🏻‍💼</div>
@@ -617,7 +699,7 @@ async function loadHome(){
   if(cs.length){
     chart('catChart',{type:'doughnut',
       data:{labels:cs.map(c=>cz(c.category)),datasets:[{data:cs.map(c=>c.amount),
-        backgroundColor:cs.map(c=>catColor(c.category)),borderColor:'#1e2143',borderWidth:3,borderRadius:3}]},
+        backgroundColor:cs.map(c=>catColor(c.category)),borderColor:'#0b0b11',borderWidth:3,borderRadius:3}]},
       options:{cutout:'70%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
     el('catLegend').innerHTML=cs.map(c=>
       `<div class="cl"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(cz(c.category))}<b>${F0(c.amount)}</b></div>`).join('');
@@ -632,7 +714,7 @@ async function loadHome(){
       scales:halfMonthScales(fl)}});
 
   el('pendingBox').innerHTML = o.pending.items.length ? o.pending.items.map(p=>
-      `<div class="row"><span class="l">${esc(p.note)}${p.overdue?'<span class="chip warn">該進來了</span>':''}
+      `<div class="row"><span class="l" title="${esc(p.note)}"><span class="nm">${esc(p.note)}</span>${p.overdue?'<span class="chip warn">該進來了</span>':''}
         <span class="tag">${esc(p.when||'未定')}</span></span><span class="r">${F(p.amount)}</span></div>`).join('')
       + `<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(o.pending.total)}</span></div>`
     : '<div class="empty">目前沒有待收款。</div>';
