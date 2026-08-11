@@ -49,15 +49,6 @@ async def enrichment_prompt(txns) -> str:
     return await _say(instr)
 
 
-async def enrichment_confirm(txns) -> str:
-    summary = "\n".join(
-        f"{i}. ${abs(t.amount):.2f} {t.merchant_desc} → {t.category or '未分類'}：{t.note or ''}"
-        for i, t in enumerate(txns, 1)
-    )
-    instr = f"默默剛剛交代完這幾筆，你已經記好了：\n{summary}\n用你的口氣簡短回一句，該唸的唸一下，記好帳就好。"
-    return await _say(instr)
-
-
 async def parse_reply(txns, reply: str) -> dict[int, dict]:
     """Map the user's free-form reply back to each numbered charge. Returns {index: {note, category}}."""
     body = _fmt(txns)
@@ -126,32 +117,6 @@ async def classify_intent(text: str, has_pending: bool) -> str:
     return "question"
 
 
-async def parse_manual_log(text: str) -> dict:
-    """Extract {amount, merchant} from a casual expense note. Returns amount=None if unclear."""
-    system = (
-        "Extract an expense from the user's message. Return ONLY JSON: "
-        '{"amount": <number or null>, "merchant": "<store/what, short>"}. '
-        "amount is the dollar figure spent. No prose, no code fences."
-    )
-    raw = (await _say(text, system=system, max_tokens=120)).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        data = json.loads(raw)
-        amt = data.get("amount")
-        return {"amount": float(amt) if amt is not None else None,
-                "merchant": (data.get("merchant") or "").strip()}
-    except Exception:
-        return {"amount": None, "merchant": ""}
-
-
-async def manual_confirm(t) -> str:
-    instr = (
-        f"默默剛剛主動跟你報帳：${abs(t.amount):.2f}，{t.merchant_desc or '沒說是哪家'}"
-        f"（分類先歸到 {t.category or '未分類'}）。用你的口氣回一句，記好了，順便虧他一下。"
-    )
-    return await _say(instr, max_tokens=200)
-
-
 async def answer_question(question: str, data_context: str, convo: str = "") -> str:
     convo_block = f"你們最近的對話（最舊到最新，你就是阿姨）：\n{convo}\n\n" if convo else ""
     instr = (
@@ -166,91 +131,6 @@ async def answer_question(question: str, data_context: str, convo: str = "") -> 
     return await _say(instr, max_tokens=500)
 
 
-async def parse_invoice_command(text: str, pending: list) -> dict:
-    """Detect if Momo is (a) saying a pending expected payment has now landed, or
-    (b) telling her about a NEW expected payment. Returns action=None otherwise."""
-    lst = "、".join(
-        f"{p.get('note') or '某案'}(${float(p.get('amount') or 0):.0f})" for p in pending
-    ) or "（目前沒有待收款）"
-    system = (
-        "The user is a freelancer talking to their bookkeeper about expected payments (invoices/gigs). "
-        f"Currently-pending expected payments: {lst}.\n"
-        "Decide the message's intent. Return ONLY JSON, no prose, no code fences:\n"
-        '{"action": "received" | "add" | "update" | null, '
-        '"which": "<name of the existing pending item, for received/update>", '
-        '"amount": <number or null>, "when": "YYYY-MM" | null, "note": "<short name, for add>"}.\n'
-        "action='received': they say one of the pending payments HAS NOW landed / been paid / 到帳 / "
-        "入帳 / 收到了. Put the matching item's name in 'which'.\n"
-        "action='update': an EXISTING pending payment changed — the amount moved, the date "
-        "slipped, the name was wrong (e.g. 'Avia 從 2800 變成 2850', '那筆延到九月'). Put the "
-        "existing item's name in 'which' and the NEW amount/when in 'amount'/'when'. Prefer "
-        "'update' over 'add' whenever the message refers to a payment already on the list.\n"
-        "action='add': they mention a NEW gig/payment they now expect, with an amount. Fill amount/when/note.\n"
-        "action=null: it's a QUESTION (e.g. 還沒收到的薪水有多少), an expense, or unrelated. "
-        "When unsure, use null."
-    )
-    raw = (await _say(text, system=system, max_tokens=100)).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        d = json.loads(raw)
-        amt = d.get("amount")
-        return {
-            "action": d.get("action"),
-            "which": d.get("which"),
-            "amount": float(amt) if amt is not None else None,
-            "when": d.get("when"),
-            "note": d.get("note"),
-        }
-    except Exception:
-        return {"action": None, "which": None, "amount": None, "when": None, "note": None}
-
-
-async def invoice_miss(which, pending: list) -> str:
-    """She was asked to change a booked payment and couldn't find it. Say that, out loud.
-
-    The alternative is falling through to free-text Q&A, where she has no tool and will
-    still sound like she did it — which is how "Avia 2800 → 2850" got acknowledged and
-    never recorded."""
-    lst = "、".join(
-        f"{p.get('note') or '某案'}(${float(p.get('amount') or 0):.0f})" for p in pending
-    ) or "（目前待收款是空的）"
-    instr = (
-        f"默默要你改一筆待收款「{which}」，但你手上的待收款清單裡找不到這筆：{lst}。"
-        "老實跟他說你沒找到、所以還沒改，請他講清楚是哪一筆或直接給你新的一筆。"
-        "用你的口氣，一兩句，不要假裝改好了。"
-    )
-    return await _say(instr, max_tokens=200)
-
-
-async def invoice_ack(kind: str, item: dict) -> str:
-    nm = item.get("note") or "那筆"
-    amt = float(item.get("amount") or 0)
-    if kind == "received":
-        instr = (
-            f"默默的「{nm}」那筆預期收入 ${amt:.0f} 終於入帳了，你把它從待收款劃掉、之後就當實際收入算。"
-            "用你的口氣簡短回一句，替他開心一下、記好了。一兩句就好。"
-        )
-    elif kind == "update":
-        wn = item.get("when") or "時間未定"
-        instr = (
-            f"默默剛更正了一筆待收款：「{nm}」改成 ${amt:.0f}，預計 {wn}。你已經把數字改過來了。"
-            "用你的口氣簡短回一句確認改好了。一兩句就好。"
-        )
-    else:
-        wn = item.get("when") or "時間未定"
-        instr = (
-            f"默默剛接了一筆新案子／新的預期收入：{nm}，大約 ${amt:.0f}，預計 {wn} 入帳，你記進待收款了。"
-            "用你的口氣簡短回一句確認記好了，可以順口提醒錢到手再算數。一兩句就好。"
-        )
-    return await _say(instr, max_tokens=160)
-
-
-async def freeform(instruction: str, max_tokens: int = 260) -> str:
-    """Say something in her voice from a one-off instruction (used when 張特助 hands over
-    a newly booked project and she needs to raise it with Momo herself)."""
-    return await _say(instruction, max_tokens=max_tokens)
-
-
 async def deploy_note(commit_message: str) -> str:
     instr = (
         "你（默默的理財阿姨）剛更新上線。工程師寫的更新內容是英文技術描述："
@@ -260,49 +140,7 @@ async def deploy_note(commit_message: str) -> str:
     try:
         return await _say(instr, max_tokens=120)
     except Exception:
-        return f"默默，阿姨更新好、又上工了。"
-
-
-async def parse_balance_update(text: str, account_names: list[str]) -> dict:
-    """If the message states a NEW CURRENT BALANCE for one of Momo's known accounts, extract it.
-    A purchase/expense is NOT a balance update. Returns amount=None when it isn't one."""
-    names = "、".join(account_names) or "（尚無已知帳戶）"
-    system = (
-        "You decide if the user is telling their bookkeeper the CURRENT BALANCE of a bank account "
-        f"or the amount owed on a credit card. Known accounts (may be empty): {names}.\n"
-        "Return ONLY JSON, no prose, no code fences: "
-        '{"name": "<account name>", "amount": <number or null>, "type": "cash" | "credit" | null}.\n'
-        "Set name+amount when they state what an account now holds or a card now owes "
-        "(e.g. 'apple card 現在欠 600', 'chase 支票剩 4200', 'freedom 卡欠 210', 'my apple cash is 1500'). "
-        "Use the matching known account's name if it's one of them; otherwise use the NEW account "
-        "name exactly as they said it (they may be recording a card/account for the first time).\n"
-        "type='credit' if it's money OWED on a card, 'cash' if it's money they HAVE, else null.\n"
-        "If it's a purchase, an expense, a question, or not clearly an account balance, "
-        'return {"name": null, "amount": null, "type": null}.'
-    )
-    raw = (await _say(text, system=system, max_tokens=80)).strip()
-    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    try:
-        d = json.loads(raw)
-        amt = d.get("amount")
-        return {
-            "name": d.get("name"),
-            "amount": float(amt) if amt is not None else None,
-            "type": d.get("type"),
-        }
-    except Exception:
-        return {"name": None, "amount": None, "type": None}
-
-
-async def balance_ack(name: str, amount: float, typ, added: bool) -> str:
-    what = "欠款" if typ == "credit" else "餘額"
-    verb = "新記了一個帳戶" if added else "更新了"
-    instr = (
-        f"默默剛跟你說他的「{name}」{what}現在是 ${amount:.0f}，你{verb}。"
-        "用你的口氣簡短回一句確認記好了，這種阿姨看不到的帳（像 Apple）本來就要靠他報你才知道，"
-        "可以順口叮嚀他記得有變動就跟你講。一兩句就好。"
-    )
-    return await _say(instr, max_tokens=160)
+        return "默默，阿姨更新好、又上工了。"
 
 
 async def profile_ack(s: dict) -> str:

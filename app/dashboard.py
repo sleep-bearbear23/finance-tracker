@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
 from . import (accounts as acct, allowance, analytics as AN, budget, categories,
+               changelog as CL,
                export as EX, facts as F, fixed as FX, networth, period as P,
                prefs, stability as STAB, tax as TAX, taxonomy)
 from .config import aware, now, settings
@@ -673,6 +674,37 @@ async def api_calendar(request: Request):
     days = min(800, max(30, int(request.query_params.get("days") or 400)))
     async with Session() as s:
         return await AN.calendar_items(s, days)
+
+
+@router.get("/api/changes")
+async def api_changes(request: Request):
+    """異動紀錄: everything 陳會計 has changed, newest first.
+
+    Momo gave her full authority to write on the condition that every write reports
+    itself. This is the other half of that deal — the reporting has to survive the
+    message scrolling away."""
+    if not _authorized(request):
+        return _deny()
+    limit = min(300, max(10, int(request.query_params.get("limit") or 80)))
+    async with Session() as s:
+        return {"changes": await CL.recent(s, limit)}
+
+
+@router.post("/api/undo")
+async def api_undo(request: Request):
+    """Put one change back. The old value came out of the log, not out of a guess."""
+    if not _authorized(request):
+        return _deny()
+    try:
+        body = await request.json()
+        cid = int(body.get("id"))
+    except (ValueError, TypeError, AttributeError):
+        return JSONResponse({"ok": False, "error": "沒有指定要還原哪一筆"}, status_code=400)
+    async with Session() as s:
+        res = await CL.undo(s, cid)
+        if res.get("ok"):
+            await write_snapshot(s)     # net worth may have moved; keep the curve honest
+        return JSONResponse(res, status_code=200 if res.get("ok") else 409)
 
 
 @router.get("/api/income2")

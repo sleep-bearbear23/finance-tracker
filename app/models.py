@@ -86,6 +86,31 @@ class MerchantMemory(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Change(Base):
+    """Every write 陳會計 makes, with enough of the old value to put it back.
+
+    Momo tested whether she could actually manage the data from LINE and found she could
+    not — the message never reached a write path, but she said 「記起來了」 anyway. Tools
+    fix the saying; this table fixes the trusting. Every mutation records what it touched,
+    what it was before, and which message caused it, so a wrong write is visible on the
+    dashboard and reversible with one tap.
+
+    ``patch`` is the whole undo instruction: {"kv": {key: {"before": …, "after": …}},
+    "rows": [{"table", "id", "before": {…} | null, "after": {…} | null}]}. before=null
+    means the thing did not exist, so undo deletes it.
+    """
+    __tablename__ = "changes"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    actor: Mapped[str] = mapped_column(String(16), default="line")   # line | dash | system
+    tool: Mapped[str] = mapped_column(String(48), default="")
+    args: Mapped[str | None] = mapped_column(Text, nullable=True)     # JSON, as called
+    summary: Mapped[str] = mapped_column(Text, default="")            # 中文, with before→after
+    patch: Mapped[str] = mapped_column(Text, default="{}")
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class SavingsPlan(Base):
     __tablename__ = "savings_plan"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

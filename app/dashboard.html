@@ -367,10 +367,24 @@
 
   /* ── BRAIN screen ── */
   #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.4fr 1fr;grid-template-rows:minmax(0,1.1fr) minmax(0,1fr);
-    grid-template-areas:"bmath bnw" "bmem bchat";}
+    grid-template-columns:1.3fr 1.05fr .95fr;grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
+    grid-template-areas:"bmath bchg bnw" "bmem  bmem bchat";}
   [data-pane=bmath]{grid-area:bmath} [data-pane=bnw]{grid-area:bnw}
   [data-pane=bmem]{grid-area:bmem} [data-pane=bchat]{grid-area:bchat}
+  [data-pane=bchg]{grid-area:bchg}
+
+  /* 異動紀錄 — what she changed, and the way back */
+  .chg{padding:10px 0;border-bottom:1px solid var(--grid)}
+  .chg:last-child{border-bottom:none}
+  .chg .top{display:flex;gap:8px;align-items:baseline}
+  .chg .when{flex:0 0 auto;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .chg .what{flex:1;min-width:0;font-size:12px;line-height:1.5;color:var(--ink2);white-space:normal}
+  .chg .src{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;white-space:normal}
+  .chg.undone .what,.chg.undone .src{opacity:.4;text-decoration:line-through}
+  .undo{flex:0 0 auto;border:1px solid var(--border);background:rgba(255,255,255,.04);
+    color:var(--ink2);border-radius:999px;font-family:inherit;font-size:10px;padding:3px 10px;cursor:pointer}
+  .undo:hover{color:var(--bad);border-color:rgba(255,92,147,.45)}
+  .undo[disabled]{opacity:.35;cursor:default}
   .formula{font-size:13px;line-height:1.95;color:var(--ink2)}
   .formula b{color:var(--ink);font-variant-numeric:tabular-nums}
   .formula .op{color:var(--muted);margin:0 3px}
@@ -401,8 +415,8 @@
       grid-template-areas:"ahead ahead" "acurve aflow" "aled aled";}
     [data-pane=acats]{display:none}
     #s-brain > .grid{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);
-      grid-template-areas:"bmath" "bmem";}
-    [data-pane=bnw],[data-pane=bchat]{display:none}
+      grid-template-areas:"bchg" "bmath";}
+    [data-pane=bnw],[data-pane=bchat],[data-pane=bmem]{display:none}
     #s-income > .grid{grid-template-columns:1fr 1fr;
       grid-template-rows:auto minmax(0,1fr) minmax(0,1.15fr);
       grid-template-areas:"istat istat" "iperf ipay" "irecv iexp";}
@@ -467,6 +481,7 @@
     #s-income > .grid.sel-ipay  > [data-pane=ipay],
     #s-income > .grid.sel-irecv > [data-pane=irecv],
     #s-income > .grid.sel-iexp  > [data-pane=iexp],
+    #s-brain > .grid.sel-bchg  > [data-pane=bchg],
     #s-brain > .grid.sel-bmath > [data-pane=bmath],
     #s-brain > .grid.sel-bnw   > [data-pane=bnw],
     #s-brain > .grid.sel-bmem  > [data-pane=bmem],
@@ -711,6 +726,10 @@
       <section class="card" data-pane="bmath">
         <h2>她怎麼算「這期能花多少」 <span class="more" onclick="go('#/')">← 回總覽</span></h2>
         <div class="body" id="budgetMath"></div></section>
+      <section class="card" data-pane="bchg">
+        <h2>異動紀錄 <span class="more" id="chgMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="chgBox"><div class="empty">載入中…</div></div>
+      </section>
       <section class="card" data-pane="bnw"><h2>淨資產 & 設定</h2><div class="body" id="nwMath"></div></section>
       <section class="card" data-pane="bmem"><h2>她學到的商家</h2><div class="body" id="memBox"></div></section>
       <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
@@ -801,7 +820,7 @@ const SEGS = {
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   income: [['iperf','節奏'],['ipay','誰付錢'],['irecv','入帳紀錄'],['iexp','接下來']],
-  brain:  [['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
+  brain:  [['bchg','異動紀錄'],['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
 const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', acct:'acctsGrid',
               cal:'calGrid', income:'incGrid', brain:'brainGrid'};
@@ -1329,11 +1348,46 @@ function drawIncChart(){
   }
 }
 
+/* ── 異動紀錄 ──
+   Momo gave 陳會計 permission to change things without asking, on the condition that
+   every change reports itself. The LINE message scrolls away; this does not. */
+async function loadChanges(){
+  const d=await getJSON('/api/changes');
+  const live=d.changes.filter(c=>c.undoable).length;
+  el('chgMeta').textContent = d.changes.length ? `${live} 筆可還原` : '';
+  el('chgBox').innerHTML = d.changes.length ? d.changes.map(c=>{
+    const t=c.at?new Date(c.at):null;
+    const when=t?t.toLocaleString('zh-TW',{month:'numeric',day:'numeric',hour:'2-digit',
+                                           minute:'2-digit',hour12:false}):'';
+    return `<div class="chg ${c.undoable?'':'undone'}">
+      <div class="top">
+        <span class="when">${esc(when)}</span>
+        <span class="what">${esc(c.summary||c.tool)}</span>
+        ${c.undoable?`<button class="undo" onclick="undoChange(${c.id},this)">還原</button>`
+                    :'<span class="tag">已還原</span>'}
+      </div>
+      ${c.source_text?`<div class="src">你說：「${esc(c.source_text)}」</div>`:''}
+    </div>`;
+  }).join('') : '<div class="empty">她還沒改過任何東西。</div>';
+}
+async function undoChange(id, btn){
+  btn.disabled=true; btn.textContent='還原中…';
+  try{
+    const r=await fetch('/api/undo',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+    const out=await r.json();
+    if(!out.ok) throw new Error(out.error||r.status);
+    // every other page is now stale — force them to refetch rather than show a stale figure
+    homeLoaded=planLoaded=incLoaded=acctsLoaded=calLoaded=false;
+    await loadChanges();
+  }catch(e){ btn.disabled=false; btn.textContent='還原失敗'; btn.title=String(e.message||e); }
+}
+
 /* ── BRAIN ── */
 let brainLoaded=false;
 async function loadBrain(){
   if(brainLoaded) return; brainLoaded=true;
-  const d=await getJSON('/api/brain');
+  const [d]=await Promise.all([getJSON('/api/brain'), loadChanges()]);
   stamp();
   if(d.budget_detail){
     const b=d.budget_detail;
