@@ -10,13 +10,13 @@
     /* Near-black plane. Glass only reads as glass when there is real darkness behind
        it — on the old #12142a the blur had nothing to bite on. Chart palette re-validated
        against the new surface (#131317): all six checks pass, so the series keep their hues. */
-    --plane:#07070b; --surface:rgba(255,255,255,.045); --surface-solid:#131317;
+    --plane:#050508; --surface:rgba(255,255,255,.04); --surface-solid:#131317;
     --inset:rgba(0,0,0,.35);
     --ink:#f2f3fa; --ink2:#a6abce; --muted:#7b81a8;
-    --grid:rgba(255,255,255,.05); --gridstrong:rgba(255,255,255,.18); --border:rgba(255,255,255,.07);
+    --grid:rgba(255,255,255,.035); --gridstrong:rgba(255,255,255,.14); --border:rgba(255,255,255,.06);
     --accent:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
     --s1:#15ad81; --s2:#5b8df5; --s3:#e2477e; --s4:#c98500; --s5:#9085e9; --s6:#d95926; --s7:#17a2b8;
-    --r:20px; --gap:12px;
+    --r:26px; --gap:16px;
     /* the liquid-glass shell: rim highlights + inner bloom, all inset so nothing bleeds */
     --glass:
       inset 3px 3px .5px -3.5px rgba(255,255,255,.55),
@@ -29,49 +29,71 @@
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;margin:0;overflow:hidden}
-  body{background:
-       radial-gradient(900px 420px at 82% -160px, rgba(91,141,245,.14), transparent 62%),
-       radial-gradient(780px 380px at -8% 6%, rgba(46,229,169,.09), transparent 58%),
-       radial-gradient(600px 600px at 50% 120%, rgba(144,133,233,.07), transparent 60%), var(--plane);
-    color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,
-      "PingFang TC","Noto Sans TC",sans-serif;
-    font-size:14px;line-height:1.5;font-weight:380;letter-spacing:.01em;-webkit-text-size-adjust:100%;
-    -webkit-font-smoothing:antialiased}
+  body{background:var(--plane);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",
+      Inter,system-ui,"PingFang TC","Noto Sans TC",sans-serif;
+    font-size:13.5px;line-height:1.6;font-weight:300;letter-spacing:.012em;
+    -webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+  /* Frosted glass has nothing to do unless something is behind it. These are the soft
+     blobs the reference mockups put behind the panel — diffused to almost nothing, so
+     they read as light in the material rather than as decoration on the page. */
+  .orbs{position:fixed;inset:-20%;z-index:-2;pointer-events:none;overflow:hidden;
+    filter:blur(110px);opacity:.30}
+  .orb{position:absolute;border-radius:50%;mix-blend-mode:screen}
+  /* Near-neutral on purpose. The reference mockups are almost monochrome — the light in
+     the glass is silver, and colour is reserved for data. Saturated blobs read as
+     decoration and start competing with the series hues for attention. */
+  .orb.a{width:52vw;height:52vw;left:54%;top:-20%;
+    background:radial-gradient(circle,rgba(214,224,255,.85),transparent 62%)}
+  .orb.b{width:44vw;height:44vw;left:-12%;top:22%;
+    background:radial-gradient(circle,rgba(198,240,226,.55),transparent 64%)}
+  .orb.c{width:40vw;height:40vw;left:30%;top:78%;
+    background:radial-gradient(circle,rgba(210,205,240,.5),transparent 66%)}
+  @media (prefers-reduced-motion: no-preference){
+    .orb{animation:drift 60s ease-in-out infinite alternate;will-change:transform}
+    .orb.b{animation-duration:78s;animation-delay:-14s}
+    .orb.c{animation-duration:92s;animation-delay:-31s}
+    @keyframes drift{ from{transform:translate3d(0,0,0) scale(1)}
+                        to{transform:translate3d(3vw,-2vh,0) scale(1.1)} }
+  }
   a{color:inherit;text-decoration:none}
 
   /* ── app frame: header + content + (mobile) nav, never scrolls ── */
-  .app{height:100dvh;display:flex;flex-direction:column;padding:12px 14px 12px;gap:10px}
+  .app{height:100dvh;display:flex;flex-direction:column;padding:18px 20px 18px;gap:16px}
   .topbar{display:flex;align-items:center;gap:12px;flex:0 0 auto}
-  .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2ee5a9,#5b8df5);
-    display:grid;place-items:center;font-size:17px;flex:0 0 34px}
-  .brandtxt h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
-  .brandtxt .quip{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,rgba(46,229,169,.9),rgba(91,141,245,.85));
+    display:grid;place-items:center;font-size:15px;flex:0 0 32px;
+    box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 2px 10px rgba(0,0,0,.45)}
+  .brandtxt h1{font-size:14px;margin:0;font-weight:400;letter-spacing:.06em;white-space:nowrap}
+  .brandtxt .quip{font-size:10.5px;font-weight:300;letter-spacing:.03em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.04);border:1px solid var(--border);
     border-radius:999px;padding:3px;margin-left:auto;
     -webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);
     box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.3), 0 2px 10px rgba(0,0,0,.4)}
-  .tabs a{font-size:12.5px;color:var(--ink2);padding:6px 14px;border-radius:999px;font-weight:450;
+  .tabs a{font-size:11.5px;color:var(--ink2);padding:7px 16px;border-radius:999px;font-weight:300;
     letter-spacing:.02em;cursor:pointer;white-space:nowrap;transition:color .2s}
-  .tabs a.on{color:var(--accent);background:rgba(255,255,255,.06);
+  .tabs a.on{color:var(--accent);background:rgba(255,255,255,.05);
     box-shadow:inset 0 0 0 1px rgba(46,229,169,.28),
                inset 1px 1px 1px -.5px rgba(255,255,255,.4)}
-  .asof{font-size:11px;color:var(--muted);white-space:nowrap}
+  .asof{font-size:10px;font-weight:300;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
 
   .screen{flex:1;min-height:0;display:none}
   .screen.on{display:block}
 
   /* ── cards ── */
   .card{background:var(--surface);
-    border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;
-    -webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);
+    border:0;border-radius:var(--r);padding:20px 22px;
+    -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
     box-shadow:var(--glass);
     display:flex;flex-direction:column;min-height:0;overflow:hidden;position:relative}
   /* the top rim — a single hairline of light, the thing that sells the material */
   .card::before{content:"";position:absolute;inset:0 0 auto;height:1px;border-radius:var(--r) var(--r) 0 0;
     background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);pointer-events:none}
-  .card > h2{font-size:10.5px;font-weight:560;color:var(--muted);margin:0 0 10px;letter-spacing:1.4px;
+  .card > h2{font-size:9.5px;font-weight:400;color:var(--muted);margin:0 0 16px;letter-spacing:2.2px;
     text-transform:uppercase;flex:0 0 auto;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-  .card > h2 .more{font-weight:500;font-size:11.5px;color:var(--accent);cursor:pointer;letter-spacing:0;text-transform:none}
+  .card > h2 .more{font-weight:300;font-size:11px;letter-spacing:.04em;color:var(--accent);cursor:pointer;text-transform:none}
   .body{flex:1;min-height:0;overflow:auto}
   .body.noscroll{overflow:hidden}
   .flexbody{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -94,15 +116,16 @@
   .ringwrap{display:flex;align-items:center;gap:14px;flex:1;min-height:0}
   .ring{position:relative;flex:0 0 auto;width:min(132px,34%);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
-    background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0)}
-  .ring .hole{position:absolute;inset:11px;border-radius:50%;background:rgba(7,7,11,.72);
-    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.06) 0);
+    -webkit-mask:radial-gradient(circle, transparent 60%, #000 61%);
+            mask:radial-gradient(circle, transparent 60%, #000 61%)}
+  .ring .hole{position:absolute;inset:0;border-radius:50%;background:transparent;
     display:flex;flex-direction:column;align-items:center;justify-content:center}
-  .ring .hole .lbl{font-size:10px;color:var(--muted)}
-  .ring .hole .big{font-size:24px;font-weight:300;letter-spacing:-1.2px;font-variant-numeric:tabular-nums}
+  .ring .hole .lbl{font-size:9px;font-weight:300;letter-spacing:.12em;color:var(--muted)}
+  .ring .hole .big{font-size:26px;font-weight:200;letter-spacing:-1.4px;font-variant-numeric:tabular-nums;line-height:1}
   .ring .hole .big.pos{color:var(--accent)} .ring .hole .big.neg{color:var(--bad)}
   .ringside{flex:1;min-width:0;min-height:0;max-height:100%;overflow:auto}
-  .kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:300;padding:7px 0;border-bottom:1px solid var(--grid)}
   .kv:last-of-type{border-bottom:none}
   .kv b{font-variant-numeric:tabular-nums;white-space:nowrap;font-weight:450}
   .daysleft{font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.45}
@@ -165,15 +188,15 @@
   .pill.mint b{color:var(--accent)} .pill.pink b{color:var(--bad)} .pill.warnp b{color:var(--warn)}
 
   /* lists */
-  .arow{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--grid);cursor:pointer}
+  .arow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--grid);cursor:pointer}
   .arow:last-child{border-bottom:none}
   .arow:hover .an{color:var(--accent)}
-  .dot{width:8px;height:8px;border-radius:3px;flex:0 0 8px}
-  .arow .an{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .arow .an .sub{display:block;font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+  .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px}
+  .arow .an{flex:1;min-width:0;font-size:12.5px;font-weight:300;letter-spacing:.015em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arow .an .sub{display:block;font-size:10px;font-weight:300;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis}
   .arow .av{font-variant-numeric:tabular-nums;font-weight:450;font-size:13px;white-space:nowrap}
   .arow .caret{color:var(--muted);font-size:14px}
-  .row{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:13px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid);font-size:12.5px;font-weight:300}
   .row:last-child{border-bottom:none}
   .row .l{color:var(--ink2);display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -192,7 +215,7 @@
   .donutbox .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
   .donutbox .ctr b{font-size:15px} .donutbox .ctr span{font-size:9.5px;color:var(--muted)}
   .cat-legend{flex:1;min-width:0;overflow:auto}
-  .cl{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink2);padding:3px 0}
+  .cl{display:flex;align-items:center;gap:9px;font-size:11.5px;font-weight:300;color:var(--ink2);padding:5px 0}
   .cl b{margin-left:auto;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
 
   /* tables */
@@ -344,6 +367,7 @@
     </filter>
   </defs>
 </svg>
+<div class="orbs" aria-hidden="true"><i class="orb a"></i><i class="orb b"></i><i class="orb c"></i></div>
 <div class="app">
   <div class="topbar">
     <div class="avatar">👩🏻‍💼</div>
