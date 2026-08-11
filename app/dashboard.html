@@ -7,74 +7,84 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
-    --surface:#fcfcfb; --plane:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
-    --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
-    --accent:#2a78d6; --good:#0ca30c; --bad:#d03b3b; --warn:#eda100;
-    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7;
-    --radius:14px;
+    --plane:#12142a; --surface:#1d2040; --card2:#232752;
+    --ink:#f2f3fa; --ink2:#a6abce; --muted:#7b81a8;
+    --grid:rgba(255,255,255,.06); --axis:rgba(255,255,255,.14); --border:rgba(255,255,255,.07);
+    --accent:#2ee5a9; --accent-deep:#15ad81; --good:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
+    --s1:#15ad81; --s2:#5b8df5; --s3:#e2477e; --s4:#c98500; --s5:#9085e9; --s6:#d95926; --s7:#17a2b8;
+    --radius:20px;
+    --glow:0 0 24px rgba(46,229,169,.10);
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--plane);color:var(--ink);
     font-family:system-ui,-apple-system,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;
     font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
-  .wrap{max-width:960px;margin:0 auto;padding:20px 18px 80px}
-  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
-  header .brand{font-size:13px;color:var(--muted);letter-spacing:.4px}
-  header h1{font-size:22px;margin:2px 0 0;font-weight:650}
+  body{background:radial-gradient(1200px 500px at 80% -100px, rgba(91,141,245,.10), transparent 60%),
+       radial-gradient(900px 420px at -10% 10%, rgba(46,229,169,.06), transparent 55%), var(--plane)}
+  .wrap{max-width:980px;margin:0 auto;padding:22px 18px 90px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  header .brand{font-size:12.5px;color:var(--muted);letter-spacing:.6px}
+  header .brand::before{content:"●";color:var(--accent);margin-right:7px;font-size:9px;vertical-align:1px}
+  header h1{font-size:23px;margin:3px 0 0;font-weight:700;letter-spacing:-.3px}
   header .asof{font-size:12px;color:var(--muted)}
-  .tabs{display:inline-flex;gap:2px;background:#efeee9;border-radius:11px;padding:3px;margin:14px 0 18px}
-  .tabs button{border:none;background:none;font:inherit;font-size:14px;color:var(--ink2);
-    padding:7px 16px;border-radius:9px;cursor:pointer;font-weight:550}
-  .tabs button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.05)}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:18px;margin-bottom:14px}
-  .card h2{font-size:13px;font-weight:600;color:var(--ink2);margin:0 0 14px;letter-spacing:.3px;
-    text-transform:none}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.05);border:1px solid var(--border);
+    border-radius:13px;padding:4px;margin:14px 0 20px}
+  .tabs button{border:none;background:none;font:inherit;font-size:13.5px;color:var(--ink2);
+    padding:8px 16px;border-radius:10px;cursor:pointer;font-weight:600;transition:.15s}
+  .tabs button.on{background:var(--surface);color:var(--accent);box-shadow:var(--glow), inset 0 0 0 1px rgba(46,229,169,.25)}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,.025), transparent 40%), var(--surface);
+    border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;
+    box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .card h2{font-size:12.5px;font-weight:700;color:var(--ink2);margin:0 0 16px;letter-spacing:.8px;text-transform:uppercase}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:680px){.grid2{grid-template-columns:1fr}}
-  /* stat tiles */
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
   @media(max-width:680px){.stats{grid-template-columns:1fr 1fr}}
-  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
-  .stat .k{font-size:12px;color:var(--muted);margin-bottom:6px}
-  .stat .v{font-size:26px;font-weight:650;letter-spacing:-.5px}
-  .stat .v.sm{font-size:22px}
-  .stat .sub{font-size:12px;color:var(--muted);margin-top:3px}
+  .stat{background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 50%), var(--surface);
+    border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+  .stat .k{font-size:12px;color:var(--muted);margin-bottom:7px;letter-spacing:.3px}
+  .stat .v{font-size:27px;font-weight:750;letter-spacing:-.8px}
+  .stat .v.sm{font-size:23px}
+  .stat:first-child .v{color:var(--accent);text-shadow:0 0 22px rgba(46,229,169,.35)}
+  .stat .sub{font-size:12px;color:var(--muted);margin-top:4px}
   .pos{color:var(--good)} .neg{color:var(--bad)}
-  .chartbox{position:relative;height:240px}
-  .chartbox.tall{height:280px}
-  /* budget gauge */
-  .gauge{height:14px;background:#eeede8;border-radius:8px;overflow:hidden;margin:10px 0 6px}
-  .gauge > i{display:block;height:100%;border-radius:8px;background:var(--accent)}
-  .gauge > i.over{background:var(--bad)}
-  .brow{display:flex;justify-content:space-between;font-size:13px;color:var(--ink2);margin-top:4px}
-  /* lists & tables */
-  .row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--grid);font-size:14px}
+  .chartbox{position:relative;height:250px}
+  .chartbox.tall{height:290px}
+  .gauge{height:14px;background:rgba(255,255,255,.07);border-radius:9px;overflow:hidden;margin:12px 0 8px}
+  .gauge > i{display:block;height:100%;border-radius:9px;
+    background:linear-gradient(90deg, var(--accent-deep), var(--accent));box-shadow:0 0 14px rgba(46,229,169,.4)}
+  .gauge > i.over{background:linear-gradient(90deg,#e2477e,#ff5c93);box-shadow:0 0 14px rgba(255,92,147,.4)}
+  .brow{display:flex;justify-content:space-between;font-size:13.5px;color:var(--ink2);margin-top:5px}
+  .brow b{color:var(--ink)}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid);font-size:14px}
   .row:last-child{border-bottom:none}
-  .row .l{color:var(--ink2)} .row .r{font-variant-numeric:tabular-nums;font-weight:550}
+  .row .l{color:var(--ink2)} .row .r{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink)}
   .tag{font-size:11px;color:var(--muted)}
-  .chip{display:inline-block;font-size:11px;padding:1px 7px;border-radius:6px;background:#f0efe9;color:var(--ink2);margin-left:6px}
-  .chip.warn{background:#fdf0d6;color:#8a6a00}
+  .chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:7px;background:rgba(255,255,255,.07);color:var(--ink2);margin-left:6px}
+  .chip.warn{background:rgba(255,176,46,.15);color:var(--warn)}
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
-  th{color:var(--muted);font-weight:600;font-size:11px;position:sticky;top:0;background:var(--surface)}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--grid);white-space:nowrap}
+  th{color:var(--muted);font-weight:700;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;
+    position:sticky;top:0;background:var(--surface);z-index:1}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .scroll{max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:10px}
-  .scroll table th{border-bottom:1px solid var(--grid)}
+  .scroll{max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:14px;background:rgba(0,0,0,.12)}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .formula{font-size:14px;line-height:2;color:var(--ink2)}
+  .formula{font-size:14px;line-height:2.1;color:var(--ink2)}
   .formula b{color:var(--ink);font-variant-numeric:tabular-nums}
   .formula .op{color:var(--muted);margin:0 4px}
-  .note{font-size:12px;color:var(--muted);margin-top:8px}
+  .note{font-size:12px;color:var(--muted);margin-top:10px}
   .empty{color:var(--muted);font-size:13px;padding:8px 0}
-  .msg{padding:8px 0;border-bottom:1px solid var(--grid);font-size:13px}
+  .msg{padding:9px 0;border-bottom:1px solid var(--grid);font-size:13px}
   .msg .who{font-size:11px;color:var(--muted);margin-bottom:2px}
   .msg.assistant .who{color:var(--accent)}
-  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:12px;font-size:12px;color:var(--ink2)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:14px;font-size:12px;color:var(--ink2)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
-  .legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
   .hidden{display:none}
   .err{color:var(--bad);font-size:13px}
+  .collapse-btn{width:100%;padding:11px;border:1px dashed var(--border);border-radius:12px;background:none;
+    color:var(--muted);font-size:13.5px;cursor:pointer;font-family:inherit;margin-top:8px}
+  select,input{color-scheme:dark}
 </style>
 </head>
 <body>
@@ -207,7 +217,7 @@
 <script>
 const F = n => (n<0?"-$":"$") + Math.abs(Number(n||0)).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 const F0 = n => (n<0?"-$":"$") + Math.abs(Number(n||0)).toLocaleString(undefined,{maximumFractionDigits:0});
-const CATCOLORS = ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7'];
+const CATCOLORS = ['#15ad81','#5b8df5','#e2477e','#c98500','#9085e9','#d95926','#17a2b8'];
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
 async function getJSON(path){ const r = await fetch(path,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
@@ -275,7 +285,7 @@ async function loadTrends(){
   el('netNote').textContent = ns.length<2 ? '趨勢從今天開始累積，之後每天會多一個點。' : '';
   new Chart(el('netChart'),{type:'line',
     data:{labels:ns.map(p=>p.day.slice(5)),
-      datasets:[{data:ns.map(p=>p.net),borderColor:css('--s1'),backgroundColor:'rgba(42,120,214,.08)',
+      datasets:[{data:ns.map(p=>p.net),borderColor:css('--s1'),backgroundColor:'rgba(46,229,169,.12)',
         borderWidth:2,tension:.25,pointRadius:ns.length<=2?4:0,pointHoverRadius:5,fill:true}]},
     options:{maintainAspectRatio:false,plugins:{tooltip:{callbacks:{label:c=>F(c.parsed.y)}}},
       scales:{x:{grid:{display:false},border:{color:css('--axis')}},
