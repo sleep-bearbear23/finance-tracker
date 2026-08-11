@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from uuid import uuid4
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -179,6 +180,31 @@ app.include_router(dashboard.router)  # /dash + /api/* (token-gated)
 @app.get("/")
 async def health():
     return {"status": "ok", "who": "秀琴阿姨"}
+
+
+@app.get("/health")
+async def health_detail():
+    """Machine-readable status for the 機房 control room (Windland's admin channel polls
+    this so one place can answer 'is everything running'). Read-only, no secrets."""
+    from sqlalchemy import func, select
+
+    from .models import Transaction
+
+    out: dict = {"ok": True}
+    try:
+        async with Session() as s:
+            since = now() - timedelta(days=7)
+            out["txn_7d"] = int(await s.scalar(
+                select(func.count(Transaction.id)).where(Transaction.created_at >= since)) or 0)
+            out["awaiting"] = int(await s.scalar(
+                select(func.count(Transaction.id)).where(
+                    Transaction.status.in_(("needs_context", "prompted")))) or 0)
+            last = await s.scalar(select(func.max(Transaction.posted_at)))
+            out["last_txn"] = last.strftime("%m-%d %H:%M") if last else "—"
+            out["last_sync"] = (await get_kv(s, "last_poll_at") or "—")[:16]
+    except Exception as e:  # never let the control room's ping take her down
+        out = {"ok": False, "error": f"{type(e).__name__}"}
+    return out
 
 
 @app.post("/ingest/tap")
