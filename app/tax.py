@@ -51,6 +51,15 @@ DEADLINES: list[dict] = [
 PAID_CATEGORY = "tax"
 
 
+def _is_tax_payment(t) -> bool:
+    """Recognise a payment that already went to the IRS or the FTB.
+
+    Matching on the stored category alone missed Momo's real $1,836 IRS payment from
+    2026-06-15, because that row had never been categorised — so the reserve asked her to
+    hold money she had already handed over. The description is checked too."""
+    return t.category == PAID_CATEGORY or T.guess(t.merchant_desc) == PAID_CATEGORY
+
+
 async def rate(session) -> float:
     try:
         r = float(await get_kv(session, RATE_KEY) or DEFAULT_RATE)
@@ -93,7 +102,7 @@ async def status(session, today: date | None = None) -> dict:
             continue
         if budget.is_income(t):
             earned += t.amount
-        elif t.category == PAID_CATEGORY and t.amount < 0:
+        elif t.amount < 0 and _is_tax_payment(t):
             paid += -t.amount
 
     should_hold = round(earned * r, 2)

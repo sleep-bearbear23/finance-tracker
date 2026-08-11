@@ -37,6 +37,7 @@ _SECRET_KEYS = {
     "simplefin_access_url",
     "line_owner_id",
     "owner_id",
+    "owner_user_id",
     "dashboard_token",
     "ingest_token",
 }
@@ -44,7 +45,7 @@ _SECRET_KEYS = {
 #: …and anything that smells like one, so a future key can't slip through
 _SECRET_PAT = re.compile(
     r"(token|secret|password|passwd|access_url|api_key|apikey|bearer|credential|"
-    r"webhook|_sid|_key$)", re.I)
+    r"webhook|owner|user_id|userid|_sid|_key$)", re.I)
 
 
 def _redact(key: str, value: str) -> str | None:

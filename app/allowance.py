@@ -84,6 +84,20 @@ def coverage(key: str, begin: date | None) -> tuple[float, date]:
     return days / P.days_in(key), begin
 
 
+def observed(key: str, begin: date | None) -> float:
+    """How much of a period we have *data* for — which is not the same as how much of it
+    the budget *governs*.
+
+    A period that ended before 起算日 was fully observed: the records are complete, the
+    budget just wasn't in force yet. Treating those as 0%-covered made the trajectory lens
+    skip every historical period and report a median discretionary spend of $0 — against
+    $4,500 of real spending since May. Only the period 起算日 lands inside is partial."""
+    lo, hi = P.key_bounds(key)
+    if not begin or begin <= lo or begin > hi:
+        return 1.0
+    return ((hi - begin).days + 1) / P.days_in(key)
+
+
 # ── shocks: 自己造成 vs 無法避免 ───────────────────────────────────────
 SELF = "self"            # a ticket, a late fee, an impulse blowout → repaid from allowance
 UNAVOIDABLE = "unavoidable"   # health, a real emergency → draws cushion, no repayment
@@ -254,7 +268,7 @@ async def _recent_discretionary(session, key: str, n: int = 6) -> tuple[float, l
     begin = await start_date(session)
     vals = []
     for k in keys:
-        frac, _ = coverage(k, begin)
+        frac = observed(k, begin)      # data coverage, NOT budget governance
         if frac <= 0:
             continue
         vals.append(per[k] / frac if frac < 1 else per[k])   # normalise partial periods
@@ -267,14 +281,21 @@ async def _recent_discretionary(session, key: str, n: int = 6) -> tuple[float, l
     return round(med, 2), [{"key": k, "spend": round(per[k], 2)} for k in keys]
 
 
-async def _net_drift(session, n: int = 6) -> float:
-    """Net-worth change per half-month over recent snapshots. Negative = draining."""
+async def _net_drift(session, window_days: int = 120) -> float:
+    """Net-worth change per half-month over RECENT snapshots. Negative = draining.
+
+    Windowed on purpose: the snapshot table reaches back to 2025, and a nine-month slope
+    says nothing useful about how this fortnight is going."""
     from sqlalchemy import select
 
     from .models import Snapshot
     snaps = (await session.execute(select(Snapshot).order_by(Snapshot.day))).scalars().all()
     if len(snaps) < 2:
         return 0.0
+    cutoff = (now().date() - timedelta(days=window_days)).isoformat()
+    recent = [s for s in snaps if s.day >= cutoff]
+    if len(recent) >= 2:
+        snaps = recent
     first, last = snaps[0], snaps[-1]
     try:
         d0, d1 = date.fromisoformat(first.day), date.fromisoformat(last.day)
