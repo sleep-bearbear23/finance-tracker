@@ -56,7 +56,9 @@ def _dupes(manual_name: str, synced_norms: list[str]) -> bool:
 async def compute(session) -> dict:
     synced = (await session.execute(select(Account))).scalars().all()
     prof = await prefs.get_income_profile(session)
-    ledger = [a for a in (prof.get("accounts") or []) if _amt(a) > 0]
+    # credit cards stay listed even at $0 owed; cash accounts need a balance to show
+    ledger = [a for a in (prof.get("accounts") or [])
+              if _amt(a) > 0 or (a.get("type") == "credit" and a.get("name"))]
 
     assets, debts, rows = 0.0, 0.0, []
     synced_norms = [norm(a.name) for a in synced]

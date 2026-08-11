@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Response
 
 from . import (
     alerts,
+    cleanup,
     dashboard,
     enrichment,
     line_client,
@@ -149,6 +150,9 @@ async def lifespan(app: FastAPI):
             lb = await seed_applecard.apply_labels(s)  # Momo's labeling-session answers, if present
             if lb:
                 print(f"[seed] applied labels to {lb} Apple Card row(s)")
+            nc, nx = await cleanup.run(s)  # wider auto-labels + sweep missed card payments
+            if nc or nx:
+                print(f"[cleanup] categorized {nc}, swept {nx} transfer(s) out of spending")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

@@ -94,10 +94,12 @@ async def set_income_profile(session, data: dict) -> None:
             try:
                 amt = float(a.get("amount"))
             except (TypeError, ValueError, AttributeError):
-                continue
-            if amt > 0:
-                typ = "credit" if a.get("type") == "credit" else "cash"
-                clean.append({"name": a.get("name"), "type": typ, "amount": amt})
+                amt = 0.0
+            typ = "credit" if a.get("type") == "credit" else "cash"
+            # keep credit cards even at $0 owed (the card exists; balance just moves),
+            # and any named cash account with money in it
+            if amt > 0 or (typ == "credit" and a.get("name")):
+                clean.append({"name": a.get("name"), "type": typ, "amount": max(amt, 0.0)})
         await set_kv(session, "cfg_accounts", json.dumps(clean))
         await _refresh_totals(session, clean)
 

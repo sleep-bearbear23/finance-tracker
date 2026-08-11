@@ -18,13 +18,14 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import budget, networth, prefs
+from . import budget, categories, networth, prefs
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
 
 router = APIRouter()
 _HTML = (Path(__file__).parent / "dashboard.html")
+_LABEL_HTML = (Path(__file__).parent / "label.html")
 
 
 def _authorized(request: Request) -> bool:
@@ -103,6 +104,101 @@ async def dash_page(request: Request):
         resp.set_cookie("dash", settings.DASHBOARD_TOKEN, httponly=True,
                         samesite="lax", secure=True, max_age=60 * 60 * 24 * 30)
     return resp
+
+
+@router.get("/label", response_class=HTMLResponse)
+async def label_page(request: Request):
+    if not settings.DASHBOARD_TOKEN:
+        return Response("disabled", status_code=503)
+    if not _authorized(request):
+        return Response("unauthorized", status_code=403)
+    resp = HTMLResponse(_LABEL_HTML.read_text(encoding="utf-8"))
+    if request.query_params.get("t"):
+        resp.set_cookie("dash", settings.DASHBOARD_TOKEN, httponly=True,
+                        samesite="lax", secure=True, max_age=60 * 60 * 24 * 30)
+    return resp
+
+
+@router.get("/api/unlabeled")
+async def api_unlabeled(request: Request):
+    """Uncategorized spending, grouped by merchant, biggest impact first."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        rows = (await s.execute(select(Transaction).where(
+            Transaction.category.is_(None),
+            Transaction.amount < 0,
+            Transaction.status.not_in(("ignored", "reconciled")),
+        ))).scalars().all()
+        groups: dict[str, dict] = {}
+        for t in rows:
+            k = categories.merchant_key(t.merchant_desc)
+            g = groups.setdefault(k, {"key": k, "display": t.merchant_desc, "count": 0,
+                                      "total": 0.0, "sources": set(), "first": "9999", "last": "0000"})
+            g["count"] += 1
+            g["total"] += abs(t.amount)
+            g["sources"].add(t.source)
+            if len(t.merchant_desc or "") < len(g["display"] or ""):
+                g["display"] = t.merchant_desc  # shortest variant reads cleanest
+            d = aware(t.posted_at or t.created_at)
+            if d:
+                ds = d.date().isoformat()
+                g["first"] = min(g["first"], ds)
+                g["last"] = max(g["last"], ds)
+        out = sorted(groups.values(), key=lambda g: -g["total"])
+        for g in out:
+            g["total"] = round(g["total"], 2)
+            g["sources"] = sorted(g["sources"])
+        return {"groups": out, "total": round(sum(g["total"] for g in out), 2),
+                "txns": sum(g["count"] for g in out),
+                "categories": [c for c in categories.CATEGORIES if c != "Income"]}
+
+
+@router.post("/api/label")
+async def api_label(request: Request):
+    """Apply Momo's labels: fix matching transactions + teach merchant memory."""
+    if not _authorized(request):
+        return _deny()
+    body = await request.json()
+    labels = body.get("labels") or {}
+    if not isinstance(labels, dict):
+        return JSONResponse({"error": "bad payload"}, status_code=400)
+    valid = set(categories.CATEGORIES)
+    async with Session() as s:
+        rows = (await s.execute(select(Transaction).where(
+            Transaction.category.is_(None),
+            Transaction.status.not_in(("ignored", "reconciled")),
+        ))).scalars().all()
+        touched = 0
+        for t in rows:
+            k = categories.merchant_key(t.merchant_desc)
+            lab = labels.get(k)
+            if not lab or lab.get("cat") not in valid:
+                continue
+            if lab["cat"] == "Transfers/Ignore":
+                t.status = "ignored"
+            t.category = lab["cat"]
+            if lab.get("note"):
+                t.note = lab["note"]
+            touched += 1
+        taught = 0
+        for k, lab in labels.items():
+            if lab.get("cat") not in valid:
+                continue
+            mem = await s.get(MerchantMemory, k)
+            if mem is None:
+                s.add(MerchantMemory(
+                    key=k, category=lab["cat"], note=lab.get("note"),
+                    is_income=(False if lab["cat"] == "Transfers/Ignore" else None),
+                    necessary=bool(lab.get("nec")),
+                ))
+                taught += 1
+            else:
+                mem.category = lab["cat"]
+                if lab.get("note"):
+                    mem.note = lab["note"]
+        await s.commit()
+        return {"ok": True, "labeled_txns": touched, "merchants_taught": taught}
 
 
 @router.get("/api/overview")

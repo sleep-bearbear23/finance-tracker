@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>帳目標記 · 陳會計</title>
+<style>
+  :root{
+    --bg:#f4efe7; --card:#fffaf3; --ink:#3d3630; --sub:#8a7f72; --line:#e6dccd;
+    --accent:#c8783e; --accent-soft:#f3e2d1; --good:#5a7d5a;
+    --shadow:0 1px 2px rgba(90,70,50,.06),0 8px 24px rgba(90,70,50,.06);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;
+    font-size:15px;line-height:1.5}
+  .wrap{max-width:720px;margin:0 auto;padding:22px 16px 150px}
+  header{text-align:center;margin:6px 0 16px}
+  header .badge{display:inline-flex;background:var(--accent-soft);color:var(--accent);
+    font-weight:600;font-size:13px;padding:6px 14px;border-radius:999px}
+  header h1{font-size:22px;margin:10px 0 6px}
+  header p{color:var(--sub);font-size:13px;margin:0;line-height:1.6}
+  .statrow{display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:7px 15px;text-align:center}
+  .stat b{display:block;font-size:18px}
+  .stat span{font-size:11px;color:var(--sub)}
+  .q{border:1px solid var(--line);border-radius:14px;padding:13px;margin:10px 0;background:var(--card);box-shadow:var(--shadow)}
+  .q.done{border-color:var(--good);background:#f4f8f4}
+  .q .head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .q .name{font-weight:650;font-size:14.5px;word-break:break-all}
+  .q .amt{font-variant-numeric:tabular-nums;font-weight:650;color:var(--accent);white-space:nowrap}
+  .q .meta{font-size:11.5px;color:var(--sub);margin:2px 0 9px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;
+    font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--ink)}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .togs{display:flex;gap:8px;margin-top:9px}
+  .tog{border:1px dashed var(--line);background:none;border-radius:999px;padding:4px 12px;
+    font-size:12px;cursor:pointer;font-family:inherit;color:var(--sub)}
+  .tog.on{border-style:solid;background:var(--good);border-color:var(--good);color:#fff}
+  .note{width:100%;margin-top:9px;padding:8px 11px;border:1px solid var(--line);border-radius:10px;
+    font:inherit;font-size:13px;background:#fff;color:var(--ink)}
+  .note::placeholder{color:#c0b6a8}
+  .footer{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(#f4efe7cc,#f4efe7);
+    backdrop-filter:blur(8px);border-top:1px solid var(--line);
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));z-index:40}
+  .footer .inner{max-width:720px;margin:0 auto}
+  .prog{font-size:12px;color:var(--sub);margin-bottom:8px;text-align:center}
+  .send{width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:13px;
+    font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:var(--shadow)}
+  .send:disabled{opacity:.4}
+  .doneMsg{text-align:center;padding:40px 20px;font-size:16px;line-height:1.9}
+  .err{color:#b33;text-align:center;padding:30px}
+  .loadmore{width:100%;padding:11px;border:1px dashed var(--line);border-radius:12px;background:none;
+    color:var(--sub);font-size:13px;cursor:pointer;font-family:inherit;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge">陳會計 · 帳目標記</span>
+    <h1>還沒認得的帳</h1>
+    <p>點分類就好，答一筆她記一輩子——之後同一家店自動歸類。<br>不確定的可以跳過，下次再標。</p>
+    <div class="statrow" id="stats"></div>
+  </header>
+  <div id="list"><div class="doneMsg">載入中…</div></div>
+</div>
+<div class="footer"><div class="inner">
+  <div class="prog" id="prog"></div>
+  <button class="send" id="send" onclick="submit()" disabled>送出給阿姨記起來 →</button>
+</div></div>
+
+<script>
+const CATZH = {"Food & Groceries":"買菜/超市","Eating Out":"吃外面/外送","Coffee":"咖啡/手搖",
+ "Rideshare & Transit":"交通/停車","Gas":"加油","Rent & Utilities":"帳單/固定","Subscriptions":"訂閱",
+ "Shopping":"購物","Beauty":"美妝/美髮","Pets":"寵物","Art & Work Supplies":"工作/美術","Health":"健康/藥妝",
+ "Fun & Going Out":"玩樂/演出","Travel":"旅行","Gifts":"送禮/請客","Life Admin":"人生行政","Transfers/Ignore":"轉帳/忽略"};
+const F0 = n => "$"+Math.abs(n).toLocaleString(undefined,{maximumFractionDigits:0});
+const el = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let GROUPS=[], CATS=[], answers={}, SHOWN=30;
+
+async function load(){
+  try{
+    const r = await fetch('/api/unlabeled',{credentials:'same-origin'});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    GROUPS = d.groups; CATS = d.categories;
+    el('stats').innerHTML = [[d.groups.length,"家商店"],[d.txns,"筆交易"],[F0(d.total),"未分類金額"]]
+      .map(([b,s])=>`<div class="stat"><b>${b}</b><span>${s}</span></div>`).join('');
+    if(!d.groups.length){ el('list').innerHTML='<div class="doneMsg">🎉 全部都認得了，沒有未分類的帳。</div>'; return; }
+    render();
+  }catch(e){ el('list').innerHTML=`<div class="err">載入失敗（${e.message}）。用開儀表板的那個連結（含 ?t=…）再開一次這頁。</div>`; }
+}
+function render(){
+  const shown = GROUPS.slice(0, SHOWN);
+  el('list').innerHTML = shown.map(g=>`
+    <div class="q ${answers[g.key]?'done':''}" id="q_${g.key}">
+      <div class="head"><span class="name">${esc(g.display.slice(0,52))}</span>
+        <span class="amt">${F0(g.total)}${g.count>1?` · ${g.count}筆`:''}</span></div>
+      <div class="meta">${esc(g.first)} ~ ${esc(g.last)} · 來源：${esc((g.sources||[]).join('/'))}</div>
+      <div class="chips">${CATS.map(c=>`<button class="chip ${answers[g.key]&&answers[g.key].cat===c?'on':''}"
+        onclick="pick('${g.key}','${c}',this)">${CATZH[c]||c}</button>`).join('')}</div>
+      <div class="togs"><button class="tog ${answers[g.key]&&answers[g.key].nec?'on':''}"
+        onclick="tog('${g.key}',this)">必要開銷</button></div>
+      <input class="note" placeholder="補一句（可空）" value="${esc(answers[g.key]&&answers[g.key].note||'')}"
+        onchange="note('${g.key}',this.value)">
+    </div>`).join('') +
+    (GROUPS.length>SHOWN?`<button class="loadmore" onclick="SHOWN+=30;render()">再看 ${Math.min(30,GROUPS.length-SHOWN)} 家（共 ${GROUPS.length}）▾</button>`:'');
+  prog();
+}
+function pick(key,cat,btn){
+  answers[key]=answers[key]||{}; answers[key].cat=cat;
+  const box = btn.closest('.q');
+  box.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c===btn));
+  box.classList.add('done'); prog();
+}
+function tog(key,btn){ answers[key]=answers[key]||{}; answers[key].nec=!answers[key].nec; btn.classList.toggle('on',answers[key].nec); }
+function note(key,v){ answers[key]=answers[key]||{}; answers[key].note=v.trim()||null; }
+function prog(){
+  const n = Object.values(answers).filter(a=>a.cat).length;
+  el('prog').textContent = n ? `已標 ${n} 家 — 隨時可以送出，剩下的下次再標` : '點分類開始（不用全標完）';
+  el('send').disabled = n===0;
+}
+async function submit(){
+  el('send').disabled=true; el('send').textContent='送出中…';
+  const labels={}; for(const [k,a] of Object.entries(answers)) if(a.cat) labels[k]=a;
+  try{
+    const r = await fetch('/api/label',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({labels})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error||r.status);
+    el('list').innerHTML = `<div class="doneMsg">✅ 好了！<br>${d.labeled_txns} 筆帳歸好類，${d.merchants_taught} 家商店她記住了。<br><br>
+      <a href="/dash" style="color:var(--accent)">回儀表板看看 →</a>　<a href="/label" style="color:var(--sub)">繼續標剩下的</a></div>`;
+    el('send').style.display='none'; el('prog').textContent='';
+    window.scrollTo({top:0,behavior:'smooth'});
+  }catch(e){
+    el('send').disabled=false; el('send').textContent='送出給阿姨記起來 →';
+    alert('送出失敗：'+e.message);
+  }
+}
+load();
+</script>
+</body>
+</html>
