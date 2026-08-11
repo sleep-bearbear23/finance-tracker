@@ -152,10 +152,18 @@ SCHEMAS: list[dict] = [
                 "next_due": {"type": "string", "description": "YYYY-MM-DD of the next charge, if known."},
                 "where": {"type": "string", "description": "Which card or account it comes out of."},
                 "note": {"type": "string"},
+                "manual": {"type": "boolean",
+                           "description": "True when Momo has to go and DO it every time — a "
+                                          "Zelle to her mother, a transfer. Those belong on "
+                                          "the calendar every month; an auto-debit like Adobe "
+                                          "does not, and would just be noise."},
                 "force": {"type": "boolean",
                           "description": "Only after Momo confirms she really pays both. Adding "
                                          "a second line for a bill she already has silently "
-                                         "doubles it in every budget."},
+                                         "doubles it in every budget. You are shown the full "
+                                         "list of her fixed costs — READ IT before adding, and "
+                                         "if something already covers this, update that row "
+                                         "instead of adding a second one under a new name."},
             },
             "required": ["name", "amount", "cadence"],
         },
@@ -250,6 +258,33 @@ SCHEMAS: list[dict] = [
                 "reply": {"type": "string", "description": "Momo's message, verbatim."},
             },
             "required": ["reply"],
+        },
+    },
+    {
+        "name": "log_income",
+        "description": (
+            "Money Momo has ALREADY BEEN PAID that no bank feed will ever show — cash in "
+            "hand, or a payment into an account that does not sync. 「6/25-6/26 有一個小專案賺"
+            "了 $250 現金」 is this tool, in ONE call.\n"
+            "Do NOT use add_expected_payment + mark_payment_received for this. That pair "
+            "adds a row to the waiting list and then deletes it, so the money is never "
+            "recorded anywhere — it happened, and $250 of real income vanished.\n"
+            "add_expected_payment is for money she is still WAITING for. This is for money "
+            "already in her hand."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number", "description": "Positive."},
+                "source": {"type": "string", "description": "Who paid, or what the job was."},
+                "date": {"type": "string", "description": "YYYY-MM-DD she was paid. Defaults to today."},
+                "account": {"type": "string",
+                            "description": "Where it went, if she said — 現金, Venmo, Apple. "
+                                           "Naming it also adds the money to that balance, "
+                                           "which is otherwise a second thing she has to "
+                                           "remember to tell you."},
+                "note": {"type": "string"},
+            },
+            "required": ["amount", "source"],
         },
     },
     {
@@ -395,7 +430,7 @@ async def set_account_balance(s, rec, name, amount, kind=None):
 
 
 async def add_fixed_cost(s, rec, name, amount, cadence, category=None,
-                         next_due=None, where=None, note=None, force=False):
+                         next_due=None, where=None, note=None, manual=False, force=False):
     if cadence not in CADENCES:
         return {"ok": False, "summary": "", "error": f"cadence 只能是 {CADENCES}"}
     rows = await fixed.rows(s, include_sinking=False)
@@ -403,14 +438,24 @@ async def add_fixed_cost(s, rec, name, amount, cadence, category=None,
     # month, in every lens. Refuse and make somebody choose.
     if not force:
         dup = _find(rows, name)
+        if dup is None:
+            # 「給家人的錢 $1,000／月」 was added next to 「房租（Zelle 給媽媽）$1,000／月」 —
+            # the same payment under a name that shares no characters, so matching on the
+            # name found nothing and her rent was counted twice. Same amount + same cadence
+            # is worth stopping for even when the names look unrelated.
+            dup = next((r for r in rows
+                        if abs(float(r.get("amount") or 0) - float(amount)) < 0.5
+                        and (r.get("cadence") or "monthly") == cadence), None)
         if dup is not None:
             return {"ok": False, "summary": "", "duplicate": dup,
                     "error": (f"固定開銷裡已經有「{dup.get('name')}」"
-                              f"{_CAD_ZH.get(dup.get('cadence'), '')} {_money(dup.get('amount'))}。"
-                              "是那一筆漲價了（用 update_fixed_cost），還是真的是另一筆訂閱？"
-                              "確定是新的再用 force=true。")}
+                              f"{_CAD_ZH.get(dup.get('cadence'), '')} {_money(dup.get('amount'))}"
+                              "，金額跟週期都一樣。是同一筆嗎？"
+                              "如果是，用 update_fixed_cost 改那一筆（可以順便改名字）；"
+                              "真的是兩筆不同的錢再用 force=true。")}
     rows.append({"name": name, "amount": float(amount), "cadence": cadence,
-                 "cat": category, "where": where, "next_due": next_due, "note": note})
+                 "cat": category, "where": where, "next_due": next_due, "note": note,
+                 "manual": bool(manual) or None})
     await fixed.save(s, rows)
     per_month = float(amount) / fixed.CADENCE_MONTHS[cadence]
     total = await fixed.monthly_total(s)
@@ -511,6 +556,45 @@ async def log_expense(s, rec, amount, merchant, category=None, note=None, date=N
     return {"ok": True, "summary": rec.summary, "id": t.id}
 
 
+async def log_income(s, rec, amount, source, date=None, account=None, note=None):
+    """Money already in her hand. Creates the transaction the bank feed never will.
+
+    The pair add_expected_payment + mark_payment_received looks like it does this and does
+    the opposite: it writes a row to the waiting list and then removes it, leaving no trace
+    anywhere. Momo's $250 cash job went through that path and disappeared."""
+    from .models import Transaction as _T
+    amt = abs(float(amount))
+    when = now()
+    if date:
+        try:
+            when = datetime.fromisoformat(str(date)[:10]).replace(tzinfo=TZ)
+        except ValueError:
+            pass
+    t = _T(id=f"manual:{abs(hash((source, amt, str(date), when.isoformat()))):016x}",
+           account_id=(account or "現金"), amount=amt, merchant_desc=source,
+           posted_at=when, status="income", inflow_kind="pay", source="manual",
+           note=note or "現金收入，銀行看不到")
+    s.add(t)
+    await s.commit()
+    rec.row("transactions", t.id, None,
+            changelog.snapshot_row(t, ["account_id", "amount", "merchant_desc", "posted_at",
+                                       "category", "note", "status", "source", "inflow_kind"]))
+    line = f"記了一筆收入：{source} {_money(amt)}（{when.date()}）"
+    # Cash does not turn up in a balance by itself, and telling her "now go and also update
+    # your cash total" is a second chore she will not do. If she said where it went, move it.
+    if account:
+        accts = prefs._load_list(await get_kv(s, "cfg_accounts"))
+        old = next((a for a in accts if prefs._norm(a.get("name")) == prefs._norm(account)), None)
+        base = float(old.get("amount") or 0) if old else 0.0
+        res = await prefs.update_account(s, account, base + amt,
+                                         (old or {}).get("type") or "cash")
+        line += f"，{res['name']} {_money(base)} → {_money(base + amt)}"
+    else:
+        line += "（沒說收在哪個帳戶，餘額沒動）"
+    rec.says(line)
+    return {"ok": True, "summary": rec.summary, "id": t.id}
+
+
 async def remember_merchant(s, rec, merchant, category=None, kind=None, note=None):
     key = categories.merchant_key(merchant)
     mem = await s.get(MerchantMemory, key)
@@ -578,6 +662,7 @@ HANDLERS = {
     "set_emergency_target": set_emergency_target,
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
+    "log_income": log_income,
     "remember_merchant": remember_merchant,
 }
 

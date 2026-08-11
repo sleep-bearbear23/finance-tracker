@@ -487,8 +487,9 @@ async def calendar_items(session, days: int = 400) -> dict:
         except ValueError:
             continue
         out.append({"date": r["due"], "days": (d - today).days, "kind": "renewal",
-                    "label": r["name"], "amount": -abs(r["amount"]),
-                    "cat": r.get("cat"), "note": "定期扣款" if not r.get("sinking") else "預留"})
+                    "label": r["name"], "amount": -abs(r["amount"]), "cat": r.get("cat"),
+                    "note": ("要自己轉，不會自動扣" if r.get("manual")
+                             else "預留" if r.get("sinking") else "定期扣款")})
 
     for d0 in TAX.DEADLINES:
         try:

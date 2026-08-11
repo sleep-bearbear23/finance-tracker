@@ -96,6 +96,30 @@ async def build_context(session) -> str:
     except Exception:
         pass
 
+    # Every fixed cost, itemised. She could see the TOTAL and nothing else, so when Momo
+    # asked her to break down $2,521 she had to say she could not — and worse, when he asked
+    # her to add 「給家人的錢 $1,000／月」 she could not see 「房租（Zelle 給媽媽）$1,000／月」
+    # already sitting there, and his rent got counted twice.
+    try:
+        from . import fixed as FX
+        frows = await FX.rows(session, include_sinking=False)
+        if frows:
+            lines.append("固定開銷（每一筆，這是預算每期扣掉的東西）：")
+            for r in sorted(frows, key=lambda x: -x["monthly"]):
+                cad = {"monthly": "每月", "quarterly": "每季", "semiannual": "每半年",
+                       "annual": "每年"}.get(r.get("cadence") or "monthly", "每月")
+                per = f"，換算每月 ${r['monthly']:.2f}" if (r.get("cadence") or "monthly") != "monthly" else ""
+                due = f"，下次 {r['next_due']}" if r.get("next_due") else ""
+                hand = "，要自己轉" if r.get("manual") else ""
+                lines.append(f"  - {r['name']}：{cad} ${float(r.get('amount') or 0):.2f}{per}{due}{hand}")
+            lines.append(f"固定開銷合計：每月 ${await FX.monthly_total(session, include_sinking=False):.2f}。")
+            lines.append(
+                "（默默問固定開銷的明細、breakdown、有哪些訂閱，就照這張清單一筆一筆念給他，"
+                "不要跟他說你只有總數。要新增一筆之前也先看這張表——"
+                "同一筆錢用不同名字加第二次，預算會每個月多扣一份。）")
+    except Exception:
+        pass
+
     try:
         a = await AL.compute(session)
         lines.append(

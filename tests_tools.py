@@ -84,20 +84,20 @@ async def main():
         base_rows = await fixed.rows(s, include_sinking=False)
         base_total = await fixed.monthly_total(s)
         add = await tools.run(s, "add_fixed_cost", {
-            "name": "Anthropic API（機器人）", "amount": 40, "cadence": "monthly",
+            "name": "Anthropic API（機器人）", "amount": 44, "cadence": "monthly",
             "category": "subs", "where": "Apple Card"})
         check("a subscription can be added", add["ok"], str(add)[:80])
         rows_now = await fixed.rows(s, include_sinking=False)
         check("adding one row does not wipe the other nine",
               len(rows_now) == len(base_rows) + 1, f"{len(base_rows)} → {len(rows_now)}")
         check("the monthly total moved by exactly the new cost",
-              near(await fixed.monthly_total(s), base_total + 40),
+              near(await fixed.monthly_total(s), base_total + 44),
               f"{base_total} → {await fixed.monthly_total(s)}")
 
         semi = await tools.run(s, "add_fixed_cost", {
             "name": "測試半年費", "amount": 600, "cadence": "semiannual"})
         check("a semiannual bill is divided, not counted whole",
-              near(await fixed.monthly_total(s), base_total + 40 + 100),
+              near(await fixed.monthly_total(s), base_total + 44 + 100),
               str(await fixed.monthly_total(s)))
         check("and the summary shows the per-month translation",
               "100" in semi["summary"], semi["summary"])
@@ -110,7 +110,7 @@ async def main():
         check("…and the refusal names the row it collided with",
               bool(dup.get("duplicate")), str(dup.get("duplicate")))
         check("the total did not move on a refused add",
-              near(await fixed.monthly_total(s), base_total + 40 + 100),
+              near(await fixed.monthly_total(s), base_total + 44 + 100),
               str(await fixed.monthly_total(s)))
         forced = await tools.run(s, "add_fixed_cost", {
             "name": "Claude 訂閱", "amount": 100, "cadence": "monthly", "force": True})
@@ -128,6 +128,17 @@ async def main():
         check("the same booking twice is refused too",
               not dup2["ok"] and bool(dup2.get("duplicate")), str(dup2)[:110])
 
+        # The one that actually happened: 「給家人的錢 $1,000／月」 next to 「房租（Zelle 給媽媽）
+        # $1,000／月」 — the same payment under a name sharing no characters, so the name
+        # check found nothing and her rent was billed twice, every month, in every lens.
+        rent = await tools.run(s, "add_fixed_cost", {
+            "name": "給家人的錢", "amount": 1000, "cadence": "monthly"})
+        check("the same payment under an unrelated name is caught by amount + cadence",
+              not rent["ok"] and "房租" in str(rent.get("duplicate")), str(rent)[:120])
+        check("her rent is not billed twice",
+              near(await fixed.monthly_total(s), base_total + 44 + 100),
+              str(await fixed.monthly_total(s)))
+
         chg = await tools.run(s, "update_fixed_cost",
                               {"which": "Anthropic", "amount": 55})
         check("a price change lands", chg["ok"] and near(await fixed.monthly_total(s),
@@ -135,6 +146,17 @@ async def main():
         rm = await tools.run(s, "remove_fixed_cost", {"which": "測試半年費"})
         check("a cancelled subscription can be removed",
               rm["ok"] and near(await fixed.monthly_total(s), base_total + 55))
+
+        print("\n[4c] a payment she has to go and DO belongs on the calendar")
+        man = await tools.run(s, "add_fixed_cost", {
+            "name": "給媽媽的家用（測試）", "amount": 1234, "cadence": "monthly", "manual": True})
+        cal = await fixed.calendar(s, months=3)
+        check("a manual monthly transfer is on the calendar", man["ok"]
+              and any("給媽媽" in c["name"] for c in cal),
+              str([c["name"] for c in cal][:6]))
+        check("…but an auto-debit like Adobe still is not",
+              not any("Adobe" in c["name"] for c in cal))
+        await tools.run(s, "remove_fixed_cost", {"which": "給媽媽的家用（測試）"})
 
         print("\n[5] balances, and the totals that hang off them")
         bal = await tools.run(s, "set_account_balance",
@@ -168,6 +190,43 @@ async def main():
         t = await s.get(Transaction, exp["id"])
         check("it is stored as a spend, not income", t is not None and t.amount < 0,
               str(t.amount if t else None))
+
+        print("\n[7b] cash she has already been paid — the path that ate $250")
+        # What actually happened: 「6/25-6/26 有一個小專案賺了 $250 現金」 was handled as
+        # add_expected_payment + mark_payment_received. That pair adds a row to the waiting
+        # list and then deletes it, so the money existed for one second and then did not
+        # exist anywhere — not in the ledger, not in a balance, not in income.
+        from app import budget as _budget  # noqa: PLC0415
+        from app import facts as _F  # noqa: PLC0415
+
+        before_inc = sum(t.amount for t in (await _F.build(s)).txns if _budget.is_income(t))
+        pretend = await tools.run(s, "add_expected_payment",
+                                  {"amount": 250, "note": "現金小專案（錯誤示範）", "when": "2026-06"})
+        await tools.run(s, "mark_payment_received", {"which": "現金小專案（錯誤示範）"})
+        after_wrong = sum(t.amount for t in (await _F.build(s)).txns if _budget.is_income(t))
+        check("the old add-then-receive pair records no income at all",
+              pretend["ok"] and near(after_wrong, before_inc),
+              f"{before_inc} → {after_wrong}")
+
+        inc = await tools.run(s, "log_income",
+                              {"amount": 250, "source": "案內來訪", "date": "2026-06-25",
+                               "account": "現金"},
+                              source_text="6/25-6/26 有一個小專案賺了 $250 現金")
+        after_right = sum(t.amount for t in (await _F.build(s)).txns if _budget.is_income(t))
+        check("log_income puts it in the ledger as real income",
+              inc["ok"] and near(after_right, before_inc + 250),
+              f"{before_inc} → {after_right}")
+        accts = prefs._load_list(await get_kv(s, "cfg_accounts"))
+        cash = next((a for a in accts if "現金" in (a.get("name") or "")), None)
+        check("…and cash in hand goes up without her having to say it twice",
+              cash is not None and near(cash["amount"], 250), str(cash))
+        check("the receipt names the account it moved", "現金" in inc["summary"], inc["summary"])
+
+        log_i = next(c for c in await changelog.recent(s, 10) if c["tool"] == "log_income")
+        await changelog.undo(s, log_i["id"])
+        undone = sum(t.amount for t in (await _F.build(s)).txns if _budget.is_income(t))
+        check("undoing cash income takes the income back out",
+              near(undone, before_inc), f"{after_right} → {undone}")
 
         print("\n[8] undo — the condition Momo attached to full authority")
         log = await changelog.recent(s, 50)

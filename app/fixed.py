@@ -30,8 +30,11 @@ CADENCE_MONTHS = {"monthly": 1, "quarterly": 3, "semiannual": 6, "annual": 12}
 # Worked out with Momo on 2026-08-11 against 19 months of Apple Card statements plus
 # what only she could tell me (rent, and which subscriptions are still alive).
 DEFAULTS: list[dict] = [
+    # manual: Momo has to actually send this one every month. It is the reason the
+    # calendar now carries monthly lines she initiates herself — she asked for the $1,000
+    # to her mother to be on there, and it was already a fixed cost, just invisible.
     {"name": "房租（Zelle 給媽媽）", "amount": 1000.0, "cadence": "monthly",
-     "cat": "rent", "where": "Chase"},
+     "cat": "rent", "where": "Chase", "manual": True},
     {"name": "加油", "amount": 150.0, "cadence": "monthly", "cat": "gas",
      "where": "Apple Card", "note": "一個月 3 次上下，工作要開車"},
     {"name": "Claude 訂閱（含加值）", "amount": 110.0, "cadence": "monthly",
@@ -108,7 +111,8 @@ async def save(session, new_rows: list[dict]) -> None:
         except (TypeError, ValueError, AttributeError):
             continue
         clean.append({k: r.get(k) for k in
-                      ("name", "amount", "cadence", "cat", "where", "next_due", "note")
+                      ("name", "amount", "cadence", "cat", "where", "next_due", "note",
+                       "manual")
                       if r.get(k) is not None} | {"amount": amt})
     await set_kv(session, KEY, json.dumps(clean, ensure_ascii=False))
 
@@ -175,13 +179,33 @@ async def renewals(session, within_days: int = 45, include_sinking: bool = True)
 
 
 async def calendar(session, months: int = 14) -> list[dict]:
-    """Every non-monthly hit in the next N months, so a dry spell can be seen coming."""
+    """Every dated hit in the next N months, so a dry spell can be seen coming.
+
+    Monthly lines are still skipped — Momo does not need twelve reminders a year that Adobe
+    charges again — with one exception: a line she has to go and DO. The $1,000 Zelle to her
+    mother is not an auto-debit; if it is not on the calendar it is a thing she can forget,
+    which is the whole reason she asked for it there."""
     today = now().date()
     horizon = date(today.year + (today.month + months - 1) // 12,
                    (today.month + months - 1) % 12 + 1, 1)
     out = []
     for r in await rows(session, include_sinking=True):
         cad = r.get("cadence") or "monthly"
+        if cad == "monthly" and r.get("manual"):
+            # no stated day: assume the 1st, which is when a monthly transfer usually goes
+            try:
+                day = date.fromisoformat(str(r["next_due"])[:10]).day if r.get("next_due") else 1
+            except ValueError:
+                day = 1
+            y, m = today.year, today.month
+            for _ in range(months):
+                d = date(y, m, min(day, 28))
+                if d >= today and d < horizon:
+                    out.append({"name": r["name"], "amount": float(r.get("amount") or 0),
+                                "due": d.isoformat(), "cat": r.get("cat"),
+                                "manual": True, "sinking": False})
+                y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+            continue
         if cad == "monthly" or not r.get("next_due"):
             continue
         try:
