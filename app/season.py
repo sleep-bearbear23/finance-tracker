@@ -299,3 +299,86 @@ async def _won_dates(session) -> dict[str, str]:
         if key and key not in out and c.at:
             out[key] = c.at.date().isoformat()
     return out
+
+
+# ── Module A: how this season actually went ──────────────────────────
+async def settlement(session, f: F.Facts | None = None, burn_monthly: float = 0.0,
+                     by_hand_monthly: float = 0.0) -> dict:
+    """Did this season break even? A settlement, deliberately not a target.
+
+    Momo: "how I'm doing this season is partially, if not largely, because of last
+    season's earning… it's not like I realize I don't have enough earning right now, I can
+    get a job immediately and get paid three days after."
+
+    Exactly. Payment lands about 45 days after wrap, so the cash arriving in a season was
+    earned in the one before it, and work booked today lands in the next one. Asking "how
+    much do I need to earn this season" 20 days from the end is asking about a race that
+    has already been run — the honest thing to report is the result, and to put the
+    earning question where it can actually be acted on (:func:`analytics.to_book`).
+
+    The second line is the one that matters: how much of the hole is work she has already
+    done and not been paid for. That turns 「你透支了」 into 「錢卡在別人那」, which is a
+    different instruction — chase the invoices, do not panic about the groceries.
+    """
+    f = f or await F.build(session)
+    today = now().date()
+    lo, hi, dl = bounds(today)
+    elapsed = max(0, (today - lo).days + 1)
+    left = max(0, (hi - today).days)
+
+    cash_in, rows = 0.0, []
+    for t in f.txns:
+        if not budget.is_income(t):
+            continue
+        d = budget.eff_date(t)
+        if not d or d < lo or d > hi:
+            continue
+        cash_in += t.amount
+        rows.append({"date": d.isoformat(), "label": (t.merchant_desc or "")[:40],
+                     "amount": round(t.amount, 2)})
+
+    pend = await prefs.pending_invoices(session)
+    more = unpaid_face = unpaid_weighted = 0.0
+    unpaid = []
+    for p in pend:
+        land = prefs.landing(p)
+        amt = float(p.get("amount") or 0)
+        conf = prefs.confidence(p, today)
+        if land is not None and today < land <= hi:
+            more += amt * conf                      # still due to arrive before the end
+        # work performed on or before this season's end, still unpaid — the accrual bridge
+        w = str(p.get("when") or "")[:7]
+        if w and w <= hi.strftime("%Y-%m"):
+            unpaid_face += amt
+            unpaid_weighted += amt * conf
+            unpaid.append({"note": p.get("note"), "amount": round(amt, 2),
+                           "when": w, "confidence": conf,
+                           "lands": land.isoformat() if land else None,
+                           "late_days": max(0, (today - land).days) if land else 0})
+
+    spent = sum(budget.spend_amount(t) for t in f.txns
+                if budget.is_spend(t) and (d := budget.eff_date(t)) and lo <= d <= hi)
+    # rent leaves as a Zelle, which the ledger books as a transfer — real money, invisible
+    by_hand_so_far = round(by_hand_monthly * elapsed / 30.4, 2)
+    projected = round(burn_monthly * left / 30.4, 2)
+    out_total = round(spent + by_hand_so_far + projected, 2)
+    in_total = round(cash_in + more, 2)
+    net = round(in_total - out_total, 2)
+
+    return {
+        "start": lo.isoformat(), "end": hi.isoformat(),
+        "tax": ({"due": dl["due"], "label": dl["label"]} if dl else None),
+        "days_elapsed": elapsed, "days_left": left,
+        "pace": round(100 * elapsed / max(1, (hi - lo).days + 1), 1),
+        "cash_in": round(cash_in, 2), "cash_in_more": round(more, 2), "in_total": in_total,
+        "spend_actual": round(spent, 2), "spend_by_hand": by_hand_so_far,
+        "spend_projected": projected, "out_total": out_total,
+        "net": net,
+        "verdict": "saved" if net > 200 else ("even" if net > -200 else "short"),
+        "unpaid_face": round(unpaid_face, 2), "unpaid_weighted": round(unpaid_weighted, 2),
+        "unpaid": sorted(unpaid, key=lambda x: -x["late_days"]),
+        "income_rows": sorted(rows, key=lambda r: r["date"], reverse=True),
+        "note": ("這一季的錢是上一季做的工作換來的——付款大約殺青後 "
+                 f"{prefs.PAY_LAG_DAYS} 天才進來，所以現在再接案子也趕不上這一季。"
+                 "這裡只結算，不設目標；要接多少看旁邊那張。"),
+    }

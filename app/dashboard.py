@@ -660,11 +660,18 @@ async def api_plan(request: Request):
     async with Session() as s:
         f = await F.build(s)
         te = await AN.to_earn(s, 3, f)
+        rec = te.get("fixed_reconcile") or {}
         return {
             "categories": await AN.category_series(s, 12, f),
             "standing": await AN.standing(s, f),
             "to_earn": te,
-            "season": await SE.progress(s, te["tiers"], f),
+            # Two modules, because they answer two different questions on two different
+            # clocks: what this season DID (cash, mostly already decided) and what she has
+            # to book now (which lands next season). See season.settlement / AN.to_book.
+            "settlement": await SE.settlement(
+                s, f, burn_monthly=te["fixed_monthly"] + te["normal_flex_monthly"],
+                by_hand_monthly=rec.get("by_hand_monthly", 0.0)),
+            "to_book": await AN.to_book(s, f),
             "audit": f.audit(),
         }
 

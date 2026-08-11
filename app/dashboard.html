@@ -701,12 +701,12 @@
     <div class="grid sel-toearn" id="planGrid">
 
       <section class="card" data-pane="toearn">
-        <h2>這一季要賺多少 <span class="more" id="teMeta"></span></h2>
+        <h2>要接多少 <span class="more" id="teMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="teBox"><div class="empty">計算中…</div></div>
       </section>
 
       <section class="card" data-pane="ssn">
-        <h2>進度 <span class="more" id="ssnMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <h2>這一季 <span class="more" id="ssnMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="ssnBox"><div class="empty">計算中…</div></div>
       </section>
 
@@ -857,7 +857,7 @@ function halfMonthScales(points,yFmt){
 /* ── mobile pane switcher ── */
 const SEGS = {
   home:   [['accounts','帳戶'],['flows','半月收支']],
-  plan:   [['toearn','要賺多少'],['ssn','進度'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
+  plan:   [['toearn','要接多少'],['ssn','這一季'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
   acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
@@ -1018,85 +1018,77 @@ async function loadPlan(){
   const d = await getJSON('/api/plan');
   stamp(); showAudit(d.audit||[]);
 
-  /* 這一季 — the target, and how far she has got against it.
-     Momo: "I come back successfully secured a job in October that pays me 2k… I wanna be
-     able to see my success reflected on this block." The three tiers are milestones on one
-     track now, not three separate goals, and the track fills with what she has actually
-     secured. The FLOOR stays the headline (her call): the big number never depends on
-     anyone else paying. */
-  const te=d.to_earn, ss=d.season;
-  const byName={}; (ss.tiers||[]).forEach(t=>byName[t.name]=t);
-  el('teMeta').textContent = te.pending_face>0
-    ? (te.pending_haircut>0 ? `待收 ${F0(te.pending_face)}，打折後只當 ${F0(te.pending)}`
-                            : `待收 ${F0(te.pending_face)}`) : '';
-  el('teBox').innerHTML = te.tiers.map(t=>{
-    const p = byName[t.name] || {pct:0, pct_landed:0, remaining:t.bare};
-    return `<div class="tierrow ${p.cleared?'done':''}">
+  /* Two cards, two clocks. Momo: "how I'm doing this season is largely because of last
+     season's earning… realistic action is getting booked for something one or two months
+     from now, which would no longer get accounted for this season."
+
+     So 這一季 is a SETTLEMENT — cash in, cash out, verdict — with no earning target,
+     because 20 days from the end that question cannot be acted on. And 要接多少 is keyed
+     to the LANDING date, so it asks about the window today's bookings can actually reach,
+     and carries the wrap-by deadline that follows from the payment lag. */
+  const te=d.to_earn, tb=d.to_book, sm=d.settlement;
+
+  el('teMeta').textContent =
+    `錢會落在 ${md(tb.start)}–${md(tb.end)}　已排定 ${F0(tb.covered)}`;
+  el('teBox').innerHTML = tb.tiers.map(t=>`
+    <div class="tierrow ${t.gap<=0?'done':''}">
       <div class="tierhead">
         <span class="nm2">${esc(t.name)}</span>
-        <span class="amt2">${F0(t.bare)}</span>
-        <span class="pct">${p.pct.toFixed(0)}%</span>
+        <span class="amt2">${F0(t.gap)}</span>
+        <span class="pct">已排 ${t.covered_pct.toFixed(0)}%</span>
       </div>
-      <div class="track">
-        <i class="booked" style="width:${Math.min(100,p.pct)}%"></i>
-        <i class="landed" style="width:${Math.min(100,p.pct_landed)}%"></i>
-      </div>
+      <div class="track"><i class="booked" style="width:${Math.min(100,t.covered_pct)}%"></i></div>
       <div style="display:flex;gap:10px;align-items:baseline">
-        <span class="left">${p.cleared?'✓ 已達標':`還差 ${F0(p.remaining)}`}</span>
-        <span class="sub2" style="margin-left:auto">每月 ${F0(t.bare_per_month)}${
-        t.bare_work_days!=null ? `　≈ ${t.bare_work_days} 個拍攝日`
-                               : (t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:'')}</span>
+        <span class="left">${t.gap<=0?'✓ 這一段已經接滿了'
+          :`還要接　${t.work_days!=null?`≈ ${t.work_days} 個拍攝日`:F0(t.gap)}`}</span>
+        <span class="sub2" style="margin-left:auto">整段要 ${F0(t.gross)}（稅前）· 每月 ${F0(t.per_month)}</span>
       </div>
       <div class="sub2" style="margin-top:3px">${esc(t.why)}</div>
-    </div>`;}).join('')
+    </div>`).join('')
+    + `<div class="kv" style="margin-top:10px"><span>最晚殺青日</span>
+         <b class="${tb.days_to_book<30?'neg':''}">${md(tb.wrap_by)}　還有 ${tb.days_to_book} 天可以排</b></div>`
+    + (tb.covered_items||[]).map(c=>`<div class="ev2">
+         <span class="d">${md(c.lands)}</span>
+         <span class="w">${esc((c.note||'').slice(0,30))}
+           <span class="s">${esc(({booked:'已接',wrapped:'已殺青',invoiced:'已開發票'})[c.stage]||'')}${
+             c.days?`・拍 ${c.days} 天`:''}　面額 ${F0(c.amount)}，只當 ${Math.round(c.confidence*100)}%</span></span>
+         <span class="plus">+${F0(c.weighted)}</span></div>`).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
-        大字是「一毛都沒收到」要賺的，實心＝已入帳、淡色＝已排定（按信心打折）。
-        ${te.day_rate&&te.day_rate.rate>0
-          ? `一天抓 ${F0(te.day_rate.rate)}（近期 ${te.day_rate.n} 個案子、${te.day_rate.days} 個工作天算出來的）`
-          : `一個案子抓 ${F0(te.gig_unit)}`}。
-        固定 ${F0(te.fixed_monthly)}／月、最省 ${F0(te.lean_flex_monthly)}／月、
-        實際花法 ${F0(te.normal_flex_monthly)}／月，都是${esc(te.lean_basis)}。
-        ${esc(te.note)}</p>`
-    /* only the genuinely LATE ones get a warning. The 85% pre-due discount applies to
-       everything and is explained in the note above — repeating it per row turned a
-       systemic assumption into four alarms. */
-    + ((te.pending_items||[]).filter(p=>p.late_days>0).length
-        ? `<p style="font-size:10px;color:var(--warn);line-height:1.6;margin:6px 0 0">`
-          + (te.pending_items||[]).filter(p=>p.late_days>0).map(p=>
-              `⚠ ${esc((p.note||'').slice(0,24))} ${F0(p.amount)} 晚了 ${p.late_days} 天，`
-              + `只當 ${Math.round(p.confidence*100)}% 算`).join('<br>')
-          + `</p>` : '');
+        ${esc(tb.note)}
+        ${tb.day_rate&&tb.day_rate.rate>0
+          ? `一天抓 ${F0(tb.day_rate.rate)}（${tb.day_rate.n} 個案子、${tb.day_rate.days} 個工作天算出來的）。`:''}
+        固定 ${F0(te.fixed_monthly)}／月、最省 ${F0(te.lean_flex_monthly)}／月、實際花法 ${F0(te.normal_flex_monthly)}／月，
+        取自${esc(te.lean_basis)}。</p>`;
 
-  /* the log: what was asked of her, and what each thing she went and got did to it */
-  el('ssnMeta').textContent = `${md(ss.start)}–${md(ss.end)} · 還有 ${ss.days_left} 天`
-    + (ss.tax ? ` · ${ss.tax.label} 稅 ${md(ss.tax.due)} 繳` : '');
-  const rows = (ss.events||[]).slice().reverse().map(e=>{
-    const amt = e.weighted!=null ? e.weighted : e.amount;
-    const cut = e.confidence!=null && e.confidence<1
-      ? `　面額 ${F0(e.amount)}，只當 ${Math.round(e.confidence*100)}%` : '';
-    const late = e.lands_after ? `　${md(e.lands)} 才入帳，算在這一季的努力裡` : '';
-    return `<div class="ev2 ${e.mine?'mine':''}">
-      <span class="d">${md(e.date)}</span>
-      <span class="w">${e.mine?'★ ':''}${esc(e.label)}
-        <span class="s">${e.kind==='landed'?'已入帳':'已排定'}${cut}${late}</span></span>
-      <span class="plus">+${F0(amt)}</span>
-      <span class="g">還差 ${F0(e.remaining)}</span>
-    </div>`;}).join('');
-  const opened = ss.opened_with||{};
+  /* 這一季：結算 */
+  const vcol = sm.verdict==='saved'?'var(--accent)':sm.verdict==='even'?'var(--ink)':'var(--bad)';
+  const vtxt = sm.verdict==='saved'?'存下':sm.verdict==='even'?'大致打平':'缺口';
+  el('ssnMeta').textContent = `${md(sm.start)}–${md(sm.end)} · 剩 ${sm.days_left} 天`
+    + (sm.tax?` · ${sm.tax.label} 稅 ${md(sm.tax.due)} 繳`:'');
   el('ssnBox').innerHTML =
-    `<div class="kv"><span>這一季自己找到的</span><b class="pos">${F0(ss.won_this_season||0)}</b></div>
-     <div class="kv"><span>已入帳</span><b>${F0(ss.landed)}</b></div>
-     <div class="kv"><span>已排定（打折後）</span><b>${F0(ss.booked)}</b></div>
-     <div class="daysleft">這一季跟你的預繳稅同一個區間${ss.tax?`（${esc(ss.tax.label)}，${md(ss.tax.due)} 要繳）`:''}，
-       所以「這一季收了多少」跟「那天要繳多少」問的是同一件事。
-       開季時手上已經有 ${F0(opened.booked_face||0)}（${opened.n||0} 筆）——那是起跑點，不是成績。
-       時間過了 ${ss.pace}%。</div>`
-    + (rows || '<div class="empty">還沒有進帳，也還沒接到案子。</div>')
-    + ((ss.rebases||[]).length
-        ? (ss.rebases||[]).map(r=>`<div class="ev2"><span class="d">${md(r.at)}</span>
-            <span class="w" style="color:var(--warn)">目標變了，不是你退步
-            <span class="s">${r.changes.map(c=>`${esc(c.tier)} ${F0(c.from)} → ${F0(c.to)}`).join('、')}</span></span></div>`).join('')
-        : '');
+    `<div class="tierhead" style="padding:2px 0 6px">
+       <span class="nm2" style="flex:0 0 4.4em">現金結餘</span>
+       <span class="amt2" style="color:${vcol}">${F0(sm.net)}</span>
+       <span class="pct" style="color:${vcol}">${vtxt}</span>
+     </div>
+     ${sm.unpaid_face>0?`<div class="kv"><span>其中做了但還沒收到的</span>
+       <b class="pos">${F0(sm.unpaid_face)}<span class="tag">　打折後 ${F0(sm.unpaid_weighted)}</span></b></div>
+       <div class="daysleft" style="margin:2px 0 8px">錢卡在別人那，不是你亂花。</div>`:''}
+     <div class="kv"><span>進來　已入帳 ${F0(sm.cash_in)}${sm.cash_in_more>0?`＋還會入 ${F0(sm.cash_in_more)}`:''}</span>
+       <b>${F0(sm.in_total)}</b></div>
+     <div class="kv"><span>出去　刷卡現金 ${F0(sm.spend_actual)}＋自己轉 ${F0(sm.spend_by_hand)}＋剩下 ${sm.days_left} 天預估 ${F0(sm.spend_projected)}</span>
+       <b>${F0(sm.out_total)}</b></div>`
+    + (sm.unpaid||[]).map(u=>`<div class="ev2">
+         <span class="d">${esc((u.when||'').slice(5))}</span>
+         <span class="w">${esc((u.note||'').slice(0,30))}
+           <span class="s">${u.late_days>0?`晚了 ${u.late_days} 天`:`預計 ${md(u.lands||'')} 入帳`}
+             ・只當 ${Math.round(u.confidence*100)}% 算</span></span>
+         <span class="plus">${F0(u.amount)}</span></div>`).join('')
+    + (sm.income_rows||[]).map(r=>`<div class="ev2 mine">
+         <span class="d">${md(r.date)}</span>
+         <span class="w">${esc(r.label)}<span class="s">已入帳</span></span>
+         <span class="plus">+${F0(r.amount)}</span></div>`).join('')
+    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">${esc(sm.note)}</p>`;
 
   /* the three walls */
   const st=d.standing, em=st.emergency, tx=st.tax;

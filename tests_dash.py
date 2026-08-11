@@ -292,6 +292,46 @@ async def main():
           all(t["bare"] > 0 for t in te2["tiers"]),
           str([t["bare"] for t in te2["tiers"]]))
 
+    print("\n[9] two clocks: this season is settled, next season is bookable")
+    plan = g("/api/plan")
+    sm, tb = plan["settlement"], plan["to_book"]
+
+    # Payment lands ~45 days after wrap, so cash arriving in a season was earned in the one
+    # before it, and work booked today lands in the next. Asking "earn more THIS season"
+    # near its end is asking about a race already run.
+    check("the settlement covers the tax period we are standing in",
+          sm["start"] <= datetime.now(TZ).date().isoformat() <= sm["end"],
+          f'{sm["start"]}–{sm["end"]}')
+    check("the settlement is a result, not a target — it has no goal to hit",
+          "tiers" not in sm and "net" in sm, str(list(sm))[:80])
+    check("cash out = what was spent + what leaves by hand + what is left to spend",
+          near(sm["out_total"],
+               sm["spend_actual"] + sm["spend_by_hand"] + sm["spend_projected"]))
+    check("cash in = landed + what is still due to arrive before the end",
+          near(sm["in_total"], sm["cash_in"] + sm["cash_in_more"]))
+    check("the verdict follows the arithmetic",
+          (sm["verdict"] == "short") == (sm["net"] <= -200), f'{sm["verdict"]} @ {sm["net"]}')
+    check("work done and not yet paid is reported next to the hole",
+          sm["unpaid_weighted"] <= sm["unpaid_face"],
+          f'{sm["unpaid_face"]} face / {sm["unpaid_weighted"]} weighted')
+
+    check("the booking target aims at the window today's work can actually reach",
+          tb["start"] > sm["start"], f'{sm["start"]}… → {tb["start"]}…')
+    check("…which is a whole tax period, not a rolling window",
+          tb["end"] >= tb["start"] and tb["months"] >= 1.9, f'{tb["months"]} months')
+    check("its gap is what is needed minus what is already booked into that window",
+          all(near(t["gap"], max(0.0, t["gross"] - tb["covered"])) for t in tb["tiers"]),
+          str([(t["gross"], t["gap"]) for t in tb["tiers"]]))
+    check("the deadline is the window's end minus the payment lag",
+          tb["wrap_by"] < tb["end"], f'{tb["wrap_by"]} vs {tb["end"]}')
+    check("the days it asks for fit in the days it gives her",
+          all(t["work_days"] is None or t["work_days"] <= tb["days_to_book"]
+              for t in tb["tiers"][:2]),
+          str([(t["name"], t["work_days"]) for t in tb["tiers"]]) + f' in {tb["days_to_book"]}d')
+    check("every booking counted toward the target lands inside the target's window",
+          all(tb["start"] <= c["lands"] <= tb["end"] for c in tb["covered_items"]),
+          str([c["lands"] for c in tb["covered_items"]]))
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

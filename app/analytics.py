@@ -354,6 +354,79 @@ def _paid_with_days(f: F.Facts) -> list[dict]:
     return out
 
 
+# ── Module B: the earning question, put where it can be acted on ─────
+async def to_book(session, f: F.Facts | None = None) -> dict:
+    """How much work she has to BOOK, for the window her bookings can still reach.
+
+    The old 需要賺 index asked "how much do I need in the next three months" and answered
+    against a window she could no longer affect — 20 days from a season's end it was
+    telling her to earn 34 shoot days' worth of money in 20 days. Momo: "realistic action
+    is getting booked for something one or two months from now, which would no longer get
+    accounted for this season."
+
+    So this one is keyed to the LANDING date. Its window is the season that money booked
+    today will actually land in, and it carries the deadline that follows from the payment
+    lag: wrap by this date or the money belongs to the season after.
+    """
+    from . import prefs
+    from . import season as SE
+    f = f or await F.build(session)
+    today = now().date()
+    reach = today + timedelta(days=prefs.PAY_LAG_DAYS)
+    lo, hi, dl = SE.bounds(reach)
+    months = ((hi - lo).days + 1) / 30.4
+
+    covered = 0.0
+    booked_days = 0
+    covered_items = []
+    for p in await prefs.pending_invoices(session):
+        land = prefs.landing(p)
+        if land is None or not (lo <= land <= hi):
+            continue
+        amt = float(p.get("amount") or 0)
+        conf = prefs.confidence(p, today)
+        covered += amt * conf
+        booked_days += int(p.get("days") or 0)
+        covered_items.append({"note": p.get("note"), "amount": round(amt, 2),
+                              "weighted": round(amt * conf, 2), "confidence": conf,
+                              "stage": prefs.stage_of(p), "days": p.get("days"),
+                              "lands": land.isoformat()})
+    covered_items.sort(key=lambda x: x["lands"])
+
+    te = await to_earn(session, HORIZON_MONTHS, f)
+    rate = te["tax_rate"]
+    dr = te["day_rate"]["rate"]
+    wrap_by = hi - timedelta(days=prefs.PAY_LAG_DAYS)
+
+    tiers = []
+    for t in te["tiers"]:
+        monthly = t["net"] / HORIZON_MONTHS          # the tier's monthly cost of living
+        net = monthly * months
+        gross = net / (1 - rate) if rate < 1 else net
+        gap = max(0.0, gross - covered)
+        tiers.append({
+            "name": t["name"], "why": t["why"],
+            "net": round(net, 2), "gross": round(gross, 2),
+            "gap": round(gap, 2), "per_month": round(gap / months, 2) if months else 0.0,
+            "work_days": round(gap / dr, 1) if dr > 0 else None,
+            "covered_pct": round(min(100.0, 100 * covered / gross), 1) if gross else 0.0,
+        })
+
+    return {
+        "start": lo.isoformat(), "end": hi.isoformat(), "months": round(months, 2),
+        "tax": ({"due": dl["due"], "label": dl["label"]} if dl else None),
+        "covered": round(covered, 2), "booked_days": booked_days,
+        "covered_items": covered_items,
+        "day_rate": te["day_rate"], "tiers": tiers,
+        "wrap_by": wrap_by.isoformat(),
+        "days_to_book": max(0, (wrap_by - today).days),
+        "note": (f"今天接的案子，錢大概 {prefs.PAY_LAG_DAYS} 天後才進來，所以這裡算的是 "
+                 f"{lo.strftime('%-m/%-d')}–{hi.strftime('%-m/%-d')} 這一段。"
+                 f"要讓錢趕在 {hi.strftime('%-m/%-d')} 前入帳，最晚得 "
+                 f"{wrap_by.strftime('%-m/%-d')} 殺青。"),
+    }
+
+
 def emergency_accounts(f: F.Facts) -> list[dict]:
     """Which accounts are standing in for the emergency fund.
 
