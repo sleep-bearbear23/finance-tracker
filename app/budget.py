@@ -1,13 +1,19 @@
-"""Biweekly budget built from real income cash flow — the right model for freelance income."""
+"""Half-month budget — Momo's cadence is 每月 1–15 / 16–月底, never a rolling 14 days.
+
+Monthly commitments are split by real day count, so the 15-day half is charged 15/31 of
+the rent and the 16-day half is charged 16/31. Income is a blend of the plan (stated
+baseline + booked gigs) and reality (recent confirmed deposits), because freelance money
+is lumpy but the plan shouldn't be fiction.
+"""
 from __future__ import annotations
 
-import calendar
 from datetime import date, timedelta
 
 from sqlalchemy import select
 
+from . import period as P
 from .config import aware, now
-from .db import get_kv, set_kv
+from .db import get_kv
 from .models import Transaction
 from .prefs import get_income_profile, get_prefs
 
@@ -17,22 +23,9 @@ FIXED_CATEGORIES = {"Rent & Utilities", "Subscriptions"}
 NON_SPEND_CATEGORIES = {"Income", "Transfers/Ignore"}
 STATUS_EXCLUDE = {"reconciled", "ignored"}  # merged duplicates / user-ignored
 
-PERIOD_DAYS = 14
-INCOME_WINDOW_DAYS = 42  # trailing 6 weeks → 3 biweekly periods
-EXPECT_HORIZON_DAYS = 56  # look 8 weeks ahead to smooth lumpy freelance income
-DEFAULT_BLEND = 0.5  # how much the budget leans on actual deposits vs the plan
-
-
-def biweekly_from_monthly(monthly: float) -> float:
-    return monthly * 12.0 / 26.0  # 26 biweekly periods per year
-
-
-def savings_biweekly(amount: float, cadence: str, income_bw: float) -> float:
-    if cadence == "monthly":
-        return biweekly_from_monthly(amount)
-    if cadence == "percent":
-        return income_bw * (amount / 100.0)
-    return amount  # already biweekly
+ACTUAL_WINDOW = 6      # trailing half-months used for "what really landed" (= 3 months)
+EXPECT_HORIZON = 4     # half-months looked ahead to smooth lumpy bookings (= 2 months)
+DEFAULT_BLEND = 0.5    # how much the budget leans on actuals vs the plan
 
 
 def is_spend(t) -> bool:
@@ -47,55 +40,60 @@ def is_discretionary(t) -> bool:
     return is_spend(t) and (t.category or "") not in FIXED_CATEGORIES
 
 
-def period_for(anchor: date, today: date) -> tuple[date, date]:
-    idx = (today - anchor).days // PERIOD_DAYS
-    start = anchor + timedelta(days=PERIOD_DAYS * idx)
-    return start, start + timedelta(days=PERIOD_DAYS)
+def is_income(t) -> bool:
+    return t.amount > 0 and t.status == "income"
 
 
-async def _anchor(session) -> date:
-    a = await get_kv(session, "cfg_anchor")
-    if a:
-        return date.fromisoformat(a)
-    d = now().date()
-    await set_kv(session, "cfg_anchor", d.isoformat())
-    return d
+def eff_date(t) -> date | None:
+    d = aware(t.posted_at or t.created_at)
+    return d.date() if d else None
 
 
-async def income_basis_biweekly(session, days: int = INCOME_WINDOW_DAYS) -> float:
-    """Actual performance: real confirmed income over the trailing window, per biweekly period.
-    Only confirmed income counts — not paybacks, transfers, or card payments."""
-    since = now() - timedelta(days=days)
-    rows = (await session.execute(
-        select(Transaction).where(
-            Transaction.amount > 0,
-            Transaction.status == "income",
-            Transaction.source != "notion",  # imported history is for display, not the live basis
-        )
-    )).scalars().all()
-    total = 0.0
-    for t in rows:
-        d = aware(t.posted_at or t.created_at)
-        if d and d >= since:
-            total += t.amount
-    return total / (days / PERIOD_DAYS) if days else 0.0
+def split_monthly(monthly: float, key: str) -> float:
+    """A monthly amount charged to one half-month, weighted by day count."""
+    return P.split_monthly(monthly, key)
 
 
-async def expected_income_biweekly(session, horizon_days: int = EXPECT_HORIZON_DAYS) -> float:
-    """The plan: expected income per biweekly period, from Momo's stated baseline + booked gigs.
+def savings_for(amount: float, cadence: str, key: str, income_period: float) -> float:
+    if cadence == "monthly":
+        return split_monthly(amount, key)
+    if cadence == "percent":
+        return income_period * (amount / 100.0)
+    return float(amount)  # already stated per period
 
-    Each calendar month in the horizon is worth max(baseline, gigs booked to land that month);
-    that's spread evenly across the month's days and averaged over the horizon, so a lump payment
-    lifts the budget smoothly ahead of when it lands instead of spiking the block it arrives."""
+
+def current_key() -> str:
+    return P.key_for(now().date())
+
+
+# ── income ───────────────────────────────────────────────────────────
+async def income_actual(session, end_key: str | None = None, n: int = ACTUAL_WINDOW) -> float:
+    """Average confirmed income per half-month over the trailing window.
+    Imported history (source='notion') is display-only and never sets the live basis."""
+    end_key = end_key or current_key()
+    keys = P.last_n(end_key, n)
+    lo, _ = P.key_bounds(keys[0])
+    _, hi = P.key_bounds(keys[-1])
+    rows = (await session.execute(select(Transaction).where(
+        Transaction.amount > 0, Transaction.status == "income", Transaction.source != "notion"
+    ))).scalars().all()
+    total = sum(t.amount for t in rows if (d := eff_date(t)) and lo <= d <= hi)
+    return total / n if n else 0.0
+
+
+async def income_expected(session, start_key: str | None = None, n: int = EXPECT_HORIZON) -> float:
+    """Average expected income per half-month: each month is worth max(baseline, booked),
+    spread across its two halves by day count, averaged over the horizon."""
+    start_key = start_key or current_key()
     p = await get_income_profile(session)
     baseline = p["monthly_baseline"]
     booked: dict[str, float] = {}
     for u in p["upcoming"]:
         if (u.get("status") or "pending") == "received":
-            continue  # already landed as a real deposit — don't count it as still-expected
-        w = u.get("when")
+            continue  # already landed as a real deposit — not still-expected
+        w, amt = u.get("when"), u.get("amount")
         try:
-            amt = float(u.get("amount") or 0)
+            amt = float(amt or 0)
         except (TypeError, ValueError):
             amt = 0.0
         if w and amt > 0:
@@ -103,33 +101,19 @@ async def expected_income_biweekly(session, horizon_days: int = EXPECT_HORIZON_D
     if baseline <= 0 and not booked:
         return 0.0
 
-    today = now().date()
-    end = today + timedelta(days=horizon_days)
     total = 0.0
-    cur = today
-    while cur < end:
-        dim = calendar.monthrange(cur.year, cur.month)[1]
-        ym = f"{cur.year:04d}-{cur.month:02d}"
+    for key in P.horizon(P.key_bounds(start_key)[0], n):
+        ym = key[:7]
         month_income = max(baseline, booked.get(ym, 0.0)) if baseline > 0 else booked.get(ym, 0.0)
-        if cur.month == 12:
-            nxt = date(cur.year + 1, 1, 1)
-        else:
-            nxt = date(cur.year, cur.month + 1, 1)
-        seg_end = min(nxt, end)
-        total += (month_income / dim) * (seg_end - cur).days
-        cur = seg_end
-    return total * PERIOD_DAYS / horizon_days
+        total += month_income * P.month_fraction(key)
+    return total / n if n else 0.0
 
 
-async def budgeting_income_biweekly(session) -> dict:
-    """Blend the plan (expected) with actual performance, block by block.
-
-    - both known  → weighted blend (cfg_income_blend, default 0.5)
-    - only a plan → use the plan (fresh, no deposits classified yet)
-    - only actuals→ use actuals (no starter pack filled in yet — old behavior)
-    """
-    expected = await expected_income_biweekly(session)
-    actual = await income_basis_biweekly(session)
+async def income_basis(session, key: str | None = None) -> dict:
+    """Blend the plan with reality. Falls back cleanly when only one side exists."""
+    key = key or current_key()
+    expected = await income_expected(session, key)
+    actual = await income_actual(session, key)
     w = float(await get_kv(session, "cfg_income_blend") or DEFAULT_BLEND)
     w = min(1.0, max(0.0, w))
     if expected > 0 and actual > 0:
@@ -141,39 +125,67 @@ async def budgeting_income_biweekly(session) -> dict:
     return {"expected": expected, "actual": actual, "blend": w, "used": used}
 
 
-async def status(session) -> dict:
-    prefs = await get_prefs(session)
-    inc = await budgeting_income_biweekly(session)
-    income_bw = inc["used"]
-    fixed_bw = biweekly_from_monthly(prefs["fixed_monthly"])
-    sav_bw = savings_biweekly(prefs["savings_amount"], prefs["savings_cadence"], income_bw)
-    allowance = max(0.0, income_bw - fixed_bw - sav_bw)
+# ── per-period flows (charts, account pages) ─────────────────────────
+async def flows(session, keys: list[str], account_filter=None) -> dict[str, dict]:
+    """Income / spend totals for each half-month key. account_filter(t) -> bool to scope."""
+    lo, _ = P.key_bounds(keys[0])
+    _, hi = P.key_bounds(keys[-1])
+    rows = (await session.execute(select(Transaction))).scalars().all()
+    out = {k: {"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
+               "income": 0.0, "spend": 0.0} for k in keys}
+    for t in rows:
+        d = eff_date(t)
+        if not d or d < lo or d > hi:
+            continue
+        if account_filter and not account_filter(t):
+            continue
+        k = P.key_for(d)
+        if k not in out:
+            continue
+        if is_spend(t):
+            out[k]["spend"] += abs(t.amount)
+        elif is_income(t):
+            out[k]["income"] += t.amount
+    for v in out.values():
+        v["income"] = round(v["income"], 2)
+        v["spend"] = round(v["spend"], 2)
+    return out
 
-    anchor = await _anchor(session)
-    today = now().date()
-    start, end = period_for(anchor, today)
+
+# ── the headline number ──────────────────────────────────────────────
+async def status(session, key: str | None = None) -> dict:
+    key = key or current_key()
+    start, end = P.key_bounds(key)
+    prefs_ = await get_prefs(session)
+    inc = await income_basis(session, key)
+
+    income_p = inc["used"]
+    fixed_p = split_monthly(prefs_["fixed_monthly"], key)
+    sav_p = savings_for(prefs_["savings_amount"], prefs_["savings_cadence"], key, income_p)
+    allowance = max(0.0, income_p - fixed_p - sav_p)
 
     rows = (await session.execute(select(Transaction).where(Transaction.amount < 0))).scalars().all()
-    spent = 0.0
-    for t in rows:
-        d = aware(t.posted_at or t.created_at)
-        if d and start <= d.date() < end and is_discretionary(t):
-            spent += abs(t.amount)
+    spent = sum(abs(t.amount) for t in rows
+                if (d := eff_date(t)) and start <= d <= end and is_discretionary(t))
 
-    allowance = round(allowance, 2)
-    spent = round(spent, 2)
+    today = now().date()
+    allowance, spent = round(allowance, 2), round(spent, 2)
+    left = P.days_left(key, today) if start <= today <= end else 0
     return {
-        "period_start": start,
-        "period_end": end,
-        "income_biweekly": round(income_bw, 2),
+        "period_key": key, "period_label": P.label(key),
+        "period_start": start, "period_end": end,
+        "days_in_period": P.days_in(key), "days_left": left,
+        "days_elapsed": P.elapsed_days(key, today),
+        "income_period": round(income_p, 2),
         "income_expected": round(inc["expected"], 2),
         "income_actual": round(inc["actual"], 2),
         "income_blend": inc["blend"],
-        "fixed_biweekly": round(fixed_bw, 2),
-        "savings_biweekly": round(sav_bw, 2),
+        "fixed_period": round(fixed_p, 2),
+        "fixed_monthly": prefs_["fixed_monthly"],
+        "savings_period": round(sav_p, 2),
         "allowance": allowance,
         "spent": spent,
         "remaining": round(allowance - spent, 2),
-        "days_left": max(0, (end - today).days),
+        "per_day_left": round(max(0.0, allowance - spent) / left, 2) if left else None,
         "pct_used": round(100 * spent / allowance, 1) if allowance > 0 else None,
     }

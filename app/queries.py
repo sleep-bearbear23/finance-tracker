@@ -97,15 +97,17 @@ async def build_context(session) -> str:
     try:
         b = await budget.status(session)
         basis = (
-            f"收入基準 ${b['income_biweekly']:.0f}／兩週"
+            f"收入基準 ${b['income_period']:.0f}／半月（{b['period_label']}）"
             f"（預期 ${b['income_expected']:.0f}＋實際入帳 ${b['income_actual']:.0f} 各半抓的）"
         )
         lines.append(
-            f"本期預算（{b['period_start']}~{b['period_end']}）算法："
-            f"{basis}，減固定支出 ${b['fixed_biweekly']:.0f}，"
-            f"減存錢目標 ${b['savings_biweekly']:.0f}，等於可花 ${b['allowance']:.0f}；"
-            f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天。"
-            "（這個收入基準只是用來抓每期能花多少的，不是默默實際被欠的錢；他問待收款請看上面那份清單。"
+            f"本期預算（{b['period_start']}~{b['period_end']}，{b['period_label']}，共 {b['days_in_period']} 天）算法："
+            f"{basis}，減固定支出 ${b['fixed_period']:.0f}（月 ${b['fixed_monthly']:.0f} 按天數攤到這半個月），"
+            f"減存錢目標 ${b['savings_period']:.0f}，等於可花 ${b['allowance']:.0f}；"
+            f"這期已花 ${b['spent']:.0f}，剩 ${b['remaining']:.0f}，還有 {b['days_left']} 天"
+            + (f"，平均每天還能花 ${b['per_day_left']:.0f}。" if b.get('per_day_left') is not None else "。")
+            + "（阿姨的週期是每月 1–15 號、16–月底，不是兩週輪一次。"
+            "這個收入基準只是用來抓每期能花多少的，不是默默實際被欠的錢；他問待收款請看上面那份清單。"
             "如果他問預算怎麼算，就照這幾個數字誠實拆給他看，不要自己另外加減。）"
         )
     except Exception:

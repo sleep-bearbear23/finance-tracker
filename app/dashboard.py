@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import budget, categories, networth, prefs
+from . import accounts as acct, budget, categories, networth, period as P, prefs
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -52,7 +52,7 @@ async def write_snapshot(session) -> None:
     try:
         b = await budget.status(session)
     except Exception:
-        b = {"allowance": 0.0, "spent": 0.0, "income_biweekly": 0.0}
+        b = {"allowance": 0.0, "spent": 0.0, "income_period": 0.0}
     day = now().date().isoformat()
     row = (await session.execute(select(Snapshot).where(Snapshot.day == day))).scalar_one_or_none()
     if row is None:
@@ -64,7 +64,7 @@ async def write_snapshot(session) -> None:
     row.cash = nw["assets"]
     row.allowance = b.get("allowance", 0.0)
     row.spent = b.get("spent", 0.0)
-    row.income_biweekly = b.get("income_biweekly", 0.0)
+    row.income_biweekly = b.get("income_period", 0.0)
     await session.commit()
 
 
@@ -256,7 +256,13 @@ async def api_trends(request: Request):
         months = sorted(set(monthly_in) | set(monthly_out))[-6:]
         monthly = [{"month": m, "income": round(monthly_in.get(m, 0.0), 2),
                     "spend": round(monthly_out.get(m, 0.0), 2)} for m in months]
-        return {"net_worth_series": net_series, "category_spend": category_spend, "monthly": monthly}
+
+        # half-month flows — the app's cadence (1–15 / 16–月底), 12 periods = 6 months
+        keys = P.last_n(budget.current_key(), 12)
+        fl = await budget.flows(s, keys)
+        flows = [fl[k] for k in keys]
+        return {"net_worth_series": net_series, "category_spend": category_spend,
+                "monthly": monthly, "flows": flows}
 
 
 @router.get("/api/income")
@@ -386,6 +392,134 @@ async def api_ledger(request: Request):
         }
 
 
+# ── accounts: the spine of the UI ────────────────────────────────────
+def _acct_public(a: dict) -> dict:
+    out = {k: a.get(k) for k in ("id", "name", "kind", "balance", "balance_src", "org",
+                                 "balance_date", "n_txns", "first", "last", "stale_days", "sources")}
+    out["coverage_note"] = acct.coverage_note(a)
+    return out
+
+
+@router.get("/api/accounts")
+async def api_accounts(request: Request):
+    """Every logical account with balance + record coverage. Apple Card counts once."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        reg, buckets = await acct.build(s)
+    real = [a for a in reg.values() if a["kind"] in ("cash", "credit")]
+    records = [a for a in reg.values() if a["kind"] == "record" and a["n_txns"]]
+    cash = sum(a["balance"] or 0 for a in real if a["kind"] == "cash")
+    debt = sum(a["balance"] or 0 for a in real if a["kind"] == "credit")
+    order = {"cash": 0, "credit": 1}
+    real.sort(key=lambda a: (order.get(a["kind"], 2), -(a["balance"] or 0)))
+    return {
+        "accounts": [_acct_public(a) for a in real],
+        "records": [_acct_public(a) for a in records],
+        "cash_total": round(cash, 2), "debt_total": round(debt, 2),
+        "net": round(cash - debt, 2),
+    }
+
+
+def _reconstruct(rows, balance_now: float, kind: str, keys: list[str], first_cov, last_cov):
+    """Closing balance (or amount owed) at the end of each half-month, walked backwards
+    from today's balance. Points outside the record coverage return null — no fiction."""
+    by_end = []
+    for k in keys:
+        _s, e = P.key_bounds(k)
+        after = 0.0
+        for t in rows:
+            d = budget.eff_date(t)
+            if d and d > e:
+                after += t.amount
+        # cash: balance_T = now − (flows after T).  credit: owed_T = now + (flows after T)
+        val = (balance_now - after) if kind == "cash" else (balance_now + after)
+        inside = bool(first_cov and last_cov and first_cov <= e.isoformat())
+        by_end.append({"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
+                       "value": round(val, 2) if inside else None})
+    return by_end
+
+
+@router.get("/api/account")
+async def api_account(request: Request):
+    """One account: balance, coverage, half-month flows, balance curve, categories, ledger."""
+    if not _authorized(request):
+        return _deny()
+    q = request.query_params
+    aid = q.get("id") or ""
+    n_periods = min(24, max(4, int(q.get("periods") or 12)))
+    offset = max(0, int(q.get("offset") or 0))
+    limit = min(200, max(1, int(q.get("limit") or 60)))
+    f_text = (q.get("q") or "").strip().lower() or None
+    f_cat = q.get("category") or None
+
+    async with Session() as s:
+        reg, buckets = await acct.build(s)
+        if aid not in reg:
+            return JSONResponse({"error": "unknown account"}, status_code=404)
+        a = reg[aid]
+        rows = buckets.get(aid, [])
+
+        keys = P.last_n(budget.current_key(), n_periods)
+
+    # per-period in/out for THIS account (rows are already scoped to it)
+    lo, _ = P.key_bounds(keys[0])
+    _, hi = P.key_bounds(keys[-1])
+    series = {k: {"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
+                  "income": 0.0, "spend": 0.0} for k in keys}
+    cats: dict[str, float] = {}
+    cat_since = (now().date() - timedelta(days=90)).isoformat()
+    for t in rows:
+        d = budget.eff_date(t)
+        if not d:
+            continue
+        if lo <= d <= hi:
+            k = P.key_for(d)
+            if k in series:
+                if budget.is_spend(t):
+                    series[k]["spend"] += abs(t.amount)
+                elif budget.is_income(t):
+                    series[k]["income"] += t.amount
+        if budget.is_spend(t) and d.isoformat() >= cat_since:
+            cats[t.category or "未分類"] = cats.get(t.category or "未分類", 0.0) + abs(t.amount)
+    for v in series.values():
+        v["income"] = round(v["income"], 2)
+        v["spend"] = round(v["spend"], 2)
+
+    curve = _reconstruct(rows, a["balance"] or 0.0, a["kind"], keys, a["first"], a["last"])
+
+    # ledger for this account, newest first, with optional search/category filter
+    sel = []
+    for t in rows:
+        d = budget.eff_date(t)
+        if not d:
+            continue
+        cat = t.category or "未分類"
+        if f_cat and cat != f_cat:
+            continue
+        if f_text and f_text not in (t.merchant_desc or "").lower() and f_text not in (t.note or "").lower():
+            continue
+        sel.append((d, cat, t))
+    sel.sort(key=lambda x: x[0], reverse=True)
+    page = sel[offset:offset + limit]
+    out_total = sum(abs(t.amount) for d, c, t in sel if budget.is_spend(t))
+    in_total = sum(t.amount for d, c, t in sel if budget.is_income(t))
+
+    return {
+        "account": _acct_public(a),
+        "series": [series[k] for k in keys],
+        "curve": curve,
+        "categories": [{"category": c, "amount": round(v, 2)}
+                       for c, v in sorted(cats.items(), key=lambda x: -x[1])],
+        "ledger": [{"date": d.isoformat(), "merchant": t.merchant_desc, "amount": round(t.amount, 2),
+                    "category": c, "status": t.status, "source": t.source, "note": t.note}
+                   for d, c, t in page],
+        "matched": len(sel), "offset": offset,
+        "total_out": round(out_total, 2), "total_in": round(in_total, 2),
+        "facet_categories": sorted({c for _d, c, _t in sel}),
+    }
+
+
 @router.get("/api/brain")
 async def api_brain(request: Request):
     if not _authorized(request):
@@ -396,8 +530,8 @@ async def api_brain(request: Request):
         pr = await prefs.get_prefs(s)
         try:
             b = await budget.status(s)
-            expected = await budget.expected_income_biweekly(s)
-            actual = await budget.income_basis_biweekly(s)
+            ib = await budget.income_basis(s)
+            expected, actual = ib["expected"], ib["actual"]
         except Exception:
             b, expected, actual = None, 0.0, 0.0
 
@@ -410,15 +544,15 @@ async def api_brain(request: Request):
             budget_detail = {
                 "monthly_baseline": prof["monthly_baseline"],
                 "booked_pipeline": booked,
-                "expected_biweekly": round(expected, 2),
-                "actual_biweekly": round(actual, 2),
+                "expected_period": round(expected, 2),
+                "actual_period": round(actual, 2),
                 "blend": b.get("income_blend"),
-                "income_biweekly": b["income_biweekly"],
+                "income_period": b["income_period"],
                 "fixed_monthly": pr["fixed_monthly"],
-                "fixed_biweekly": b["fixed_biweekly"],
+                "fixed_period": b["fixed_period"],
                 "savings_amount": pr["savings_amount"],
                 "savings_cadence": pr["savings_cadence"],
-                "savings_biweekly": b["savings_biweekly"],
+                "savings_period": b["savings_period"],
                 "allowance": b["allowance"],
                 "spent": b["spent"],
                 "remaining": b["remaining"],

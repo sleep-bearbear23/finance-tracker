@@ -1,4 +1,4 @@
-"""Proactive overspend nudges — she pings you when the biweekly allowance runs hot."""
+"""Proactive overspend nudges — she pings you when the half-month allowance runs hot."""
 from __future__ import annotations
 
 from . import budget, line_client, llm, memory
@@ -13,7 +13,7 @@ async def check(session) -> None:
     if not b["allowance"] or b["pct_used"] is None:
         return  # no budget configured yet
 
-    key = f"alerted:{b['period_start'].isoformat()}"
+    key = f"alerted:{b['period_key']}"
     already = await get_kv(session, key, "") or ""
 
     level = None
