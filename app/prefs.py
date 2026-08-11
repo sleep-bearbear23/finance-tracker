@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, timedelta
 
 from .db import get_kv, set_kv
 
@@ -150,6 +151,62 @@ async def is_work_income_source(session, desc: str) -> bool:
         if len(s) >= 4 and s in d:
             return True
     return False
+
+
+# ── when does booked money actually land, and how much of it should we believe ──
+#: Productions pay after the month they were invoiced for, and late. Momo asked for the
+#: padding explicitly; it only ever makes the plan tighter.
+LANDING_PAD_DAYS = 14
+
+#: How much of an invoice to count once it is late. Prince in Workboots wrapped in mid-May
+#: and is still unpaid in August — counting that at 100% told the 需要賺 index she could
+#: survive three months on $0 of new work. Money owed is not money arrived, and the longer
+#: it is owed the less it should be allowed to lower what she has to go and earn.
+CONFIDENCE_STEPS = ((0, 1.00), (30, 0.80), (60, 0.60), (90, 0.40), (10**6, 0.25))
+
+
+def landing(inv: dict, pad_days: int = LANDING_PAD_DAYS) -> date | None:
+    """The day an expected payment should realistically arrive.
+
+    ``when`` is the month the WORK belongs to, not the day of the wire — Momo knows her
+    shoot dates and never knows a production's cheque run. So: end of that month, plus a
+    fortnight of the lateness that always happens.
+
+    This one function is now the only place that opinion lives. It used to exist three
+    times with three different answers, so the calendar said a September job landed on
+    10/14, the income page booked it in September, and the horizon test used 10/1."""
+    w = str(inv.get("when") or "")[:7]
+    try:
+        y, m = int(w[:4]), int(w[5:7])
+        first_of_next = date(y + (m // 12), (m % 12) + 1, 1)
+    except (ValueError, IndexError):
+        return None
+    return first_of_next + timedelta(days=pad_days - 1)
+
+
+def confidence(inv: dict, today: date | None = None) -> float:
+    """How much of this invoice a plan is allowed to count on, by how late it is."""
+    d = landing(inv)
+    if d is None:
+        return 0.0          # no date at all cannot be planned around; it is still shown
+    late = ((today or _today()) - d).days
+    if late <= 0:
+        return 1.0
+    for cap, factor in CONFIDENCE_STEPS:
+        if late <= cap:
+            return factor
+    return CONFIDENCE_STEPS[-1][1]
+
+
+def _today() -> date:
+    from .config import now
+    return now().date()
+
+
+def believable(items: list[dict], today: date | None = None) -> float:
+    """The pending total after the lateness haircut — what a plan may lean on."""
+    today = today or _today()
+    return round(sum(float(i.get("amount") or 0) * confidence(i, today) for i in items), 2)
 
 
 async def pending_invoices(session) -> list:

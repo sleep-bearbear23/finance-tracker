@@ -218,6 +218,59 @@ async def main():
           near(inc["to_earn"]["tiers"][0]["need"],
                g("/api/plan")["to_earn"]["tiers"][0]["need"]))
 
+    print("\n[8] booked work: one landing date, and expectation that never flatters")
+    from datetime import date as _date  # noqa: PLC0415
+
+    from app import prefs as _prefs  # noqa: PLC0415
+
+    # A shoot that wraps 9/14 is September WORK and October MONEY. Three modules used to
+    # answer this differently — calendar said 10/14, the income page said September, the
+    # horizon test said 10/1 — so the same job appeared in two months at once.
+    sept = {"when": "2026-09", "amount": 2800.0, "note": "Avia 九月檔期"}
+    check("landing is the month after the work, plus the grace period",
+          _prefs.landing(sept) == _date(2026, 10, 14), str(_prefs.landing(sept)))
+    check("an invoice with no month has no landing at all",
+          _prefs.landing({"amount": 1.0}) is None)
+
+    today = _date(2026, 8, 11)
+    check("money not yet due counts in full",
+          near(_prefs.confidence({"when": "2026-08"}, today), 1.0))
+    check("a month late counts for four fifths",
+          near(_prefs.confidence({"when": "2026-06"}, today), 0.8),
+          str(_prefs.confidence({"when": "2026-06"}, today)))
+    check("wrapped in May and still unpaid in August counts for three fifths",
+          near(_prefs.confidence({"when": "2026-05"}, today), 0.6),
+          str(_prefs.confidence({"when": "2026-05"}, today)))
+    check("half a year late counts for a quarter",
+          near(_prefs.confidence({"when": "2026-01"}, today), 0.25))
+    check("no date at all cannot be planned around",
+          near(_prefs.confidence({"amount": 1.0}, today), 0.0))
+    check("the haircut only ever shrinks the total",
+          _prefs.believable([{"when": "2026-05", "amount": 1000.0}], today) < 1000.0)
+
+    cal = g("/api/calendar")
+    inc_rows = [i for i in cal["items"] if i["kind"] == "income"]
+    pj2 = g("/api/income2")["projection"]
+    if inc_rows:
+        land_months = {i["date"][:7] for i in inc_rows}
+        proj_months = {m["month"] for m in pj2["months"] if m["booked"] > 0}
+        check("行事曆 and 收入 book the same money in the same month",
+              not (proj_months - land_months - {here}),
+              f"projection {sorted(proj_months)} vs calendar {sorted(land_months)}")
+
+    te2 = g("/api/plan")["to_earn"]
+    check("the index reports face value and believable value separately",
+          te2["pending_face"] >= te2["pending"],
+          f'{te2["pending_face"]} vs {te2["pending"]}')
+    check("tax is applied BEFORE pending is deducted, not after",
+          all(near(t["bare"], t["net"] / (1 - te2["tax_rate"])) for t in te2["tiers"]),
+          str([(t["net"], t["bare"]) for t in te2["tiers"]]))
+    check("every tier carries a floor that owes nothing to unpaid invoices",
+          all(t["bare"] >= t["need"] for t in te2["tiers"]))
+    check("the floor is never zero while she still has to eat",
+          all(t["bare"] > 0 for t in te2["tiers"]),
+          str([t["bare"] for t in te2["tiers"]]))
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

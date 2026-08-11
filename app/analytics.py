@@ -227,16 +227,31 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     gap = max(0.0, (emerg.get("target") or 0) - fund_now)
     emerg_slice = round(gap * (months / (12 * EMERGENCY_YEARS)), 2)
 
-    pending = _pending_within(await _pending(session), months)
+    pend_items = await _pending(session)
+    pending = _pending_within(pend_items, months)            # after the lateness haircut
+    pending_face = round(sum(float(p.get("amount") or 0) for p in pend_items), 2)
 
     rate = tax_st["rate"]
 
     def tier(name: str, net_monthly: float, extra: float, why: str) -> dict:
+        """Net cost of living → grossed up for tax → then, and only then, reduced by money
+        already owed.
+
+        The order matters and is the answer to "is it literally minus $10k". It is not:
+        pending is subtracted from the GROSSED-UP figure, because an invoice is gross
+        revenue and tax will be owed on it. Taking it off the net side would have credited
+        her with 30% more spending power than the cheque actually delivers.
+
+        `need` leans on money that has not arrived. `bare` is the same number with none of
+        it counted — what she has to earn if every production keeps stalling. Both are
+        reported, because one of them is a plan and the other is the floor."""
         net = net_monthly * months + extra
         gross = net / (1 - rate) if rate < 1 else net
         need = max(0.0, gross - pending)
         return {"name": name, "net": round(net, 2), "gross": round(gross, 2),
-                "need": round(need, 2), "per_month": round(need / months, 2), "why": why}
+                "need": round(need, 2), "per_month": round(need / months, 2),
+                "bare": round(gross, 2), "bare_per_month": round(gross / months, 2),
+                "why": why}
 
     tiers = [
         tier("生存", fixed_monthly + lean_flex, 0.0,
@@ -252,11 +267,22 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     med = perf["median_payment"] or 0.0
     for t in tiers:
         t["gigs"] = round(t["need"] / med, 1) if med > 0 else None
+        t["bare_gigs"] = round(t["bare"] / med, 1) if med > 0 else None
+
+    from . import prefs
+    today = now().date()
+    late = [{"note": p.get("note"), "amount": float(p.get("amount") or 0),
+             "when": p.get("when"), "confidence": prefs.confidence(p, today),
+             "late_days": max(0, (today - (prefs.landing(p) or today)).days)}
+            for p in pend_items]
 
     return {
         "months": months,
         "tax_rate": rate,
         "pending": round(pending, 2),
+        "pending_face": pending_face,
+        "pending_haircut": round(pending_face - pending, 2),
+        "pending_items": sorted(late, key=lambda x: -x["late_days"]),
         "median_payment": med,
         "fixed_monthly": fixed_monthly,
         "lean_flex_monthly": lean_flex,
@@ -269,8 +295,10 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
         "emergency_gap": round(gap, 2),
         "emergency_slice": emerg_slice,
         "tiers": tiers,
-        "note": ("已經做完但還沒收到的錢會先扣掉——那些本來就會進來，"
-                 "不用再靠接新案子。"),
+        "note": ("算法：先按你的稅率把生活費換算成「要開多少發票」，最後才扣待收款——"
+                 "待收款是稅前的錢，從稅後扣會把它算大三成。"
+                 "而且越拖越久的帳算得越少：晚一個月只當八成，超過三個月只當四分之一。"
+                 "綠色那行是「錢都收得到」的版本，那是條件，不是計畫。"),
     }
 
 
@@ -294,26 +322,27 @@ async def _pending(session) -> list[dict]:
 
 
 def _pending_within(items: list[dict], months: int, today: date | None = None) -> float:
+    """What the next `months` may lean on: inside the horizon, and after the haircut.
+
+    Two changes from the first version, both in the same direction. An invoice with no
+    date at all used to be assumed to land inside the horizon; it now counts for nothing,
+    because "they'll pay me eventually" is not a month. And a late invoice is discounted
+    by how late it is (:func:`prefs.confidence`) — counting Prince in Workboots at full
+    face value three months after wrap told the index she needed $0 to survive."""
+    from . import prefs
     today = today or now().date()
     horizon = today + timedelta(days=int(months * 30.4))
     total = 0.0
     for p in items:
-        w = str(p.get("when") or "")[:7]
         try:
             amt = float(p.get("amount") or 0)
         except (TypeError, ValueError):
             continue
-        if not w:
-            total += amt          # no date given: assume it lands inside the horizon
+        land = prefs.landing(p)
+        if land is None or land > horizon:
             continue
-        try:
-            y, m = int(w[:4]), int(w[5:7])
-        except ValueError:
-            continue
-        landing = date(y + (m // 12), (m % 12) + 1, 1)
-        if landing <= horizon:
-            total += amt
-    return total
+        total += amt * prefs.confidence(p, today)
+    return round(total, 2)
 
 
 # ── what the next few months are likely to bring ─────────────────────
@@ -347,6 +376,7 @@ async def projection(session, months: int = HORIZON_MONTHS,
         ms.append(f"{y:04d}-{m:02d}")
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
 
+    from . import prefs
     received = {r["month"]: r["amount"] for r in perf["months"]}
     booked: dict[str, float] = defaultdict(float)
     unscheduled = 0.0
@@ -355,14 +385,21 @@ async def projection(session, months: int = HORIZON_MONTHS,
             amt = float(p.get("amount") or 0)
         except (TypeError, ValueError):
             continue
-        w = str(p.get("when") or "")[:7]
-        if w in ms:
-            booked[w] += amt
-        elif w and w < ms[0]:
-            booked[ms[0]] += amt      # overdue: it lands whenever, count it against now
-        elif not w:
+        # Bucket by the month the money should ARRIVE, not the month the job happened.
+        # A shoot that wraps 9/14 is September work and October money, and this page was
+        # the only place still calling it September income while the calendar and the
+        # allowance both planned on mid-October.
+        land = prefs.landing(p)
+        if land is None:
             unscheduled += amt
-        # dated beyond the horizon: genuinely not this quarter's money
+            continue
+        conf = prefs.confidence(p, today)
+        w = land.strftime("%Y-%m")
+        if w in ms:
+            booked[w] += amt * conf
+        elif w < ms[0]:
+            booked[ms[0]] += amt * conf   # already late: it lands whenever, count it now
+        # landing beyond the horizon: genuinely not this quarter's money
 
     out = []
     for i, k in enumerate(ms):
@@ -457,16 +494,17 @@ async def calendar_items(session, days: int = 400) -> dict:
                     "note": f"涵蓋 {d0['covers'][0]}~{d0['covers'][1]}・{ca}"})
 
     for p in await prefs.pending_invoices(session):
-        w = str(p.get("when") or "")[:7]
-        try:
-            y, m = int(w[:4]), int(w[5:7])
-            d = date(y + (m // 12), (m % 12) + 1, 1) + timedelta(days=13)
-        except (ValueError, IndexError):
+        d = prefs.landing(p)
+        if d is None:
             continue
+        late = (today - d).days
+        conf = prefs.confidence(p, today)
         out.append({"date": d.isoformat(), "days": (d - today).days, "kind": "income",
                     "label": (p.get("note") or "某案")[:48],
                     "amount": float(p.get("amount") or 0), "cat": None,
-                    "note": "預估到帳（含 14 天寬限）" + ("・已逾期" if d < today else "")})
+                    "confidence": conf, "late_days": max(0, late),
+                    "note": (f"預估到帳（{p.get('when')} 的案子＋{prefs.LANDING_PAD_DAYS} 天寬限）"
+                             + (f"・晚了 {late} 天，只當 {conf:.0%} 算" if late > 0 else ""))})
 
     out.sort(key=lambda x: x["date"])
     months: dict[str, dict] = defaultdict(lambda: {"in": 0.0, "out": 0.0})

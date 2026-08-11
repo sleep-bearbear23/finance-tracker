@@ -334,19 +334,12 @@ async def _periods_to_money(session, today: date) -> tuple[int, dict | None]:
     pend = await prefs.pending_invoices(session)
     best, item = None, None
     for p in pend:
-        w = str(p.get("when") or "")[:7]
-        if not w:
+        # one landing model for the whole app now — see prefs.landing()
+        land = prefs.landing(p)
+        if land is None or land < today:
             continue
-        try:
-            y, m = int(w[:4]), int(w[5:7])
-        except ValueError:
-            continue
-        # a month-granularity estimate means end of month, then +14 days of padding
-        landing = date(y + (m // 12), (m % 12) + 1, 1) + timedelta(days=13)
-        if landing < today:
-            continue
-        if best is None or landing < best:
-            best, item = landing, p
+        if best is None or land < best:
+            best, item = land, p
     if best is None:
         return 4, None      # nothing booked: assume two months of self-funding
     span = max(1, round((best - today).days / 15.2))

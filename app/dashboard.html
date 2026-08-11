@@ -978,15 +978,31 @@ async function loadPlan(){
 
   /* 需要賺 — the number Momo holds up against a gig offer */
   const te=d.to_earn;
-  el('teMeta').textContent = te.pending>0 ? `已扣掉待收 ${F0(te.pending)}` : '';
-  el('teBox').innerHTML = te.tiers.map(t=>`
-    <div class="tier">
+  /* The headline is the FLOOR — what she has to earn if none of the outstanding money
+     shows up. Leading with the pending-reduced figure let 生存 render as $0, which is a
+     dashboard telling a freelancer she needs no work for three months on the strength of
+     an invoice that has been unpaid since May. Momo's rule: expected income is an index
+     of dryness, never an illusion of doing well. So the conditional number is the second
+     line, and it is always phrased as a condition. */
+  el('teMeta').textContent = te.pending_face>0
+    ? (te.pending_haircut>0 ? `待收 ${F0(te.pending_face)}，逾期打折後只當 ${F0(te.pending)}`
+                            : `待收 ${F0(te.pending_face)}`) : '';
+  el('teBox').innerHTML = te.tiers.map(t=>{
+    const saved = Math.max(0, t.bare - t.need);
+    return `<div class="tier">
       <span class="nm">${esc(t.name)}</span>
-      <span class="amt" style="color:${t.need>0?'var(--ink)':'var(--accent)'}">${F0(t.need)}</span>
-      <span class="sub">每月 ${F0(t.per_month)}${t.gigs?`　≈ ${t.gigs} 個案子`:''}<br>${esc(t.why)}</span>
-    </div>`).join('')
+      <span class="amt">${F0(t.bare)}</span>
+      <span class="sub">每月 ${F0(t.bare_per_month)}${t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:''}<br>${esc(t.why)}
+        ${saved>0?`<br><span style="color:var(--accent)">待收的錢真的進來的話 → ${F0(t.need)}
+          （每月 ${F0(t.per_month)}）</span>`:''}</span>
+    </div>`;}).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
-        ${esc(te.note)} 中位數一筆 ${F0(te.median_payment)}。</p>`;
+        大字是「一毛都沒收到」要賺的數字。${esc(te.note)} 中位數一筆 ${F0(te.median_payment)}。</p>`
+    + ((te.pending_items||[]).filter(p=>p.confidence<1).length
+        ? `<p style="font-size:10px;color:var(--warn);line-height:1.6;margin:6px 0 0">`
+          + (te.pending_items||[]).filter(p=>p.confidence<1).map(p=>
+              `⚠ ${esc((p.note||'').slice(0,26))} ${F0(p.amount)} 晚了 ${p.late_days} 天，只當 ${Math.round(p.confidence*100)}% 算`).join('<br>')
+          + `</p>` : '');
 
   /* the three walls */
   const st=d.standing, em=st.emergency, tx=st.tax;

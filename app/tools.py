@@ -47,8 +47,13 @@ SCHEMAS: list[dict] = [
                 "note": {"type": "string",
                          "description": "What the job is, in her words — production, dates, role."},
                 "when": {"type": "string",
-                         "description": "YYYY-MM she expects it to land. Omit if unknown; "
-                                        "do not guess a month she did not imply."},
+                         "description": "YYYY-MM of the WORK — the month the shoot happened "
+                                        "or wrapped, not the month a cheque might arrive. "
+                                        "Payment lands about two weeks after that month "
+                                        "ends, and the whole app derives the date from this "
+                                        "one field. NEVER move it forward to make a late "
+                                        "job look on time: lateness is measured from it, "
+                                        "and an old job counts for less on purpose."},
                 "force": {"type": "boolean",
                           "description": "Only after Momo confirms it is genuinely a second, "
                                          "separate job — not the one already on the list."},
@@ -66,7 +71,12 @@ SCHEMAS: list[dict] = [
             "properties": {
                 "which": {"type": "string", "description": "Name or amount of the existing payment."},
                 "amount": {"type": "number"},
-                "when": {"type": "string", "description": "YYYY-MM"},
+                "when": {"type": "string",
+                         "description": "YYYY-MM of the WORK, not of the hoped-for payment. "
+                                        "Correct it BACKWARDS when Momo says a job wrapped "
+                                        "earlier than recorded — that is what makes an "
+                                        "overdue invoice count for less instead of "
+                                        "flattering the plan."},
                 "note": {"type": "string"},
             },
             "required": ["which"],
