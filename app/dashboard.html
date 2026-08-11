@@ -64,8 +64,11 @@
   .app{height:100dvh;display:flex;flex-direction:column;padding:18px 20px 18px;gap:16px}
   .topbar{display:flex;align-items:center;gap:12px;flex:0 0 auto}
   .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,rgba(46,229,169,.9),rgba(91,141,245,.85));
-    display:grid;place-items:center;font-size:15px;flex:0 0 32px;
+    display:grid;place-items:center;font-size:15px;flex:0 0 32px;cursor:pointer;
+    transition:box-shadow .2s;
     box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 2px 10px rgba(0,0,0,.45)}
+  .avatar:hover{box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 0 0 3px rgba(46,229,169,.22),
+    0 2px 10px rgba(0,0,0,.45)}
   .brandtxt h1{font-size:14px;margin:0;font-weight:400;letter-spacing:.06em;white-space:nowrap}
   .brandtxt .quip{font-size:10.5px;font-weight:300;letter-spacing:.03em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.04);border:1px solid var(--border);
@@ -226,13 +229,13 @@
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
   th{color:var(--muted);font-weight:700;font-size:10px;letter-spacing:.5px;text-transform:uppercase;
-    position:sticky;top:0;background:#22254a;z-index:1}
+    position:sticky;top:0;background:#14141b;z-index:1}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
   /* controls */
   .fselect,.finput{padding:7px 10px;border:1px solid var(--border);border-radius:9px;font:inherit;
-    font-size:12.5px;background:#242850;color:var(--ink);color-scheme:dark}
+    font-size:12.5px;background:#16161d;color:var(--ink);color-scheme:dark}
   .finput::placeholder{color:var(--muted)}
   .pager{border:1px dashed var(--border);border-radius:9px;background:none;color:var(--muted);
     font-size:12px;cursor:pointer;font-family:inherit;padding:6px 11px}
@@ -315,16 +318,46 @@
   .wall .top b{font-variant-numeric:tabular-nums;font-weight:400}
   .wall .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:3px}
 
+  /* ── 收入 screen: four figures, then rhythm / payers / record / what's coming ── */
   #s-income > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto minmax(0,1fr);
-    grid-template-areas:"istat istat istat" "irecv irecv iexp";}
-  [data-pane=istat]{grid-area:istat;background:none;border:none;box-shadow:none;padding:0;overflow:visible}
+    grid-template-columns:1.3fr .8fr .95fr;
+    grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
+    grid-template-areas:
+      "istat  istat  istat"
+      "iperf  iperf  ipay"
+      "irecv  irecv  iexp";}
+  [data-pane=istat]{grid-area:istat;background:none;border:none;box-shadow:none;padding:0;overflow:visible;
+    -webkit-backdrop-filter:none;backdrop-filter:none}
+  [data-pane=istat]::before{display:none}
+  [data-pane=iperf]{grid-area:iperf} [data-pane=ipay]{grid-area:ipay}
   [data-pane=irecv]{grid-area:irecv} [data-pane=iexp]{grid-area:iexp}
-  .stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap)}
-  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:11px 14px}
-  .stat .k{font-size:11px;color:var(--muted);margin-bottom:4px}
-  .stat .v{font-size:20px;font-weight:750;letter-spacing:-.5px}
-  .stat .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .stats3{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap)}
+  .stat{background:var(--surface);border:0;border-radius:var(--r);padding:14px 18px;position:relative;
+    -webkit-backdrop-filter:blur(30px) saturate(180%);backdrop-filter:blur(30px) saturate(180%);
+    box-shadow:var(--glass)}
+  .stat::before{content:"";position:absolute;inset:0 0 auto;height:1px;
+    border-radius:var(--r) var(--r) 0 0;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent)}
+  .stat .k{font-size:9.5px;letter-spacing:2.2px;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  .stat .v{font-size:23px;font-weight:200;letter-spacing:-.9px;font-variant-numeric:tabular-nums;line-height:1.15}
+  .stat .sub{font-size:10.5px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 半月 / 月 / 年, inside the card title */
+  .switch{display:inline-flex;gap:2px;background:rgba(255,255,255,.045);border-radius:999px;padding:2px;
+    text-transform:none;letter-spacing:0}
+  .switch button{border:0;background:none;color:var(--muted);font-family:inherit;font-size:10px;
+    font-weight:300;letter-spacing:.08em;padding:3px 11px;border-radius:999px;cursor:pointer}
+  .switch button.on{background:rgba(255,255,255,.07);color:var(--accent);
+    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28)}
+
+  /* a payer, with its share drawn under the name */
+  .pay{padding:9px 0;border-bottom:1px solid var(--grid)}
+  .pay:last-child{border-bottom:none}
+  .pay .t{display:flex;justify-content:space-between;gap:10px;align-items:baseline;font-size:12px}
+  .pay .t span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
+  .pay .t b{font-weight:400;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pay .bar{height:3px;border-radius:999px;background:rgba(255,255,255,.06);margin-top:6px;overflow:hidden}
+  .pay .bar i{display:block;height:100%;border-radius:999px}
 
   /* ── BRAIN screen ── */
   #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
@@ -364,6 +397,9 @@
     #s-brain > .grid{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);
       grid-template-areas:"bmath" "bmem";}
     [data-pane=bnw],[data-pane=bchat]{display:none}
+    #s-income > .grid{grid-template-columns:1fr 1fr;
+      grid-template-rows:auto minmax(0,1fr) minmax(0,1.15fr);
+      grid-template-areas:"istat istat" "iperf ipay" "irecv iexp";}
   }
   @media(max-width:680px){
     .app{padding:10px 11px 8px;gap:8px}
@@ -373,8 +409,10 @@
     .ring{width:104px}
     .nwtop .big{font-size:26px}
     [data-pane=nw] .sparkwrap{display:none}
-    .stats3{grid-template-columns:repeat(3,1fr);gap:7px}
-    .stat{padding:8px 9px} .stat .v{font-size:16px} .stat .k{font-size:10px} .stat .sub{display:none}
+    .stats3{grid-template-columns:repeat(2,1fr);gap:8px}
+    .stat{padding:10px 12px;border-radius:18px}
+    .stat .v{font-size:18px} .stat .k{font-size:9px;letter-spacing:1.6px;margin-bottom:3px}
+    .stat .sub{font-size:9.5px}
 
     /* one hero + exactly one switchable pane; only that pane scrolls.
        NOTE: hide rules are kept at LOWER specificity than the sel-* show rules. */
@@ -415,6 +453,8 @@
     #s-plan > .grid.sel-standing > [data-pane=standing],
     #s-plan > .grid.sel-cats     > [data-pane=cats],
     #s-plan > .grid.sel-trend    > [data-pane=trend],
+    #s-income > .grid.sel-iperf > [data-pane=iperf],
+    #s-income > .grid.sel-ipay  > [data-pane=ipay],
     #s-income > .grid.sel-irecv > [data-pane=irecv],
     #s-income > .grid.sel-iexp  > [data-pane=iexp],
     #s-brain > .grid.sel-bmath > [data-pane=bmath],
@@ -443,7 +483,9 @@
 <div class="orbs" aria-hidden="true"><i class="orb a"></i><i class="orb b"></i><i class="orb c"></i></div>
 <div class="app">
   <div class="topbar">
-    <div class="avatar">👩🏻‍💼</div>
+    <!-- 訓練輪 is not a destination, it's the back of the machine. It lives behind her
+         face rather than taking a slot in a six-tab bar. -->
+    <div class="avatar" id="avatar" onclick="go('#/brain')" title="訓練輪 · 她怎麼算的">👩🏻‍💼</div>
     <div class="brandtxt" style="min-width:0">
       <h1 id="pageTitle">默默，阿姨看著呢</h1>
       <div class="quip" id="quip"></div>
@@ -454,7 +496,6 @@
       <a id="tab-acct" href="#/accounts">帳戶</a>
       <a id="tab-cal" href="#/cal">行事曆</a>
       <a id="tab-income" href="#/income">收入</a>
-      <a id="tab-brain" href="#/brain">訓練輪</a>
     </div>
     <div class="asof" id="asof">載入中…</div>
   </div>
@@ -620,16 +661,36 @@
     </div>
   </div>
 
+  <!-- ───────── 收入 ───────── -->
   <div class="screen" id="s-income">
-    <div class="grid sel-irecv" id="incGrid">
+    <div class="grid sel-iperf" id="incGrid">
       <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
-      <section class="card" data-pane="irecv">
-        <h2>今年收入紀錄（已入帳）</h2>
-        <div class="body" id="incReceived"></div>
+
+      <section class="card" data-pane="iperf">
+        <h2>收入節奏
+          <span class="switch" id="incSwitch">
+            <button data-scale="half" class="on">半月</button><button data-scale="month">月</button><button data-scale="year">年</button>
+          </span>
+        </h2>
+        <div class="flexbody">
+          <div class="cbox"><canvas id="incChart"></canvas></div>
+          <div class="note" id="incChartNote"></div>
+        </div>
       </section>
+
+      <section class="card" data-pane="ipay">
+        <h2>誰付你錢 <span class="more" id="ipayMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="incPayers"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="irecv">
+        <h2>入帳紀錄 <span class="more" id="irecvMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="incReceived"><div class="empty">載入中…</div></div>
+      </section>
+
       <section class="card" data-pane="iexp">
-        <h2>預期收入 · 待收款</h2>
-        <div class="body" id="incExpected"></div>
+        <h2>接下來三個月 <span class="more" id="iexpMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="incExpected"><div class="empty">載入中…</div></div>
       </section>
     </div>
   </div>
@@ -637,7 +698,9 @@
   <!-- ───────── BRAIN ───────── -->
   <div class="screen" id="s-brain">
     <div class="grid sel-bmath" id="brainGrid">
-      <section class="card" data-pane="bmath"><h2>她怎麼算「這期能花多少」</h2><div class="body" id="budgetMath"></div></section>
+      <section class="card" data-pane="bmath">
+        <h2>她怎麼算「這期能花多少」 <span class="more" onclick="go('#/')">← 回總覽</span></h2>
+        <div class="body" id="budgetMath"></div></section>
       <section class="card" data-pane="bnw"><h2>淨資產 & 設定</h2><div class="body" id="nwMath"></div></section>
       <section class="card" data-pane="bmem"><h2>她學到的商家</h2><div class="body" id="memBox"></div></section>
       <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
@@ -727,7 +790,7 @@ const SEGS = {
   acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
-  income: [['irecv','已入帳'],['iexp','待收款']],
+  income: [['iperf','節奏'],['ipay','誰付錢'],['irecv','入帳紀錄'],['iexp','接下來']],
   brain:  [['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
 const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', acct:'acctsGrid',
@@ -749,7 +812,8 @@ function buildSeg(view){
 function go(h){ location.hash=h; }
 const VIEWS=['home','account','plan','acct','cal','income','brain'];
 function setNav(name){
-  for(const v of ['home','plan','acct','cal','income','brain']){
+  // 'brain' is deliberately absent — it has no tab, so on that screen nothing lights up
+  for(const v of ['home','plan','acct','cal','income']){
     const on = (v===name)||(name==='account'&&v==='acct');
     const t=el('tab-'+v), b=el('bn-'+v);
     if(t) t.classList.toggle('on',on);
@@ -1099,29 +1163,153 @@ async function loadAccount(){
   el('aNext').style.visibility=d.offset+60<d.matched?'visible':'hidden';
 }
 
-/* ── INCOME ── */
-let incLoaded=false;
+/* ── 收入 ──
+   Everything here comes from /api/income2, which reads budget.is_income — so a
+   reimbursement from a production or a friend paying you back is NOT income, and the
+   median you see is the median of work actually paid for. */
+let incLoaded=false, incData=null, incScale='half';
+const YM = m => m.slice(5).replace(/^0/,'')+'月';
+// Chart.js draws an array label on two lines — January carries the year underneath so a
+// 12-month run reads without a legend.
+const YMax = m => m.slice(5)==='01' ? [YM(m), m.slice(0,4)] : YM(m);
+const nowYM = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+
 async function loadIncome(){
   if(incLoaded) return; incLoaded=true;
-  const d=await getJSON('/api/income');
+  const d=await getJSON('/api/income2'); incData=d;
+  stamp(); showAudit(d.audit||[]);
+  const pj=d.projection||{months:[],booked_total:0,likely_total:0};
+  const yr=String(new Date().getFullYear());
+  const ytd=(d.years.find(y=>y.year===yr)||{amount:0}).amount;
+  const ytdN=d.rows.filter(r=>r.date.slice(0,4)===yr).length;
+  const overdue=(d.pending.items||[]).filter(i=>i.overdue);
+
   el('incStats').innerHTML=[
-    ['今年已入帳',F0(d.received_total),`${d.received.length} 筆`],
-    ['待收款',F0(d.expected_total),`${d.expected.length} 筆`],
-    ['合計',F0(d.received_total+d.expected_total),'']
-  ].map(([k,v,s])=>`<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${s?`<div class="sub">${s}</div>`:''}</div>`).join('');
-  el('incReceived').innerHTML=d.received.length? `<table>
-    <thead><tr><th>日期</th><th>項目</th><th>方式</th><th class="num">金額</th></tr></thead><tbody>`+
-    d.received.map(r=>`<tr><td>${esc(r.date)}</td><td style="white-space:normal">${esc(r.name)}</td>
-      <td>${esc(r.method||'—')}</td><td class="num pos">${F(r.amount)}</td></tr>`).join('')+
-    `<tr><td></td><td><b>合計</b></td><td></td><td class="num"><b>${F(d.received_total)}</b></td></tr></tbody></table>`
-    : '<div class="empty" style="padding:12px">今年還沒有入帳紀錄。</div>';
-  let rows=d.expected.map(e=>
-    `<div class="row"><span class="l">${esc(e.note)}${e.overdue?'<span class="chip warn">該進來了</span>':''}
-      <span class="tag">${esc(e.when||'未定')}</span></span><span class="r">${F(e.amount)}</span></div>`).join('');
-  for(let i=0;i<Math.max(2,5-d.expected.length);i++)
-    rows+=`<div class="row" style="opacity:.4"><span class="l" style="color:var(--muted)">預留欄位 —</span><span class="r" style="color:var(--muted)">$—</span></div>`;
-  if(d.expected.length) rows+=`<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(d.expected_total)}</span></div>`;
-  el('incExpected').innerHTML=rows+'<div class="note">接到新案子跟阿姨講一聲就會補進來；入帳了說一聲她就劃掉。</div>';
+    ['今年至今', F0(ytd), `${ytdN} 筆進帳`],
+    ['一個月中位數', F0(d.median_month), `一筆中位數 ${F0(d.median_payment)}`],
+    ['待收款', F0(d.pending.total),
+      d.pending.items.length ? `${d.pending.items.length} 筆`+(overdue.length?` · ${overdue.length} 筆逾期`:'') : '沒有'],
+    ['未來三個月預估', F0(pj.likely_total||0), `已排定 ${F0(pj.booked_total||0)}`],
+  ].map(([k,v,s])=>`<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div>
+      <div class="sub">${esc(s)}</div></div>`).join('');
+
+  /* who pays her — the mix matters when one client is most of the year */
+  // share of ALL income, not of the twelve shown — otherwise a truncated list would
+  // quietly inflate every percentage to fill 100%
+  const tot=d.rows.reduce((a,r)=>a+r.amount,0);
+  const top=d.payers.length?100*d.payers[0].amount/(tot||1):0;
+  el('ipayMeta').textContent=d.payers.length?`最大一家佔 ${top.toFixed(0)}%`:'';
+  el('incPayers').innerHTML = d.payers.length ? d.payers.map((p,i)=>{
+    const pct=tot?100*p.amount/tot:0;
+    return `<div class="pay"><div class="t"><span>${esc(p.name)}</span><b>${F0(p.amount)}</b></div>
+      <div class="bar"><i style="width:${Math.max(1.5,pct).toFixed(1)}%;background:${CATCOLORS[i%7]}"></i></div>
+      <div class="tag" style="margin-top:3px">${p.n} 筆　·　${pct.toFixed(0)}%</div></div>`;
+  }).join('') : '<div class="empty">還沒有收入紀錄。</div>';
+
+  /* the record, grouped by month with a running subtotal on the divider */
+  const bym={};
+  for(const r of d.rows){ (bym[r.date.slice(0,7)] ||= []).push(r); }
+  el('irecvMeta').textContent=`${d.n_payments} 筆`;
+  el('incReceived').innerHTML = d.rows.length ? Object.keys(bym).sort().reverse().map(m=>{
+    const sum=bym[m].reduce((a,r)=>a+r.amount,0);
+    return `<div class="monthsep">${m.replace('-','／')}　·　${F0(sum)}</div>`+
+      bym[m].map(r=>`<div class="ev"><span class="when">${md(r.date)}</span>
+        <span class="what">${esc(r.name||'—')}${r.note?`<span class="sub">${esc(r.note)}</span>`:''}</span>
+        <span class="amt pos">${F(r.amount)}</span></div>`).join('');
+  }).join('') : '<div class="empty">還沒有收入紀錄。</div>';
+
+  /* what's coming: the projection month by month, then the invoices behind it */
+  const need=pj.need_per_month;
+  el('iexpMeta').textContent = pj.likely_total!=null ? `預估 ${F0(pj.likely_total)}` : '';
+  let box = pj.months.map(m=>{
+    const short = need!=null && m.likely < need;
+    // accent only where the money has a name on it; a "typical month" is a hope, not a
+    // deposit, and colouring it green would read as money already coming
+    const col = short ? 'var(--warn)' : (m.booked>=m.likely ? 'var(--accent)' : 'var(--ink2)');
+    return `<div class="ev"><span class="when">${esc(YM(m.month))}${m.current?'<br><span style="font-size:9px">本月</span>':''}</span>
+      <span class="what">已排定 ${F0(m.booked)}
+        <span class="sub">照過去節奏約 ${F0(m.typical)}${short?`　·　持平要 ${F0(need)}`:''}</span></span>
+      <span class="amt" style="color:${col}">${F0(m.likely)}</span></div>`;
+  }).join('');
+  if(pj.unscheduled>0)
+    box+=`<div class="row"><span class="l">還沒說什麼時候給的 <span class="tag">沒排進上面</span></span>
+      <span class="r">${F0(pj.unscheduled)}</span></div>`;
+  box+=`<div class="monthsep">待收款</div>`;
+  box+= (d.pending.items||[]).length ? d.pending.items.map(e=>
+    `<div class="row"><span class="l"><span class="nm">${esc(e.note)}</span>${e.overdue?'<span class="chip warn">該進來了</span>':''}
+       <span class="tag">${esc(e.when||'未定')}</span></span><span class="r">${F(e.amount)}</span></div>`).join('')
+    : '<div class="empty">沒有在等的錢。接到案子跟阿姨講一聲就會補進來。</div>';
+  box+=`<div class="note">${esc(pj.note||'')}</div>`;
+  el('incExpected').innerHTML=box;
+
+  el('incSwitch').onclick=e=>{
+    const b=e.target.closest('button[data-scale]'); if(!b) return;
+    incScale=b.dataset.scale;
+    [...el('incSwitch').children].forEach(x=>x.classList.toggle('on',x===b));
+    drawIncChart();
+  };
+  drawIncChart();
+}
+
+function drawIncChart(){
+  const d=incData; if(!d) return;
+  const medLine = v => ({type:'line',label:'中位數',data:v,borderColor:'rgba(255,255,255,.30)',
+    borderWidth:1,borderDash:[4,4],pointRadius:0,pointHoverRadius:0,stack:'med',fill:false});
+
+  if(incScale==='half'){
+    const pts=d.halves, med=d.median_half;
+    chart('incChart',{type:'bar',
+      data:{labels:pts.map(p=>p.label),datasets:[
+        {label:'入帳',data:pts.map(p=>p.amount),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:22},
+        medLine(pts.map(()=>med))]},
+      options:{plugins:{tooltip:{callbacks:{title:c=>pts[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+        scales:halfMonthScales(pts)}});
+    el('incChartNote').textContent=`近 12 個半月（不含還沒過完的這一期）。粗線是月份分界，虛線是一期的中位數 ${F0(med)}。`;
+
+  }else if(incScale==='month'){
+    const cur=nowYM();
+    const past=d.months.filter(m=>m.month<cur);
+    const fut=(d.projection&&d.projection.months)||[];
+    const labels=[...past.map(m=>YMax(m.month)),...fut.map(m=>YMax(m.month))];
+    const pad=n=>Array(n).fill(null);
+    chart('incChart',{type:'bar',
+      data:{labels,datasets:[
+        {label:'已入帳',data:[...past.map(m=>m.amount),...pad(fut.length)],
+          backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:26,stack:'s'},
+        {label:'已排定',data:[...pad(past.length),...fut.map(m=>m.booked)],
+          backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:26,stack:'s'},
+        {label:'照過去節奏',data:[...pad(past.length),...fut.map(m=>Math.max(0,m.likely-m.booked))],
+          backgroundColor:'rgba(91,141,245,.20)',borderColor:'rgba(91,141,245,.60)',borderWidth:1,
+          borderRadius:4,maxBarThickness:26,stack:'s'},
+        medLine(labels.map(()=>d.median_month))]},
+      options:{plugins:{tooltip:{filter:c=>c.parsed.y!=null&&c.parsed.y!==0,
+          callbacks:{label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+        scales:{x:{stacked:true,grid:{display:false},border:{display:false},
+                   ticks:{font:{size:10},maxRotation:0,autoSkip:false}},
+                y:{stacked:true,grid:{color:css('--grid')},border:{display:false},
+                   ticks:{font:{size:10},maxTicksLimit:5,callback:v=>F0(v)}}}}});
+    el('incChartNote').textContent=`實色是已經入帳的，最後三個月是預估：深色＝已排定，淡色＝補到過去節奏 ${F0(d.median_month)}／月。`;
+
+  }else{
+    // One year of history is one bar, which tells her nothing. The outline on top is where
+    // the year lands if the rest of it goes like the last twelve months did.
+    const ys=d.years, ye=(d.projection&&d.projection.year_end)||null;
+    chart('incChart',{type:'bar',
+      data:{labels:ys.map(y=>y.year),datasets:[
+        {label:'已入帳',data:ys.map(y=>y.amount),backgroundColor:'#15ad81',borderRadius:5,
+          maxBarThickness:72,stack:'y'},
+        {label:'照節奏補到年底',data:ys.map(y=>ye&&y.year===ye.year?ye.to_come:null),
+          backgroundColor:'rgba(21,173,129,.18)',borderColor:'rgba(21,173,129,.55)',borderWidth:1,
+          borderRadius:5,maxBarThickness:72,stack:'y'}]},
+      options:{plugins:{tooltip:{filter:c=>c.parsed.y!=null&&c.parsed.y!==0,
+          callbacks:{label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+        scales:{x:{stacked:true,grid:{display:false},border:{display:false},ticks:{font:{size:11}}},
+                y:{stacked:true,grid:{color:css('--grid')},border:{display:false},
+                   ticks:{font:{size:10},maxTicksLimit:5,callback:v=>F0(v)}}}}});
+    el('incChartNote').textContent = ye
+      ? `實色是今年已經入帳的 ${F0(ye.so_far)}；外框是照過去節奏補到年底，全年約 ${F0(ye.estimate)}。`
+      : '每一年的入帳總額。';
+  }
 }
 
 /* ── BRAIN ── */
@@ -1129,6 +1317,7 @@ let brainLoaded=false;
 async function loadBrain(){
   if(brainLoaded) return; brainLoaded=true;
   const d=await getJSON('/api/brain');
+  stamp();
   if(d.budget_detail){
     const b=d.budget_detail;
     const pipe=b.booked_pipeline.length? b.booked_pipeline.map(p=>`${esc(p.note||'某案')} ${F0(p.amount)}（${esc(p.when||'?')}）`).join('、'):'（沒有已排定的案子）';

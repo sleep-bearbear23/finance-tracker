@@ -10,6 +10,7 @@ it has to be a small number of dollars and a count of jobs, not a spreadsheet.
 """
 from __future__ import annotations
 
+import re
 import statistics
 from collections import defaultdict
 from datetime import date, timedelta
@@ -91,6 +92,51 @@ async def category_series(session, n_periods: int = 12, f: F.Facts | None = None
     }
 
 
+#: everything a bank puts around a payer's name — the word "payroll", the month it was
+#: for, the entity suffix. "AVG MAY Payroll" and "AVG Payroll APRIL" are one client, and
+#: listing them as two hid that AVG is worth $1,400 a year to Momo.
+#: A month may carry the year glued to it ("AVG MAR26"), which is why the month group
+#: takes trailing digits. This is aggressive on purpose — the raw bank description is
+#: still printed on every row of 入帳紀錄, so nothing is actually lost.
+_PAYER_NOISE = re.compile(
+    r"\b(payroll|pay\s*roll|day\s*rate|zelle\s*(payment)?\s*from|payment\s*from|"
+    r"direct\s*dep(osit)?|deposit|invoice|inv|"
+    r"(january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\d{0,4}|"
+    r"inc|llc|ltd|co)\b", re.I)
+
+
+def payer_name(desc: str) -> str:
+    """A payer's name with the bank's packaging taken off.
+
+    Deliberately conservative: if stripping leaves nothing, keep the original. A blank
+    row is worse than an ugly one."""
+    s = re.sub(r"\bx{3,}\d*\b", " ", desc or "", flags=re.I)   # masked account numbers
+    s = re.sub(r"\b\d{5,}\b", " ", s)                          # trace / reference numbers
+    s = s.replace("_", " ")
+    s = _PAYER_NOISE.sub(" ", s)
+    s = re.sub(r"[,.\-–—#:/]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip(" ·")
+    return (s or (desc or "?").strip())[:32]
+
+
+def _month_span(observed: list[str]) -> list[str]:
+    """Every YYYY-MM from the first observed month to the current one, gaps included.
+
+    Only inside the observed range — inventing months before the ledger starts would
+    invent zeros we have no evidence for."""
+    if not observed:
+        return []
+    y, m = int(observed[0][:4]), int(observed[0][5:7])
+    today = now().date()
+    end = (today.year, today.month)
+    out = []
+    while (y, m) <= end:
+        out.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
 # ── income, sliced three ways ────────────────────────────────────────
 async def income_performance(session, f: F.Facts | None = None) -> dict:
     """Real pay by half-month, by month and by year, plus the payer mix.
@@ -102,6 +148,7 @@ async def income_performance(session, f: F.Facts | None = None) -> dict:
     months: dict[str, float] = defaultdict(float)
     years: dict[str, float] = defaultdict(float)
     payers: dict[str, float] = defaultdict(float)
+    payer_n: dict[str, int] = defaultdict(int)
     rows = []
     for t in f.txns:
         if not budget.is_income(t):
@@ -112,24 +159,36 @@ async def income_performance(session, f: F.Facts | None = None) -> dict:
         halves[P.key_for(d)] += t.amount
         months[d.strftime("%Y-%m")] += t.amount
         years[d.strftime("%Y")] += t.amount
-        payers[(t.merchant_desc or "?")[:40]] += t.amount
+        pn = payer_name(t.merchant_desc or "?")
+        payers[pn] += t.amount
+        payer_n[pn] += 1
         rows.append({"date": d.isoformat(), "name": t.merchant_desc,
                      "amount": round(t.amount, 2), "source": t.source, "note": t.note})
     rows.sort(key=lambda r: r["date"], reverse=True)
 
     hkeys = P.last_n(budget.current_key(), 12)
-    mkeys = sorted(months)[-12:]
-    mvals = [months[k] for k in mkeys]
+    # A month with no income is a month with no income — it has to appear, and it has to
+    # count in the median. Skipping it drew June straight into July on the chart and
+    # quietly raised the median month by $280.
+    mkeys = _month_span(sorted(months))[-12:]
+    # …but the month we are standing in is half-finished, so it belongs on the chart and
+    # not in the median. On the 11th it would otherwise vote "$0" against seven real months.
+    this_month = now().strftime("%Y-%m")
+    mvals = [months.get(k, 0.0) for k in mkeys if k != this_month]
+    # same argument one level down: the half we are living in is not a data point yet
+    here = budget.current_key()
+    hvals = [halves.get(k, 0.0) for k in hkeys if k != here]
 
     return {
         "halves": [{"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
                     "amount": round(halves.get(k, 0.0), 2)} for k in hkeys],
-        "months": [{"month": k, "amount": round(months[k], 2)} for k in mkeys],
+        "months": [{"month": k, "amount": round(months.get(k, 0.0), 2)} for k in mkeys],
         "years": [{"year": k, "amount": round(v, 2)} for k, v in sorted(years.items())],
-        "payers": [{"name": k, "amount": round(v, 2)}
+        "payers": [{"name": k, "amount": round(v, 2), "n": payer_n[k]}
                    for k, v in sorted(payers.items(), key=lambda x: -x[1])[:12]],
         "rows": rows,
         "median_month": round(statistics.median(mvals), 2) if mvals else 0.0,
+        "median_half": round(statistics.median(hvals), 2) if hvals else 0.0,
         "median_payment": round(statistics.median([r["amount"] for r in rows]), 2) if rows else 0.0,
         "n_payments": len(rows),
     }
@@ -255,6 +314,87 @@ def _pending_within(items: list[dict], months: int, today: date | None = None) -
         if landing <= horizon:
             total += amt
     return total
+
+
+# ── what the next few months are likely to bring ─────────────────────
+async def projection(session, months: int = HORIZON_MONTHS,
+                     f: F.Facts | None = None) -> dict:
+    """Income for the coming months, as a floor and a likely case rather than one number.
+
+    Two honest quantities, never blended:
+
+      已排定  money with a name on it — invoices Momo is waiting on, dated to the month
+              they should land, plus (for the current month) what has already arrived
+      照節奏  the median month of the last twelve, i.e. what happens if she books the
+              kind of work she usually books
+
+    The likely case is ``max`` of the two, not their sum: an invoice she is already owed
+    is part of a typical month, not extra on top of one. Adding them would quietly
+    promise her a month she has no reason to expect.
+
+    Undated invoices are reported separately instead of being smeared across the horizon,
+    because "we'll pay you eventually" is not a month.
+    """
+    f = f or await F.build(session)
+    perf = await income_performance(session, f)
+    med = perf["median_month"]
+    today = now().date()
+
+    # months in the horizon, starting with the current one
+    ms: list[str] = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        ms.append(f"{y:04d}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+    received = {r["month"]: r["amount"] for r in perf["months"]}
+    booked: dict[str, float] = defaultdict(float)
+    unscheduled = 0.0
+    for p in await _pending(session):
+        try:
+            amt = float(p.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        w = str(p.get("when") or "")[:7]
+        if w in ms:
+            booked[w] += amt
+        elif w and w < ms[0]:
+            booked[ms[0]] += amt      # overdue: it lands whenever, count it against now
+        elif not w:
+            unscheduled += amt
+        # dated beyond the horizon: genuinely not this quarter's money
+
+    out = []
+    for i, k in enumerate(ms):
+        b = round(booked.get(k, 0.0) + (received.get(k, 0.0) if i == 0 else 0.0), 2)
+        out.append({"month": k, "booked": b, "typical": round(med, 2),
+                    "likely": round(max(b, med), 2), "current": i == 0})
+
+    # …and where the year lands if the rest of it behaves like the horizon does. Only the
+    # part that has not happened yet is estimated; what is already banked is banked.
+    ytd = next((y["amount"] for y in perf["years"]
+                if y["year"] == f"{today.year:04d}"), 0.0)
+    got_now = received.get(ms[0], 0.0)
+    rest = max(0.0, out[0]["likely"] - got_now) + sum(x["likely"] for x in out[1:])
+    last_h = int(ms[-1][5:7]) if ms[-1][:4] == f"{today.year:04d}" else 12
+    rest += med * max(0, 12 - last_h)     # months past the horizon, at her usual pace
+    year_end = {"year": f"{today.year:04d}", "so_far": round(ytd, 2),
+                "estimate": round(ytd + rest, 2), "to_come": round(rest, 2)}
+
+    te = await to_earn(session, months, f)
+    hold = next((t for t in te["tiers"] if t["name"] == "持平"), None)
+    return {
+        "months": out,
+        "year_end": year_end,
+        "median_month": round(med, 2),
+        "booked_total": round(sum(x["booked"] for x in out), 2),
+        "likely_total": round(sum(x["likely"] for x in out), 2),
+        "unscheduled": round(unscheduled, 2),
+        "need_per_month": hold["per_month"] if hold else None,
+        "need_label": "持平",
+        "note": ("已排定＝有名字的錢（待收款，本月再加上已入帳的）。照節奏＝近 12 個月的"
+                 "中位數。兩個取大的，不相加——已經欠你的錢本來就算在一般月份裡。"),
+    }
 
 
 # ── standing: the three walls and where they are ─────────────────────

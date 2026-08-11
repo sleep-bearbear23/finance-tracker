@@ -684,6 +684,8 @@ async def api_income2(request: Request):
         f = await F.build(s)
         perf = await AN.income_performance(s, f)
         perf["to_earn"] = await AN.to_earn(s, 3, f)
+        perf["projection"] = await AN.projection(s, 3, f)
         perf["pending"] = await _pending_block(s, f.nw)
         perf["networth"] = f.nw
+        perf["audit"] = f.audit()
         return perf

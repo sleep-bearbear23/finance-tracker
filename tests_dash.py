@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 os.environ.update(
@@ -60,7 +60,19 @@ async def seed():
                 id=r["id"], account_id="applecard", amount=r["amount"], merchant_desc=r["desc"],
                 posted_at=datetime.fromisoformat(r["date"]).replace(tzinfo=TZ),
                 category=r.get("cat"), status="auto", source="applecard"))
+        # Pay, in the shape her bank actually reports it: one client under two spellings,
+        # a deliberate empty month between deposits, and a payer string wrapped in Zelle
+        # boilerplate. The 收入 page has to survive all three.
+        today = datetime.now(TZ)
+        for i, (days, amt, desc) in enumerate((
+                (190, 900.0, "AVG MAY Payroll"),
+                (160, 600.0, "AVG Payroll APRIL"),
+                (40, 1400.0, "ZELLE PAYMENT FROM JUMP DEER MEDIA, INC. 30152107438"))):
+            s.add(Transaction(id=f"pay{i}", account_id="chk", amount=amt, merchant_desc=desc,
+                              posted_at=today - timedelta(days=days),
+                              status="income", inflow_kind="pay", source="simplefin"))
         await s.commit()
+        await prefs.add_invoice(s, 2300.0, when=today.strftime("%Y-%m"), note="某支片 尾款")
         await cleanup.ensure_accounts(s)
         await prefs.update_account(s, "Apple Goldman Sachs Savings", 7472.63, "cash")
         await prefs.update_account(s, "Apple Card", 2626.01, "credit")
@@ -153,6 +165,58 @@ async def main():
               near(d["account"]["balance"], a["balance"]))
         check(f"{a['name'][:22]}: no negative half-month",
               all(x["spend"] >= -EPS for x in d["series"]))
+
+    print("\n[7] the 收入 page — a projection has to be honest about what it knows")
+    from app import analytics as AN                                    # noqa: PLC0415
+    inc = g("/api/income2")
+    check("income2 reports no internal disagreement", not inc.get("audit"),
+          "; ".join(inc.get("audit") or []))
+
+    # the bank's packaging comes off, so one client is one row
+    check("AVG MAY Payroll and AVG Payroll APRIL are the same payer",
+          AN.payer_name("AVG MAY Payroll") == AN.payer_name("AVG Payroll APRIL") == "AVG",
+          f'{AN.payer_name("AVG MAY Payroll")!r} / {AN.payer_name("AVG Payroll APRIL")!r}')
+    check("a name that is nothing but noise keeps its original text",
+          AN.payer_name("Payroll") == "Payroll")
+    check("payer rows are unique", len({p["name"] for p in inc["payers"]}) == len(inc["payers"]))
+
+    # a dry month is a month
+    span = AN._month_span(["2026-01"])
+    check("month span fills the gaps", "2026-06" in span and span[0] == "2026-01")
+    check("month span stops at today, it does not run into the future",
+          span[-1] == datetime.now(TZ).strftime("%Y-%m"), span[-1])
+    mkeys = [m["month"] for m in inc["months"]]
+    check("the month series has no holes in it",
+          all(b == AN._month_span([a])[1] for a, b in zip(mkeys, mkeys[1:])), str(mkeys))
+    here = datetime.now(TZ).strftime("%Y-%m")
+    check("the half-finished month is charted but does not vote in the median",
+          here in mkeys, str(mkeys[-1]))
+
+    pj = inc["projection"]
+    check("projection covers three months starting with this one",
+          len(pj["months"]) == 3 and pj["months"][0]["month"] == here)
+    check("likely is max(booked, typical) — never their sum",
+          all(near(m["likely"], max(m["booked"], m["typical"])) for m in pj["months"]),
+          str([(m["booked"], m["typical"], m["likely"]) for m in pj["months"]]))
+    check("the projected total is the sum of the months",
+          near(pj["likely_total"], sum(m["likely"] for m in pj["months"])))
+    check("nothing is projected below what is already banked",
+          all(m["likely"] >= m["booked"] - EPS for m in pj["months"]))
+
+    ye = pj["year_end"]
+    check("year-end estimate = banked + still to come",
+          near(ye["estimate"], ye["so_far"] + ye["to_come"]))
+    check("year-end never lands under what is already banked", ye["estimate"] >= ye["so_far"])
+    this_year = next((y["amount"] for y in inc["years"] if y["year"] == here[:4]), 0.0)
+    check("so_far is exactly this year's income, not a re-derivation",
+          near(ye["so_far"], this_year), f'{ye["so_far"]} vs {this_year}')
+
+    check("待收款 on 收入 == 待收款 on the overview",
+          near(inc["pending"]["total"], ov["pending"]["total"]),
+          f'{inc["pending"]["total"]} vs {ov["pending"]["total"]}')
+    check("the index on 收入 == the index on 計畫",
+          near(inc["to_earn"]["tiers"][0]["need"],
+               g("/api/plan")["to_earn"]["tiers"][0]["need"]))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
