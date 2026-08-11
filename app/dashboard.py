@@ -19,9 +19,9 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 
-from . import (accounts as acct, allowance, budget, categories, export as EX,
-               facts as F, fixed as FX, networth, period as P, prefs,
-               stability as STAB, tax as TAX, taxonomy)
+from . import (accounts as acct, allowance, analytics as AN, budget, categories,
+               export as EX, facts as F, fixed as FX, networth, period as P,
+               prefs, stability as STAB, tax as TAX, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -37,6 +37,19 @@ def _cat_labels_json() -> str:
     m["__other"] = "其他"      # the donut's rolled-up tail
     m["未分類"] = "未分類"
     return json.dumps(m, ensure_ascii=False)
+
+
+def _cat_order_json() -> str:
+    """The fixed hue order. Colour has to follow the CATEGORY, not the order a given
+    page happened to encounter it in — 食 was rendering green on the overview and cyan on
+    the 計畫 page because each page assigned hues as it went. Treatment groups are kept
+    together so 固定 lines read as a family."""
+    slots = dict(taxonomy.PALETTE_SLOT)
+    for i, t in enumerate(taxonomy.TREATMENT_LABEL):
+        slots.setdefault(t, i % 7)
+    slots.setdefault("未分類", 6)
+    slots.setdefault("__other", 6)
+    return json.dumps(slots, ensure_ascii=False)
 
 
 def _cat_options() -> list[dict]:
@@ -117,7 +130,9 @@ async def dash_page(request: Request):
         return Response("dashboard disabled", status_code=503)
     if not _authorized(request):
         return Response("unauthorized", status_code=403)
-    html = _HTML.read_text(encoding="utf-8").replace("/*CATLABELS*/{}", _cat_labels_json())
+    html = (_HTML.read_text(encoding="utf-8")
+        .replace("/*CATLABELS*/{}", _cat_labels_json())
+        .replace("/*CATSLOTS*/{}", _cat_order_json()))
     resp = HTMLResponse(html)
     # If they arrived with ?t=…, stash it in a cookie so the token leaves the URL bar.
     if request.query_params.get("t"):
@@ -632,3 +647,43 @@ async def api_export(request: Request):
     stamp = now().strftime("%Y%m%d-%H%M")
     return JSONResponse(data, headers={
         "Content-Disposition": f'attachment; filename="chen-state-{stamp}.json"'})
+
+
+# ── the detail pages ─────────────────────────────────────────────────
+@router.get("/api/plan")
+async def api_plan(request: Request):
+    """計畫: where the money goes, how that has trended, where the walls are, and how
+    much has to land in the next three months."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        f = await F.build(s)
+        return {
+            "categories": await AN.category_series(s, 12, f),
+            "standing": await AN.standing(s, f),
+            "to_earn": await AN.to_earn(s, 3, f),
+            "audit": f.audit(),
+        }
+
+
+@router.get("/api/calendar")
+async def api_calendar(request: Request):
+    if not _authorized(request):
+        return _deny()
+    days = min(800, max(30, int(request.query_params.get("days") or 400)))
+    async with Session() as s:
+        return await AN.calendar_items(s, days)
+
+
+@router.get("/api/income2")
+async def api_income2(request: Request):
+    """收入: performance by half-month / month / year, the payer mix, and the index."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        f = await F.build(s)
+        perf = await AN.income_performance(s, f)
+        perf["to_earn"] = await AN.to_earn(s, 3, f)
+        perf["pending"] = await _pending_block(s, f.nw)
+        perf["networth"] = f.nw
+        return perf

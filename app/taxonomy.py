@@ -77,6 +77,18 @@ CATEGORIES: dict[str, tuple[str, str, str]] = {
 #: display order — grouped by treatment, matching the way she talks about them
 ORDER = list(CATEGORIES)
 
+# Which of the seven chart hues each category wears. Assigned deliberately rather than by
+# position, because position modulo seven put 旅行 and 加油 on the same blue — and those
+# two are both in Momo's top five, so they were charted together and indistinguishable.
+# Colour follows the entity: a category keeps its hue on every page, forever.
+PALETTE_SLOT: dict[str, int] = {
+    "food": 0, "shopping": 1, "travel": 2, "gas": 3, "insurance": 4, "want": 5, "subs": 6,
+    "snacks": 2, "fun": 3, "household": 4, "transit": 5, "pets": 6, "gifts": 0,
+    "rent": 4, "phone": 5, "work": 6,
+    "fees": 0, "car": 1, "health": 2, "fines": 3,
+    "transfer": 6, "tax": 6,
+}
+
 ALL = set(CATEGORIES)
 
 

@@ -100,13 +100,15 @@
   .cbox{flex:1;min-height:0;position:relative}
 
   /* ── HOME grid: 3 cols × 3 rows, fills the viewport ── */
+  /* The overview was doing five jobs. It is a glance now — what can I spend, what am I
+     worth, where is it, and how have the last six months gone. Everything else earned
+     its own page. */
   #s-home > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1.05fr 1.3fr .92fr;
-    grid-template-rows:minmax(0,1.02fr) minmax(0,1fr) minmax(0,1.05fr);
+    grid-template-rows:minmax(0,1fr) minmax(0,1.15fr);
     grid-template-areas:
       "budget   nw       accounts"
-      "flows    flows    accounts"
-      "cats     recent   pending";}
+      "flows    flows    accounts";}
   [data-pane=budget]{grid-area:budget} [data-pane=nw]{grid-area:nw}
   [data-pane=accounts]{grid-area:accounts} [data-pane=flows]{grid-area:flows}
   [data-pane=cats]{grid-area:cats} [data-pane=recent]{grid-area:recent}
@@ -256,6 +258,30 @@
   .cover.warn{border-color:rgba(255,176,46,.35);background:rgba(255,176,46,.08);color:var(--warn)}
 
   /* ── INCOME screen ── */
+  #s-plan > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.15fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+    grid-template-areas:
+      "toearn  standing"
+      "cats    trend";}
+  [data-pane=toearn]{grid-area:toearn} [data-pane=standing]{grid-area:standing}
+  [data-pane=cats]{grid-area:cats} [data-pane=trend]{grid-area:trend}
+
+  /* the index, and the walls */
+  .tier{display:flex;align-items:baseline;gap:12px;padding:11px 0;border-bottom:1px solid var(--grid)}
+  .tier:last-child{border-bottom:none}
+  .tier .nm{width:2.6em;flex:0 0 auto;color:var(--ink2);font-size:12px;letter-spacing:.08em}
+  .tier .amt{font-size:19px;font-weight:200;letter-spacing:-.6px;font-variant-numeric:tabular-nums;
+    min-width:5.2em;text-align:right}
+  .tier .sub{flex:1;min-width:0;font-size:10.5px;color:var(--muted);line-height:1.45}
+  .meter{height:5px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;margin:7px 0 3px}
+  .meter i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+  .wall{padding:12px 0;border-bottom:1px solid var(--grid)}
+  .wall:last-child{border-bottom:none}
+  .wall .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12px}
+  .wall .top b{font-variant-numeric:tabular-nums;font-weight:400}
+  .wall .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:3px}
+
   #s-income > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto minmax(0,1fr);
     grid-template-areas:"istat istat istat" "irecv irecv iexp";}
@@ -319,11 +345,12 @@
 
     /* one hero + exactly one switchable pane; only that pane scrolls.
        NOTE: hide rules are kept at LOWER specificity than the sel-* show rules. */
-    #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid{
+    #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid, #s-plan > .grid{
       display:flex;flex-direction:column;gap:8px}
     #s-home > .grid > [data-pane],
     #s-account > .grid > [data-pane],
     #s-income > .grid > [data-pane],
+    #s-plan > .grid > [data-pane],
     #s-brain > .grid > [data-pane]{display:none}
 
     /* pinned heroes */
@@ -342,6 +369,10 @@
     #s-account > .grid.sel-acurve > [data-pane=acurve],
     #s-account > .grid.sel-aflow  > [data-pane=aflow],
     #s-account > .grid.sel-acats  > [data-pane=acats],
+    #s-plan > .grid.sel-toearn   > [data-pane=toearn],
+    #s-plan > .grid.sel-standing > [data-pane=standing],
+    #s-plan > .grid.sel-cats     > [data-pane=cats],
+    #s-plan > .grid.sel-trend    > [data-pane=trend],
     #s-income > .grid.sel-irecv > [data-pane=irecv],
     #s-income > .grid.sel-iexp  > [data-pane=iexp],
     #s-brain > .grid.sel-bmath > [data-pane=bmath],
@@ -377,6 +408,7 @@
     </div>
     <div class="tabs">
       <a id="tab-home" href="#/">總覽</a>
+      <a id="tab-plan" href="#/plan">計畫</a>
       <a id="tab-income" href="#/income">收入</a>
       <a id="tab-brain" href="#/brain">訓練輪</a>
     </div>
@@ -420,26 +452,8 @@
         <div class="flexbody"><div class="cbox"><canvas id="flowChart"></canvas></div></div>
       </section>
 
-      <section class="card" data-pane="cats">
-        <h2>近 90 天花在哪</h2>
-        <div class="flexbody">
-          <div class="donutwrap">
-            <div class="donutbox"><canvas id="catChart"></canvas>
-              <div class="ctr"><b id="catTotal"></b><span>90天</span></div></div>
-            <div class="cat-legend" id="catLegend"></div>
-          </div>
-        </div>
-      </section>
 
-      <section class="card" data-pane="recent">
-        <h2>最近的帳</h2>
-        <div class="body" id="recentBox"><div class="empty">載入中…</div></div>
-      </section>
 
-      <section class="card" data-pane="pending">
-        <h2>待收款 <span class="more" onclick="go('#/income')">收入 →</span></h2>
-        <div class="body" id="pendingBox"><div class="empty">目前沒有待收款。</div></div>
-      </section>
     </div>
   </div>
 
@@ -490,6 +504,32 @@
   </div>
 
   <!-- ───────── INCOME ───────── -->
+  <div class="screen" id="s-plan">
+    <div class="grid sel-toearn" id="planGrid">
+
+      <section class="card" data-pane="toearn">
+        <h2>未來三個月要賺多少 <span class="more" id="teMeta"></span></h2>
+        <div class="body" id="teBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="standing">
+        <h2>現在的水位</h2>
+        <div class="body" id="standBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="cats">
+        <h2>花在哪 <span class="more" id="catMeta"></span></h2>
+        <div class="body" id="planCats"><div class="empty">還沒有資料。</div></div>
+      </section>
+
+      <section class="card" data-pane="trend">
+        <h2>分類趨勢 <span class="more">近 12 個半月</span></h2>
+        <div class="flexbody"><div class="cbox"><canvas id="catTrendChart"></canvas></div></div>
+      </section>
+
+    </div>
+  </div>
+
   <div class="screen" id="s-income">
     <div class="grid sel-irecv" id="incGrid">
       <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
@@ -529,8 +569,12 @@ const F0 = n => (n<0?"-$":"$") + Math.abs(Number(n||0)).toLocaleString(undefined
 const CATZH = /*CATLABELS*/{};
 const cz = c => (c==null||c==='') ? '未分類' : (CATZH[c] || c);
 const CATCOLORS = ['#15ad81','#5b8df5','#e2477e','#c98500','#9085e9','#d95926','#17a2b8'];
-const CATCOLOR = {}; let _ci = 0;
-const catColor = c => CATCOLOR[c] || (CATCOLOR[c] = CATCOLORS[(_ci++) % CATCOLORS.length]);
+// Fixed, entity-based hue assignment injected from app/taxonomy.py. Never first-seen
+// order — that made the same category a different colour on every page.
+const CATSLOTS = /*CATSLOTS*/{};
+let _cfallback = 0;
+const catColor = c => CATCOLORS[(c in CATSLOTS ? CATSLOTS[c]
+                                : (CATSLOTS[c] = (_cfallback++) % 7)) % CATCOLORS.length];
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
 function toggleWhy(){
@@ -584,12 +628,13 @@ function halfMonthScales(points,yFmt){
 
 /* ── mobile pane switcher ── */
 const SEGS = {
-  home:   [['accounts','帳戶'],['recent','最近的帳'],['flows','半月收支'],['cats','花在哪'],['pending','待收款']],
+  home:   [['accounts','帳戶'],['flows','半月收支']],
+  plan:   [['toearn','要賺多少'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   income: [['irecv','已入帳'],['iexp','待收款']],
   brain:  [['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
-const GRID = {home:'homeGrid', account:'acctGrid', income:'incGrid', brain:'brainGrid'};
+const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', income:'incGrid', brain:'brainGrid'};
 function selectPane(view,pane){
   const g = el(GRID[view]); if(!g) return;
   g.className = g.className.replace(/\bsel-\S+/g,'').trim() + ' sel-' + pane;
@@ -605,9 +650,9 @@ function buildSeg(view){
 
 /* ── routing ── */
 function go(h){ location.hash=h; }
-const VIEWS=['home','account','income','brain'];
+const VIEWS=['home','account','plan','income','brain'];
 function setNav(name){
-  for(const v of ['home','income','brain']){
+  for(const v of ['home','plan','income','brain']){
     const on = (v===name)||(name==='account'&&v==='home');
     const t=el('tab-'+v), b=el('bn-'+v);
     if(t) t.classList.toggle('on',on);
@@ -619,12 +664,14 @@ async function route(){
   const m=h.match(/^#\/a\/(.+)$/);
   let view='home';
   if(m) view='account';
+  else if(h.startsWith('#/plan')) view='plan';
   else if(h.startsWith('#/income')) view='income';
   else if(h.startsWith('#/brain')) view='brain';
   for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
   setNav(view); buildSeg(view);
   try{
     if(view==='account'){ curAccount=decodeURIComponent(m[1]); aOffset=0; aInit=false; await loadAccount(); }
+    else if(view==='plan'){ el('pageTitle').textContent='計畫'; await loadPlan(); }
     else if(view==='income'){ el('pageTitle').textContent='收入紀錄'; await loadIncome(); }
     else if(view==='brain'){ el('pageTitle').textContent='訓練輪'; await loadBrain(); }
     else { el('pageTitle').textContent='默默，阿姨看著呢'; await loadHome(); }
@@ -637,8 +684,8 @@ addEventListener('hashchange', route);
 let homeLoaded=false;
 async function loadHome(){
   if(homeLoaded) return; homeLoaded=true;
-  const [o,t,acc,rec] = await Promise.all([
-    getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts'), getJSON('/api/ledger?limit=25')]);
+  const [o,t,acc] = await Promise.all([
+    getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts')]);
   el('asof').textContent='更新於 '+new Date(o.as_of).toLocaleString('zh-TW',{hour12:false});
   showAudit([...(o.audit||[]),...(t.audit||[]),...(acc.audit||[])]);
 
@@ -710,25 +757,8 @@ async function loadHome(){
       <span class="av ${owe?'neg':''}">${owe?'-':''}${F(a.balance||0)}</span><span class="caret">›</span></div>`;
   }).join('') : '<div class="empty">還沒有帳戶資料。</div>';
 
-  el('recentBox').innerHTML= rec.rows.length ? rec.rows.map(t=>`
-    <div class="arow" style="cursor:default"><i class="dot" style="background:${t.category==='未分類'?'rgba(255,255,255,.25)':catColor(t.category)}"></i>
-      <span class="an">${esc(t.merchant.slice(0,30))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.cat_label||cz(t.category))} · ${esc(t.account)}</span></span>
-      <span class="av ${t.amount<0?'':'pos'}">${F(t.amount)}</span></div>`).join('')
-    : '<div class="empty">還沒有交易。</div>';
-
-  const cs=t.category_spend.slice(0,5);
-  const other=t.category_spend.slice(5).reduce((s,x)=>s+x.amount,0);
-  if(other>0) cs.push({category:'__other',amount:other});
-  el('catTotal').textContent=F0(t.category_spend.reduce((s,x)=>s+x.amount,0));
-  if(cs.length){
-    chart('catChart',{type:'doughnut',
-      data:{labels:cs.map(c=>cz(c.category)),datasets:[{data:cs.map(c=>c.amount),
-        backgroundColor:cs.map(c=>catColor(c.category)),borderColor:'#0b0b11',borderWidth:3,borderRadius:3}]},
-      options:{cutout:'70%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
-    el('catLegend').innerHTML=cs.map(c=>
-      `<div class="cl"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(cz(c.category))}<b>${F0(c.amount)}</b></div>`).join('');
-  } else el('catLegend').innerHTML='<div class="empty">近 90 天沒有支出。</div>';
-
+  /* 花在哪 → 計畫頁, 最近的帳 → 帳戶頁, 待收款 → 行事曆頁. The overview keeps only the
+     six-month rhythm, which is the one thing you read at a glance and act on. */
   const fl=t.flows||[];
   if(fl.length) chart('flowChart',{type:'bar',
     data:{labels:fl.map(x=>x.label),datasets:[
@@ -736,12 +766,83 @@ async function loadHome(){
       {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:18}]},
     options:{plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
       scales:halfMonthScales(fl)}});
+}
 
-  el('pendingBox').innerHTML = o.pending.items.length ? o.pending.items.map(p=>
-      `<div class="row"><span class="l" title="${esc(p.note)}"><span class="nm">${esc(p.note)}</span>${p.overdue?'<span class="chip warn">該進來了</span>':''}
-        <span class="tag">${esc(p.when||'未定')}</span></span><span class="r">${F(p.amount)}</span></div>`).join('')
-      + `<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(o.pending.total)}</span></div>`
-    : '<div class="empty">目前沒有待收款。</div>';
+/* ── PLAN ── */
+let planLoaded=false;
+async function loadPlan(){
+  if(planLoaded) return; planLoaded=true;
+  const d = await getJSON('/api/plan');
+  showAudit(d.audit||[]);
+
+  /* 需要賺 — the number Momo holds up against a gig offer */
+  const te=d.to_earn;
+  el('teMeta').textContent = te.pending>0 ? `已扣掉待收 ${F0(te.pending)}` : '';
+  el('teBox').innerHTML = te.tiers.map(t=>`
+    <div class="tier">
+      <span class="nm">${esc(t.name)}</span>
+      <span class="amt" style="color:${t.need>0?'var(--ink)':'var(--accent)'}">${F0(t.need)}</span>
+      <span class="sub">每月 ${F0(t.per_month)}${t.gigs?`　≈ ${t.gigs} 個案子`:''}<br>${esc(t.why)}</span>
+    </div>`).join('')
+    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
+        ${esc(te.note)} 中位數一筆 ${F0(te.median_payment)}。</p>`;
+
+  /* the three walls */
+  const st=d.standing, em=st.emergency, tx=st.tax;
+  const pct = em.pct!=null ? Math.min(100,em.pct) : 0;
+  el('standBox').innerHTML = `
+    <div class="wall">
+      <div class="top"><span>緊急預備金</span><b>${F0(em.now)} / ${F0(em.target)}</b></div>
+      <div class="meter"><i style="width:${pct}%"></i></div>
+      <div class="note">${em.months?`目標 ≈ ${em.months} 個月最低開銷，每期重算。`:''}
+        ${(em.accounts||[]).map(a=>esc(a.name)+' '+F0(a.balance)).join('・')}</div>
+    </div>
+    <div class="wall">
+      <div class="top"><span>預留的稅</span><b>${F0(tx.outstanding)}</b></div>
+      <div class="note">今年抓 ${F0(tx.should_hold)}（${Math.round(tx.rate*100)}%），已繳 ${F0(tx.already_paid)}。
+        ${tx.next?`下次 ${tx.next.due} 估 ${F0(tx.next_estimate)}（還有 ${tx.next_days} 天）。`:''}</div>
+    </div>
+    <div class="wall">
+      <div class="top"><span>可動用水位</span><b>${F0(st.reserve_total)}</b></div>
+      <div class="note">${st.standing_rung?`站在${esc(st.standing_rung.name)}・`:''}
+        ${(st.ladder||[]).map(r=>esc(r.name)+' '+F0(r.amount)).join('　')}</div>
+    </div>
+    ${st.savings_debt>0?`<div class="wall"><div class="top"><span>存錢欠帳</span>
+      <b style="color:var(--warn)">${F0(st.savings_debt)}</b></div>
+      <div class="note">之前跳過的存錢，有多的先補這裡。</div></div>`:''}
+    ${st.shocks&&st.shocks.per_period>0?`<div class="wall"><div class="top"><span>這期要還自己</span>
+      <b style="color:var(--warn)">${F0(st.shocks.per_period)}</b></div>
+      <div class="note">自己造成的支出分期還${st.shocks.over_cap?'・已超過收入 15%，該面對了':''}。</div></div>`:''}`;
+
+  /* where it goes */
+  const c=d.categories;
+  el('catMeta').textContent = `近 12 個半月 ${F0(c.total)}`;
+  el('planCats').innerHTML =
+    `<div style="display:flex;gap:6px;margin-bottom:12px">` +
+    c.by_treatment.map(t=>`<div title="${esc(t.label)} ${t.share}%" style="flex:${Math.max(t.share,2)};
+      height:6px;border-radius:999px;background:${catColor(t.treatment)}"></div>`).join('') + `</div>` +
+    `<div style="font-size:10px;color:var(--muted);margin-bottom:10px">` +
+    c.by_treatment.map(t=>`${esc(t.label)} ${t.share}%`).join('　') + `</div>` +
+    c.rows.slice(0,10).map(r=>`
+      <div class="row"><span class="l"><i class="dot" style="background:${catColor(r.category)}"></i>
+        <span class="nm">${esc(r.label)}</span>
+        <span class="tag">${esc(r.treatment_label)}・每期 ${F0(r.per_period)}</span></span>
+        <span class="r">${F0(r.total)}　<span style="color:var(--muted);font-size:11px">${r.share}%</span></span></div>`).join('');
+
+  /* how each category has moved */
+  const top = c.rows.slice(0,5);
+  chart('catTrendChart',{type:'line',
+    data:{labels:c.labels, datasets: top.map(r=>({label:r.label, data:r.series,
+      borderColor:catColor(r.category), backgroundColor:'transparent',
+      borderWidth:2, tension:.18, pointRadius:0, pointHoverRadius:5}))},
+    options:{plugins:{legend:{display:true,position:'bottom',
+        labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+                color:css('--ink2'),font:{size:10},padding:12}},
+      tooltip:{intersect:false,mode:'index',callbacks:{label:x=>x.dataset.label+' '+F(x.parsed.y)}}},
+      scales:{x:{grid:{color:(x)=>c.month_start[x.index]?css('--gridstrong'):css('--grid')},
+                 ticks:{color:css('--muted'),font:{size:10}}},
+              y:{grid:{color:css('--grid')},ticks:{color:css('--muted'),font:{size:10},
+                 callback:v=>F0(v)}}}}});
 }
 
 /* ── ACCOUNT ── */
