@@ -126,7 +126,14 @@
      It used to be pinned at 132px inside a 380px-tall card, which left the card looking
      half empty and made the one number Momo actually acts on the smallest thing on it. */
   .ringwrap{display:flex;align-items:center;gap:20px;flex:1;min-height:0}
-  .ring{position:relative;flex:0 0 auto;width:clamp(132px,25vh,240px);aspect-ratio:1}
+  /* Height comes from an explicit value, not from aspect-ratio alone. The ring's only
+     children are absolutely positioned, so as a flex item it has no content to size
+     against — and when the engine resolves that cross-size to 0 before applying
+     aspect-ratio, the conic-gradient collapses into two green slivers. Which is exactly
+     what Momo photographed. One custom property drives both dimensions. */
+  .ring{--rs:clamp(132px,25vh,240px);
+    position:relative;flex:0 0 auto;align-self:center;
+    width:var(--rs);height:var(--rs);min-height:var(--rs);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
     background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.06) 0);
     -webkit-mask:radial-gradient(circle, transparent 60%, #000 61%);
@@ -457,7 +464,7 @@
     .segbar{display:flex}
     /* the viewport-height clamp is for the desktop card; on a phone the ring is fixed and
        the figure has to fit the hole, not the screen */
-    .ring{width:128px}
+    .ring{--rs:128px}
     .ring .hole .big{font-size:23px;letter-spacing:-1px}
     .ring .hole .lbl{font-size:8.5px;letter-spacing:.08em}
     .nwtop .big{font-size:26px}
