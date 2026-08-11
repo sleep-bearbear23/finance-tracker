@@ -331,6 +331,17 @@ async def main():
     check("every booking counted toward the target lands inside the target's window",
           all(tb["start"] <= c["lands"] <= tb["end"] for c in tb["covered_items"]),
           str([c["lands"] for c in tb["covered_items"]]))
+    # Momo: "the money as they come in is gonna be more than expected, so that number is
+    # gonna drop once those invoices start getting paid right?" It has to. Counting only
+    # PENDING invoices meant a payment deleted the pending row and the real deposit was
+    # invisible, so getting paid pushed 「還要接」 UP — 35.9 shoot days became 41.6.
+    check("money already in the bank counts toward the target too",
+          near(tb["covered"], tb["landed"] + tb["booked"]),
+          f'{tb["covered"]} = {tb["landed"]} landed + {tb["booked"]} booked')
+    check("a paid invoice is worth its full face, not its discounted value",
+          all(near(c["weighted"], c["amount"]) for c in tb["covered_items"]
+              if c["stage"] == "paid"),
+          str([(c["amount"], c["weighted"]) for c in tb["covered_items"]]))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

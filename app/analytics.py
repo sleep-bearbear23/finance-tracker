@@ -376,9 +376,28 @@ async def to_book(session, f: F.Facts | None = None) -> dict:
     lo, hi, dl = SE.bounds(reach)
     months = ((hi - lo).days + 1) / 30.4
 
-    covered = 0.0
-    booked_days = 0
+    # Money that has ALREADY ARRIVED inside the window counts too. Leaving it out meant
+    # getting paid made the dashboard ask for MORE work: Avia's $2,850 landing took
+    # 「已排定」 from $7,035 to $5,040 — the pending row vanished and the real deposit was
+    # invisible — so 「還要接」 jumped from 35.9 to 41.6 shoot days on the day she got paid.
+    # Momo saw it coming: "the money as they come in is gonna be more than expected, so
+    # that number is gonna drop once those invoices start getting paid right?" It should,
+    # and by MORE than the discount suggested, because $2,850 real beats $1,995 weighted.
+    covered = landed = 0.0
     covered_items = []
+    for t in f.txns:
+        if not budget.is_income(t):
+            continue
+        d = budget.eff_date(t)
+        if not d or not (lo <= d <= hi):
+            continue
+        landed += t.amount
+        covered_items.append({"note": (t.merchant_desc or "")[:40], "amount": round(t.amount, 2),
+                              "weighted": round(t.amount, 2), "confidence": 1.0,
+                              "stage": "paid", "days": None, "lands": d.isoformat()})
+    covered += landed
+
+    booked_days = 0
     for p in await prefs.pending_invoices(session):
         land = prefs.landing(p)
         if land is None or not (lo <= land <= hi):
@@ -415,7 +434,8 @@ async def to_book(session, f: F.Facts | None = None) -> dict:
     return {
         "start": lo.isoformat(), "end": hi.isoformat(), "months": round(months, 2),
         "tax": ({"due": dl["due"], "label": dl["label"]} if dl else None),
-        "covered": round(covered, 2), "booked_days": booked_days,
+        "covered": round(covered, 2), "landed": round(landed, 2),
+        "booked": round(covered - landed, 2), "booked_days": booked_days,
         "covered_items": covered_items,
         "day_rate": te["day_rate"], "tiers": tiers,
         "wrap_by": wrap_by.isoformat(),

@@ -1029,7 +1029,8 @@ async function loadPlan(){
   const te=d.to_earn, tb=d.to_book, sm=d.settlement;
 
   el('teMeta').textContent =
-    `錢會落在 ${md(tb.start)}–${md(tb.end)}　已排定 ${F0(tb.covered)}`;
+    `錢會落在 ${md(tb.start)}–${md(tb.end)}　已有 ${F0(tb.covered)}`
+    + (tb.landed>0 ? `（已入帳 ${F0(tb.landed)}＋已排定 ${F0(tb.booked)}）` : '');
   el('teBox').innerHTML = tb.tiers.map(t=>`
     <div class="tierrow ${t.gap<=0?'done':''}">
       <div class="tierhead">
@@ -1050,7 +1051,7 @@ async function loadPlan(){
     + (tb.covered_items||[]).map(c=>`<div class="ev2">
          <span class="d">${md(c.lands)}</span>
          <span class="w">${esc((c.note||'').slice(0,30))}
-           <span class="s">${esc(({booked:'已接',wrapped:'已殺青',invoiced:'已開發票'})[c.stage]||'')}${
+           <span class="s">${esc(({booked:'已接',wrapped:'已殺青',invoiced:'已開發票',paid:'✓ 已入帳'})[c.stage]||'')}${
              c.days?`・拍 ${c.days} 天`:''}　面額 ${F0(c.amount)}，只當 ${Math.round(c.confidence*100)}%</span></span>
          <span class="plus">+${F0(c.weighted)}</span></div>`).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
