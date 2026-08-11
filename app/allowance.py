@@ -196,6 +196,15 @@ def plan_income(expected: float, actual: float) -> tuple[float, str]:
     return 0.0, "最近沒有收入紀錄"
 
 
+def _scale(lens: dict, frac: float) -> dict:
+    """Give back only the share of a full period's number that the budget governs."""
+    if frac >= 1.0:
+        return lens
+    out = {**lens, "value": round(lens["value"] * frac, 2), "full_value": lens["value"]}
+    out["why"] = f"{lens['why']}，再乘上這期實際管到的 {int(frac * 100)}%"
+    return out
+
+
 def _plan(income_after_tax: float, fixed_p: float, savings_p: float) -> dict:
     val = income_after_tax - fixed_p - savings_p
     return {"name": "計畫", "value": round(val, 2),
@@ -322,10 +331,12 @@ async def compute(session, key: str | None = None) -> dict:
     # NOT inc["used"] — that blend lets a booked gig lift the allowance. See plan_income.
     income_p, income_why = plan_income(inc["expected"], inc["actual"])
     income_after_tax = income_p * (1 - tax_st["rate"])
-    fixed_p = P.split_monthly(fixed_monthly, key) * frac
-    savings_full = budget.savings_for(prefs_["savings_amount"], prefs_["savings_cadence"],
-                                      key, income_p)
-    savings_p = savings_full * frac
+    # Costs stay at FULL period size here. A partial period is handled by scaling each
+    # lens's *result* (below), not its inputs — pro-rating the costs but not the income
+    # made a part-governed period look richer than a whole one, which is backwards.
+    fixed_p = P.split_monthly(fixed_monthly, key)
+    savings_p = budget.savings_for(prefs_["savings_amount"], prefs_["savings_cadence"],
+                                   key, income_p)
 
     # the pile
     nw = await networth.compute(session)
@@ -353,11 +364,14 @@ async def compute(session, key: str | None = None) -> dict:
         savings_skipped = min(savings_p, max(0.0, savings_skipped))
         savings_p = round(savings_p - savings_skipped, 2)
 
-    lenses = [
+    # Each lens answers "what does a whole period support?", then we hand Momo only the
+    # share of it this budget actually governs. On a first day of 8/11 that's 5 days of a
+    # 15-day period, so she gets a third of the period's number — not all of it.
+    lenses = [_scale(L, frac) for L in (
         _plan(income_after_tax, fixed_p, savings_p),
         _cushion(reserve_total, floor, periods_out),
-        _trajectory(recent_med * frac, drift * frac),
-    ]
+        _trajectory(recent_med, drift),
+    )]
     binding = min(lenses, key=lambda x: x["value"])
     raw = binding["value"]
 
@@ -395,8 +409,9 @@ async def compute(session, key: str | None = None) -> dict:
         "income_actual": round(inc["actual"], 2),
         "income_after_tax": round(income_after_tax, 2),
         "tax": tax_st,
-        "fixed_monthly": fixed_monthly, "fixed_period": round(fixed_p, 2),
-        "savings_period": round(savings_p, 2),
+        "fixed_monthly": fixed_monthly,
+        "fixed_period": round(fixed_p * frac, 2), "fixed_period_full": round(fixed_p, 2),
+        "savings_period": round(savings_p * frac, 2),
         "savings_skipped": savings_skipped,
         "savings_debt": await savings_debt(session),
 
