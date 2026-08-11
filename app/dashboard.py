@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from . import (accounts as acct, allowance, budget, categories, export as EX,
                facts as F, fixed as FX, networth, period as P, prefs,
-               tax as TAX, taxonomy)
+               stability as STAB, tax as TAX, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -613,6 +613,7 @@ async def api_allowance(request: Request):
         a["sinking_rows"] = await FX.sinking_rows(s)
         a["renewals"] = await FX.renewals(s, within_days=120)
         a["tax_payments_found"] = await TAX.find_prior_payments(s)
+        a["income_by_month"] = await STAB.income_by_month(s)
         return a
 
 

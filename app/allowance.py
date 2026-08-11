@@ -28,6 +28,7 @@ from . import fixed as FX
 from . import networth
 from . import period as P
 from . import prefs
+from . import stability as STAB
 from . import tax as TAX
 from .config import now
 from .db import get_kv, set_kv
@@ -167,11 +168,28 @@ async def pay_savings_debt(session, amount: float) -> float:
 
 
 # ── the pile, and how far it is from the floor ───────────────────────
-async def emergency_target(session) -> float:
+async def emergency_target(session, survival_monthly: float | None = None) -> dict:
+    """How big the emergency fund should be, recomputed from Momo's own instability.
+
+    A hand-typed target ($10,000? $20,000?) can't answer "am I safe" because safety
+    depends on how erratic the work is. If she has explicitly pinned a number we honour
+    it; otherwise :mod:`app.stability` measures it and shows its working."""
+    pinned = await get_kv(session, EMERG_KEY + "_pinned")
+    if pinned:
+        try:
+            return {"target": float(pinned), "months": None, "pinned": True,
+                    "why": ["這是你自己指定的數字，我就照這個算。"], "components": {}}
+        except (TypeError, ValueError):
+            pass
+    if survival_monthly:
+        out = await STAB.emergency_target(session, survival_monthly)
+        out["pinned"] = False
+        return out
     try:
-        return float(await get_kv(session, EMERG_KEY) or EMERGENCY_TARGET_DEFAULT)
+        legacy = float(await get_kv(session, EMERG_KEY) or EMERGENCY_TARGET_DEFAULT)
     except (TypeError, ValueError):
-        return EMERGENCY_TARGET_DEFAULT
+        legacy = EMERGENCY_TARGET_DEFAULT
+    return {"target": legacy, "months": None, "pinned": True, "why": [], "components": {}}
 
 
 def ladder(survival_monthly: float, target: float) -> list[dict]:
@@ -361,8 +379,9 @@ async def compute(session, key: str | None = None) -> dict:
 
     # the pile
     nw = await networth.compute(session)
-    emerg_target = await emergency_target(session)
     survival_monthly = fixed_monthly + LEAN_FLEX_MONTHLY
+    emerg = await emergency_target(session, survival_monthly)
+    emerg_target = emerg["target"]
     rungs = ladder(survival_monthly, emerg_target)
 
     # Cash Momo could actually deploy: liquid, minus the card she owes, minus tax that
@@ -393,17 +412,37 @@ async def compute(session, key: str | None = None) -> dict:
         _cushion(reserve_total, floor, periods_out),
         _trajectory(recent_med, drift),
     )]
-    binding = min(lenses, key=lambda x: x["value"])
-    raw = binding["value"]
+    plan_l, cush_l, traj_l = lenses
+    plan_val, cush_val, traj_val = (L["value"] for L in lenses)
 
-    # a lean period should still be livable — but the floor can never LIFT a plan deficit
-    plan_val = lenses[0]["value"]
-    gentle = plan_val * GENTLE_FLOOR if plan_val > 0 else plan_val
-    recommended = max(raw, gentle) if raw < gentle else raw
+    # 可以花 comes from what the CASH supports. 計畫 and 軌跡 can only ever tighten it.
+    #
+    # Taking "smallest wins" literally was wrong when a lens goes negative. A negative
+    # 計畫 doesn't mean "eat nothing this fortnight" — it means income doesn't cover fixed
+    # costs, which is a fact about the month and says nothing about groceries. Rendering
+    # that diagnosis inside the box labelled 可以花 read as "starve", which is not what
+    # any of this is for. Negative lenses now report a shortfall instead of setting it.
+    capacity = max(0.0, cush_val)
+    binding = cush_l
+    for L in (plan_l, traj_l):
+        if L["value"] > 0 and L["value"] < capacity:
+            capacity, binding = L["value"], L
+
+    # a lean period should still be livable — only meaningful when the plan is positive
+    gentle = plan_val * GENTLE_FLOOR if plan_val > 0 else 0.0
+    if 0 < gentle and capacity < gentle:
+        capacity = min(gentle, max(0.0, cush_val))
+
+    raw = capacity
+    recommended = capacity
 
     # shocks Momo owes herself
     load = await shock_load(session, income_p)
-    recommended -= load["per_period"]
+    recommended = max(0.0, recommended - load["per_period"])
+
+    # what this period costs regardless of any spending decision
+    shortfall = round(min(0.0, plan_val), 2)
+    trend_warning = traj_val < 0 or traj_val < capacity
 
     spent = await _spent(session, key, from_day, hi)
     remaining = round(recommended - spent, 2)
@@ -439,6 +478,9 @@ async def compute(session, key: str | None = None) -> dict:
         "lenses": lenses,
         "binding": binding["name"],
         "binding_why": binding["why"],
+        "shortfall": shortfall,          # 這期的缺口 — happens whatever Momo does
+        "trend_warning": trend_warning,  # 趨勢 — recent burn vs where net worth is going
+        "emergency": emerg,
         "raw_allowance": round(raw, 2),
         "allowance": round(recommended, 2),
         "gentle_floor_applied": bool(raw < gentle and plan_val > 0),
@@ -482,9 +524,19 @@ def explain(a: dict) -> list[str]:
     if a["partial"]:
         out.append(f"這期我從 {a['budget_from']} 才開始算（{a['period_label']} 只管得到 "
                    f"{int(a['coverage'] * 100)}%），之前的我只記帳，沒算你頭上。")
+    out.append(f"可以花 ${a['allowance']:,.0f}"
+               + (f"（剩 {a['days_left']} 天，一天大概 ${a['per_day_left']:,.0f}）"
+                  if a.get("per_day_left") else "")
+               + f"　這是照「{a['binding']}」算的：{a['binding_why']}")
+    if a.get("shortfall"):
+        out.append(f"這期的缺口 ${abs(a['shortfall']):,.0f}：進來的錢本來就不夠付固定開銷，"
+                   "不管你吃不吃飯都會少這麼多，會從水位補。這不是叫你別花，是讓你知道這期在扣老本。")
     for L in a["lenses"]:
-        mark = "←這個最緊，聽它的" if L["name"] == a["binding"] else ""
-        out.append(f"{L['name']}：${L['value']:,.0f}　{L['why']} {mark}".rstrip())
+        mark = "←可以花是照這個算的" if L["name"] == a["binding"] else ""
+        out.append(f"　{L['name']}：${L['value']:,.0f}　{L['why']} {mark}".rstrip())
+    if a.get("trend_warning") and a["lenses"][2]["value"] < 0:
+        out.append(f"趨勢上要提醒你：最近每期花 ${a['recent_median']:,.0f}，"
+                   f"但淨值每期掉 ${abs(a['net_drift_per_period']):,.0f}，這個速度撐不久。")
     if a["gentle_floor_applied"]:
         out.append(f"不過我沒有壓到那麼低——再省也要能過日子，拉回計畫的一半 ${a['allowance']:,.0f}。")
     if a.get("savings_skipped"):
@@ -502,6 +554,11 @@ def explain(a: dict) -> list[str]:
             out.append("這期不夠，而且沒有款要進來。這不是省一點能解決的，是收入的問題。")
     if a["savings_debt"] > 0:
         out.append(f"存錢欠帳目前 ${a['savings_debt']:,.0f}，有多的先補這裡。")
+    em = a.get("emergency") or {}
+    if em.get("why") and not em.get("pinned"):
+        out.append(f"緊急預備金目標 ${em['target']:,.0f}"
+                   + (f"（約 {em['months']} 個月的最低開銷）" if em.get("months") else "")
+                   + "：" + " ".join(em["why"]))
     note = TAX.deadline_note(a["tax"])
     if note:
         out.append(note)

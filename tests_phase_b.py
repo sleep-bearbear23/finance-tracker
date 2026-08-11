@@ -26,6 +26,7 @@ from app import allowance as AL  # noqa: E402
 from app import budget, cleanup, dashboard, migrate, prefs, retag  # noqa: E402
 from app import fixed as FX  # noqa: E402
 from app import period as P  # noqa: E402
+from app import stability as STAB  # noqa: E402
 from app import tax as TAX  # noqa: E402
 from app.config import TZ, now  # noqa: E402
 from app.db import Session, engine, init_db  # noqa: E402
@@ -128,7 +129,39 @@ async def main():
         rungs = {r["name"]: r["amount"] for r in a["ladder"]}
         check("第一階 = 1 month survival", near(rungs["第一階"], surv))
         check("第三階 = 3 months survival", near(rungs["第三階"], surv * 3))
-        check("target is $10,000", near(rungs["目標"], 10000))
+        check("target is computed, not typed",
+              a["emergency"]["pinned"] is False and a["emergency"]["months"] is not None,
+              f'${a["emergency"]["target"]:,.0f} ≈ {a["emergency"]["months"]} months')
+        check("target = months × survival burn",
+              abs(rungs["目標"] - a["emergency"]["months"] * surv) < 260,
+              f'{rungs["目標"]} vs {a["emergency"]["months"]}×{surv:.0f}')
+        check("target never drops below 3 months", rungs["目標"] >= surv * 3 - 260)
+        check("the target explains itself", len(a["emergency"]["why"]) >= 1)
+        check("thin history falls back to the 3-month floor, and says so",
+              a["emergency"]["months"] >= 3.0
+              and (a["emergency"]["confidence"] != "low"
+                   or "三個月" in " ".join(a["emergency"]["why"])))
+
+        print("\n[4b] the emergency target is measured from instability")
+        SURV = 2071.34
+        steady = {f"2026-{m:02d}": 3000.0 for m in range(1, 13)}
+        r = STAB.assess(steady, SURV)
+        check("steady income → the 3-month floor", near(r["months"], 3.0, 0.05),
+              f'{r["months"]} months = ${r["target"]:,.0f}')
+        swingy = {f"2026-{m:02d}": (6000.0 if m % 2 else 200.0) for m in range(1, 13)}
+        r2 = STAB.assess(swingy, SURV)
+        check("wildly swinging income needs more", r2["months"] > r["months"],
+              f'{r2["months"]} months = ${r2["target"]:,.0f}')
+        dry = {f"2026-{m:02d}": (0.0 if m in (4, 5, 6) else 3000.0) for m in range(1, 13)}
+        r3 = STAB.assess(dry, SURV)
+        check("a three-month dry spell adds three months", r3["months"] >= 6.0,
+              f'{r3["months"]} months')
+        check("never more than 9 months",
+              STAB.assess({f"2026-{m:02d}": (20000.0 if m == 1 else 0.0)
+                           for m in range(1, 13)}, SURV)["months"] <= 9.0)
+        check("never less than 3 months", r["months"] >= 3.0)
+        check("every adjustment is itemised",
+              set(r2["components"]) == {"base", "volatility", "drought"})
 
         print("\n[5] the reserve pile is the right money")
         # liquid cash − the card she owes − tax that isn't hers. Brokerage excluded.
@@ -145,10 +178,17 @@ async def main():
             print(f"      {L['name']}  ${L['value']:>9,.2f}   {L['why']}")
         print(f"      → 綁住的是「{a['binding']}」，最後給 ${a['allowance']:,.2f}")
         check("exactly three lenses", len(a["lenses"]) == 3)
-        check("binding lens is the smallest",
-              a["binding"] == min(a["lenses"], key=lambda x: x["value"])["name"])
-        check("raw allowance == the smallest lens",
-              near(a["raw_allowance"], min(L["value"] for L in a["lenses"])))
+        check("the spendable number is never negative", a["allowance"] >= 0,
+              str(a["allowance"]))
+        check("a negative lens reports a shortfall instead of setting the number",
+              (a["shortfall"] <= 0) and
+              (a["shortfall"] < 0) == any(L["value"] < 0 for L in a["lenses"][:1]),
+              f'shortfall={a["shortfall"]}')
+        check("spendable never exceeds what the cash supports",
+              a["allowance"] <= max(0.0, a["lenses"][1]["value"]) + 0.01)
+        check("a positive plan lens still caps it",
+              a["lenses"][0]["value"] <= 0 or
+              a["allowance"] <= a["lenses"][0]["value"] + 0.01)
         check("every lens explains itself", all(L["why"] for L in a["lenses"]))
         check("plan lens nets tax out first",
               near(a["income_after_tax"], a["income_period"] * (1 - st["rate"])))
@@ -234,10 +274,14 @@ async def main():
         check("the deficit is labelled", broke["deficit"])
         check("it says whether money is coming", broke["deficit_kind"] in ("timing", "structural"),
               str(broke["deficit_kind"]))
-        check("the gentle floor cannot rescue a real deficit",
-              broke["allowance"] <= 0, str(broke["allowance"]))
+        check("the shortfall is reported as its own number",
+              broke["shortfall"] < 0, str(broke["shortfall"]))
+        check("but 可以花 stays at or above zero — a deficit is not a starvation order",
+              broke["allowance"] >= 0, str(broke["allowance"]))
         check("she explains the deficit out loud",
-              any("不夠" in line for line in AL.explain(broke)))
+              any("缺口" in line or "不夠" in line for line in AL.explain(broke)))
+        check("…and says plainly it is not an instruction to stop eating",
+              any("不是叫你別花" in line for line in AL.explain(broke)))
         await FX.save(s, FX.DEFAULTS)
 
         print("\n[11] she can say the whole thing in words")
