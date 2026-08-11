@@ -2,322 +2,405 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>財務總覽 · 陳會計</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
-    --plane:#12142a; --surface:#1d2040; --inset:rgba(0,0,0,.18);
+    --plane:#12142a; --surface:#1d2040; --inset:rgba(0,0,0,.20);
     --ink:#f2f3fa; --ink2:#a6abce; --muted:#7b81a8;
     --grid:rgba(255,255,255,.06); --gridstrong:rgba(255,255,255,.20); --border:rgba(255,255,255,.08);
-    --accent:#2ee5a9; --accent-deep:#15ad81; --good:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
+    --accent:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
     --s1:#15ad81; --s2:#5b8df5; --s3:#e2477e; --s4:#c98500; --s5:#9085e9; --s6:#d95926; --s7:#17a2b8;
-    --radius:20px;
+    --r:18px; --gap:12px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;background:var(--plane);color:var(--ink);
-    font-family:system-ui,-apple-system,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;
-    font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
-  body{background:radial-gradient(1100px 480px at 85% -120px, rgba(91,141,245,.11), transparent 60%),
-       radial-gradient(900px 420px at -10% 8%, rgba(46,229,169,.07), transparent 55%), var(--plane)}
-  .wrap{max-width:1020px;margin:0 auto;padding:20px 18px 110px}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{background:radial-gradient(1100px 480px at 85% -140px, rgba(91,141,245,.11), transparent 60%),
+       radial-gradient(900px 420px at -10% 8%, rgba(46,229,169,.07), transparent 55%), var(--plane);
+    color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","PingFang TC","Noto Sans TC",sans-serif;
+    font-size:14px;line-height:1.45;-webkit-text-size-adjust:100%}
   a{color:inherit;text-decoration:none}
 
-  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
-  .who{display:flex;align-items:center;gap:12px;min-width:0}
-  .avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#2ee5a9,#5b8df5);
-    display:grid;place-items:center;font-size:21px;flex:0 0 44px;box-shadow:0 0 20px rgba(46,229,169,.25)}
-  .who h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.2px}
-  .who .quip{font-size:12.5px;color:var(--muted);margin-top:1px}
-  .asof{font-size:11.5px;color:var(--muted);text-align:right;white-space:nowrap}
-
+  /* ── app frame: header + content + (mobile) nav, never scrolls ── */
+  .app{height:100dvh;display:flex;flex-direction:column;padding:12px 14px 12px;gap:10px}
+  .topbar{display:flex;align-items:center;gap:12px;flex:0 0 auto}
+  .avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#2ee5a9,#5b8df5);
+    display:grid;place-items:center;font-size:17px;flex:0 0 34px}
+  .brandtxt h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
+  .brandtxt .quip{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.05);border:1px solid var(--border);
-    border-radius:13px;padding:4px;margin-bottom:18px}
-  .tabs a{font-size:13.5px;color:var(--ink2);padding:8px 16px;border-radius:10px;font-weight:600;cursor:pointer}
+    border-radius:11px;padding:3px;margin-left:auto}
+  .tabs a{font-size:12.5px;color:var(--ink2);padding:6px 13px;border-radius:8px;font-weight:600;cursor:pointer;white-space:nowrap}
   .tabs a.on{background:var(--surface);color:var(--accent);box-shadow:inset 0 0 0 1px rgba(46,229,169,.3)}
-  .bottomnav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:50;
-    background:rgba(18,20,42,.93);backdrop-filter:blur(14px);border-top:1px solid var(--border);
-    padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
-  .bottomnav a{flex:1;color:var(--muted);font-size:11px;padding:6px 2px;border-radius:10px;
-    line-height:1.3;text-align:center}
-  .bottomnav a .ic{display:block;font-size:17px;margin-bottom:2px}
-  .bottomnav a.on{color:var(--accent)}
-  @media(max-width:680px){ .tabs{display:none} .bottomnav{display:flex} .asof{display:none} }
+  .asof{font-size:11px;color:var(--muted);white-space:nowrap}
 
+  .screen{flex:1;min-height:0;display:none}
+  .screen.on{display:block}
+
+  /* ── cards ── */
   .card{background:linear-gradient(180deg, rgba(255,255,255,.03), transparent 45%), var(--surface);
-    border:1px solid var(--border);border-radius:var(--radius);padding:20px;
-    box-shadow:0 12px 32px rgba(0,0,0,.28)}
-  .card h2{font-size:12px;font-weight:700;color:var(--muted);margin:0 0 14px;letter-spacing:1px;text-transform:uppercase}
-  .card h2 .more{float:right;font-weight:600;font-size:12px;color:var(--accent);cursor:pointer;letter-spacing:0}
-  .stack > * + *{margin-top:16px}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .grid-hero{display:grid;grid-template-columns:5fr 7fr;gap:16px}
-  @media(max-width:760px){.grid2,.grid-hero{grid-template-columns:1fr}}
+    border:1px solid var(--border);border-radius:var(--r);padding:13px 15px;
+    box-shadow:0 10px 26px rgba(0,0,0,.26);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .card > h2{font-size:11px;font-weight:700;color:var(--muted);margin:0 0 9px;letter-spacing:.9px;
+    text-transform:uppercase;flex:0 0 auto;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .card > h2 .more{font-weight:600;font-size:11.5px;color:var(--accent);cursor:pointer;letter-spacing:0;text-transform:none}
+  .body{flex:1;min-height:0;overflow:auto}
+  .body.noscroll{overflow:hidden}
+  .flexbody{flex:1;min-height:0;display:flex;flex-direction:column}
+  .cbox{flex:1;min-height:0;position:relative}
 
-  .ringwrap{display:flex;align-items:center;gap:22px}
-  .ring{position:relative;width:158px;height:158px;flex:0 0 158px}
+  /* ── HOME grid: 3 cols × 3 rows, fills the viewport ── */
+  #s-home > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.05fr 1.3fr .92fr;
+    grid-template-rows:minmax(0,1.02fr) minmax(0,1fr) minmax(0,1.05fr);
+    grid-template-areas:
+      "budget   nw       accounts"
+      "flows    flows    accounts"
+      "cats     recent   pending";}
+  [data-pane=budget]{grid-area:budget} [data-pane=nw]{grid-area:nw}
+  [data-pane=accounts]{grid-area:accounts} [data-pane=flows]{grid-area:flows}
+  [data-pane=cats]{grid-area:cats} [data-pane=recent]{grid-area:recent}
+  [data-pane=pending]{grid-area:pending}
+
+  /* budget ring */
+  .ringwrap{display:flex;align-items:center;gap:14px;height:100%}
+  .ring{position:relative;flex:0 0 auto;width:min(132px,34%);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
     background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0)}
-  .ring .hole{position:absolute;inset:13px;border-radius:50%;background:var(--surface);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}
-  .ring .hole .lbl{font-size:11px;color:var(--muted)}
-  .ring .hole .big{font-size:25px;font-weight:750;letter-spacing:-.8px}
-  .ring .hole .big.pos{color:var(--accent);text-shadow:0 0 18px rgba(46,229,169,.35)}
-  .ring .hole .big.neg{color:var(--bad);text-shadow:0 0 18px rgba(255,92,147,.35)}
+  .ring .hole{position:absolute;inset:11px;border-radius:50%;background:#1e2143;
+    display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .hole .lbl{font-size:10px;color:var(--muted)}
+  .ring .hole .big{font-size:22px;font-weight:750;letter-spacing:-.7px}
+  .ring .hole .big.pos{color:var(--accent)} .ring .hole .big.neg{color:var(--bad)}
   .ringside{flex:1;min-width:0}
-  .ringside .kv{display:flex;justify-content:space-between;font-size:13.5px;padding:7px 0;border-bottom:1px solid var(--grid)}
-  .ringside .kv:last-child{border-bottom:none}
-  .ringside .kv b{font-variant-numeric:tabular-nums}
-  .daysleft{font-size:11.5px;color:var(--muted);margin-top:8px}
+  .kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--grid)}
+  .kv:last-of-type{border-bottom:none}
+  .kv b{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .daysleft{font-size:10.5px;color:var(--muted);margin-top:5px}
 
-  .nw .big{font-size:36px;font-weight:800;letter-spacing:-1.2px;color:var(--accent);
-    text-shadow:0 0 26px rgba(46,229,169,.35);line-height:1.1}
-  .nw .delta{font-size:12.5px;margin-left:8px;font-weight:600}
-  .sparkbox{position:relative;height:76px;margin:10px -6px 4px}
-  .chiprow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-  .pill{font-size:12px;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.06);
-    border:1px solid var(--border);color:var(--ink2)}
+  /* net worth */
+  .nwtop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;flex:0 0 auto}
+  .nwtop .big{font-size:clamp(26px,3.1vw,34px);font-weight:800;letter-spacing:-1.1px;color:var(--accent);line-height:1.05}
+  .nwtop .delta{font-size:12px;font-weight:650}
+  .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto}
+  .pill{font-size:11px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06);
+    border:1px solid var(--border);color:var(--ink2);white-space:nowrap}
   .pill b{color:var(--ink);font-variant-numeric:tabular-nums}
   .pill.mint b{color:var(--accent)} .pill.pink b{color:var(--bad)} .pill.warnp b{color:var(--warn)}
 
-  .txrow{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--grid)}
-  .txrow:last-child{border-bottom:none}
-  .dot{width:9px;height:9px;border-radius:3px;flex:0 0 9px}
-  .txrow .m{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .txrow .m .sub{display:block;font-size:11px;color:var(--muted)}
-  .txrow .a{font-variant-numeric:tabular-nums;font-weight:650;font-size:13.5px;white-space:nowrap}
-
-  .arow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--grid);cursor:pointer}
+  /* lists */
+  .arow{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--grid);cursor:pointer}
   .arow:last-child{border-bottom:none}
   .arow:hover .an{color:var(--accent)}
-  .arow .an{flex:1;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .arow .an .sub{display:block;font-size:11px;color:var(--muted)}
-  .arow .av{font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}
-  .arow .caret{color:var(--muted);font-size:15px;flex:0 0 auto}
-
-  .row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid);font-size:14px}
+  .dot{width:8px;height:8px;border-radius:3px;flex:0 0 8px}
+  .arow .an{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arow .an .sub{display:block;font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+  .arow .av{font-variant-numeric:tabular-nums;font-weight:650;font-size:13px;white-space:nowrap}
+  .arow .caret{color:var(--muted);font-size:14px}
+  .row{display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:13px}
   .row:last-child{border-bottom:none}
-  .row .l{color:var(--ink2);display:flex;align-items:center;gap:9px;min-width:0}
+  .row .l{color:var(--ink2);display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row .r{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);white-space:nowrap}
-  .tag{font-size:11px;color:var(--muted)}
-  .chip{display:inline-block;font-size:11px;padding:2px 8px;border-radius:7px;background:rgba(255,255,255,.07);color:var(--ink2);margin-left:6px}
+  .tag{font-size:10.5px;color:var(--muted)}
+  .chip{display:inline-block;font-size:10px;padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.07);color:var(--ink2);margin-left:5px}
   .chip.warn{background:rgba(255,176,46,.15);color:var(--warn)}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid var(--grid);white-space:nowrap}
-  th{color:var(--muted);font-weight:700;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;
+  .pos{color:var(--accent)} .neg{color:var(--bad)}
+  .empty{color:var(--muted);font-size:12.5px;padding:6px 0}
+
+  /* donut */
+  .donutwrap{display:flex;align-items:center;gap:12px;height:100%;min-height:0}
+  .donutbox{position:relative;flex:0 0 auto;width:min(130px,38%);aspect-ratio:1}
+  .donutbox .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+  .donutbox .ctr b{font-size:15px} .donutbox .ctr span{font-size:9.5px;color:var(--muted)}
+  .cat-legend{flex:1;min-width:0;overflow:auto}
+  .cl{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink2);padding:3px 0}
+  .cl b{margin-left:auto;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+  th{color:var(--muted);font-weight:700;font-size:10px;letter-spacing:.5px;text-transform:uppercase;
     position:sticky;top:0;background:#22254a;z-index:1}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-  .scroll{max-height:430px;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--inset)}
-  .pos{color:var(--good)} .neg{color:var(--bad)}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .empty{color:var(--muted);font-size:13px;padding:8px 0}
-  .note{font-size:12px;color:var(--muted);margin-top:10px}
-  .err{color:var(--bad);font-size:13px}
 
-  .fbtn{border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--ink2);
-    border-radius:999px;padding:6px 13px;font-size:12.5px;cursor:pointer;font-family:inherit}
-  .fbtn.on{background:rgba(46,229,169,.14);border-color:rgba(46,229,169,.5);color:var(--accent);font-weight:650}
-  .fselect,.finput{padding:9px 12px;border:1px solid var(--border);border-radius:11px;font:inherit;
-    font-size:13.5px;background:#242850;color:var(--ink);color-scheme:dark}
+  /* controls */
+  .fselect,.finput{padding:7px 10px;border:1px solid var(--border);border-radius:9px;font:inherit;
+    font-size:12.5px;background:#242850;color:var(--ink);color-scheme:dark}
   .finput::placeholder{color:var(--muted)}
-  .pager{border:1px dashed var(--border);border-radius:12px;background:none;color:var(--muted);
-    font-size:13px;cursor:pointer;font-family:inherit;padding:10px 14px}
-
-  .chartbox{position:relative;height:230px}
-  .chartbox.sm{height:190px}
-  .donutwrap{display:flex;align-items:center;gap:18px}
-  .donutbox{position:relative;width:170px;height:170px;flex:0 0 170px}
-  .donutbox .ctr{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
-  .donutbox .ctr b{font-size:17px} .donutbox .ctr span{font-size:10.5px;color:var(--muted)}
-  .cat-legend{flex:1;min-width:0}
-  .cat-legend .cl{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2);padding:4px 0}
-  .cat-legend .cl b{margin-left:auto;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
-  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:12px;font-size:12px;color:var(--ink2)}
-  .legend span{display:inline-flex;align-items:center;gap:6px}
-  .legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
-  .formula{font-size:14px;line-height:2.1;color:var(--ink2)}
-  .formula b{color:var(--ink);font-variant-numeric:tabular-nums}
-  .formula .op{color:var(--muted);margin:0 4px}
-  .msg{padding:9px 0;border-bottom:1px solid var(--grid);font-size:13px}
-  .msg .who2{font-size:11px;color:var(--muted);margin-bottom:2px}
-  .msg.assistant .who2{color:var(--accent)}
-  .stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
-  @media(max-width:680px){.stats3{grid-template-columns:1fr 1fr}}
-  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px 17px}
-  .stat .k{font-size:11.5px;color:var(--muted);margin-bottom:6px}
-  .stat .v{font-size:22px;font-weight:750;letter-spacing:-.5px}
-  .stat .sub{font-size:11.5px;color:var(--muted);margin-top:3px}
-
-  /* account page */
-  .back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;
-    cursor:pointer;margin-bottom:12px}
+  .pager{border:1px dashed var(--border);border-radius:9px;background:none;color:var(--muted);
+    font-size:12px;cursor:pointer;font-family:inherit;padding:6px 11px}
+  .back{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:12.5px;cursor:pointer}
   .back:hover{color:var(--accent)}
-  .acct-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
-  .acct-head .nm{font-size:20px;font-weight:750;letter-spacing:-.3px}
-  .acct-head .bal{font-size:30px;font-weight:800;letter-spacing:-1px}
-  .acct-head .bal.owe{color:var(--bad)}
-  .acct-head .bal.cash{color:var(--accent)}
-  .badge{font-size:11px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.07);
+
+  /* ── ACCOUNT screen ── */
+  #s-account > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.15fr 1.15fr .9fr;
+    grid-template-rows:auto minmax(0,1fr) minmax(0,1.25fr);
+    grid-template-areas:
+      "ahead  ahead   ahead"
+      "acurve aflow   acats"
+      "aled   aled    aled";}
+  [data-pane=ahead]{grid-area:ahead} [data-pane=acurve]{grid-area:acurve}
+  [data-pane=aflow]{grid-area:aflow} [data-pane=acats]{grid-area:acats}
+  [data-pane=aled]{grid-area:aled}
+  .ahead-in{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+  .ahead-in .nm{font-size:17px;font-weight:750}
+  .ahead-in .bal{font-size:24px;font-weight:800;letter-spacing:-.8px}
+  .badge{font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.07);
     color:var(--ink2);border:1px solid var(--border)}
-  .cover{margin-top:14px;padding:10px 13px;border-radius:12px;background:var(--inset);
-    border:1px solid var(--border);font-size:12.5px;color:var(--ink2)}
+  .cover{margin-top:9px;padding:7px 11px;border-radius:10px;background:var(--inset);
+    border:1px solid var(--border);font-size:11.5px;color:var(--ink2)}
   .cover.warn{border-color:rgba(255,176,46,.35);background:rgba(255,176,46,.08);color:var(--warn)}
-  .hidden{display:none}
+
+  /* ── INCOME screen ── */
+  #s-income > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1fr 1fr 1fr;grid-template-rows:auto minmax(0,1fr);
+    grid-template-areas:"istat istat istat" "irecv irecv iexp";}
+  [data-pane=istat]{grid-area:istat;background:none;border:none;box-shadow:none;padding:0;overflow:visible}
+  [data-pane=irecv]{grid-area:irecv} [data-pane=iexp]{grid-area:iexp}
+  .stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap)}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:11px 14px}
+  .stat .k{font-size:11px;color:var(--muted);margin-bottom:4px}
+  .stat .v{font-size:20px;font-weight:750;letter-spacing:-.5px}
+  .stat .sub{font-size:11px;color:var(--muted);margin-top:2px}
+
+  /* ── BRAIN screen ── */
+  #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.4fr 1fr;grid-template-rows:minmax(0,1.1fr) minmax(0,1fr);
+    grid-template-areas:"bmath bnw" "bmem bchat";}
+  [data-pane=bmath]{grid-area:bmath} [data-pane=bnw]{grid-area:bnw}
+  [data-pane=bmem]{grid-area:bmem} [data-pane=bchat]{grid-area:bchat}
+  .formula{font-size:13px;line-height:1.95;color:var(--ink2)}
+  .formula b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .formula .op{color:var(--muted);margin:0 3px}
+  .note{font-size:11px;color:var(--muted);margin-top:8px}
+  .msg{padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+  .msg .who2{font-size:10.5px;color:var(--muted);margin-bottom:1px}
+  .msg.assistant .who2{color:var(--accent)}
+  .err{color:var(--bad);font-size:12.5px}
+
+  /* ── mobile: still no page scroll — a compact hero + one switchable pane ── */
+  .segbar{display:none;gap:6px;overflow-x:auto;flex:0 0 auto;padding-bottom:2px;scrollbar-width:none}
+  .segbar::-webkit-scrollbar{display:none}
+  .segbar button{border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--ink2);
+    border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .segbar button.on{background:rgba(46,229,169,.14);border-color:rgba(46,229,169,.5);color:var(--accent);font-weight:650}
+  .bottomnav{display:none;flex:0 0 auto;gap:4px;border-top:1px solid var(--border);padding-top:8px}
+  .bottomnav a{flex:1;color:var(--muted);font-size:10.5px;padding:4px 2px;border-radius:9px;text-align:center;line-height:1.25}
+  .bottomnav a .ic{display:block;font-size:16px;margin-bottom:1px}
+  .bottomnav a.on{color:var(--accent)}
+
+  @media(max-width:900px){
+    #s-home > .grid{grid-template-columns:1fr 1fr;
+      grid-template-rows:auto auto minmax(0,1fr);
+      grid-template-areas:"budget nw" "flows flows" "accounts recent";}
+    [data-pane=cats],[data-pane=pending]{display:none}
+    #s-account > .grid{grid-template-columns:1fr 1fr;
+      grid-template-rows:auto minmax(0,.9fr) minmax(0,1.2fr);
+      grid-template-areas:"ahead ahead" "acurve aflow" "aled aled";}
+    [data-pane=acats]{display:none}
+    #s-brain > .grid{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+      grid-template-areas:"bmath" "bmem";}
+    [data-pane=bnw],[data-pane=bchat]{display:none}
+  }
+  @media(max-width:680px){
+    .app{padding:10px 11px 8px;gap:8px}
+    .tabs{display:none} .asof{display:none} .brandtxt .quip{display:none}
+    .bottomnav{display:flex}
+    .segbar{display:flex}
+    .ring{width:104px}
+    .nwtop .big{font-size:26px}
+    [data-pane=nw] .sparkwrap{display:none}
+    .stats3{grid-template-columns:repeat(3,1fr);gap:7px}
+    .stat{padding:8px 9px} .stat .v{font-size:16px} .stat .k{font-size:10px} .stat .sub{display:none}
+
+    /* one hero + exactly one switchable pane; only that pane scrolls.
+       NOTE: hide rules are kept at LOWER specificity than the sel-* show rules. */
+    #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid{
+      display:flex;flex-direction:column;gap:8px}
+    #s-home > .grid > [data-pane],
+    #s-account > .grid > [data-pane],
+    #s-income > .grid > [data-pane],
+    #s-brain > .grid > [data-pane]{display:none}
+
+    /* pinned heroes */
+    #s-home > .grid > [data-pane=budget],
+    #s-home > .grid > [data-pane=nw],
+    #s-account > .grid > [data-pane=ahead],
+    #s-income > .grid > [data-pane=istat]{display:flex;flex:0 0 auto}
+
+    /* the selected pane fills what's left */
+    #s-home > .grid.sel-accounts > [data-pane=accounts],
+    #s-home > .grid.sel-recent   > [data-pane=recent],
+    #s-home > .grid.sel-flows    > [data-pane=flows],
+    #s-home > .grid.sel-cats     > [data-pane=cats],
+    #s-home > .grid.sel-pending  > [data-pane=pending],
+    #s-account > .grid.sel-aled   > [data-pane=aled],
+    #s-account > .grid.sel-acurve > [data-pane=acurve],
+    #s-account > .grid.sel-aflow  > [data-pane=aflow],
+    #s-account > .grid.sel-acats  > [data-pane=acats],
+    #s-income > .grid.sel-irecv > [data-pane=irecv],
+    #s-income > .grid.sel-iexp  > [data-pane=iexp],
+    #s-brain > .grid.sel-bmath > [data-pane=bmath],
+    #s-brain > .grid.sel-bnw   > [data-pane=bnw],
+    #s-brain > .grid.sel-bmem  > [data-pane=bmem],
+    #s-brain > .grid.sel-bchat > [data-pane=bchat]{display:flex;flex:1 1 auto;min-height:0}
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="who">
-      <div class="avatar">👩🏻‍💼</div>
-      <div>
-        <h1 id="pageTitle">默默，阿姨看著呢</h1>
-        <div class="quip" id="quip"></div>
-      </div>
+<div class="app">
+  <div class="topbar">
+    <div class="avatar">👩🏻‍💼</div>
+    <div class="brandtxt" style="min-width:0">
+      <h1 id="pageTitle">默默，阿姨看著呢</h1>
+      <div class="quip" id="quip"></div>
+    </div>
+    <div class="tabs">
+      <a id="tab-home" href="#/">總覽</a>
+      <a id="tab-income" href="#/income">收入</a>
+      <a id="tab-brain" href="#/brain">訓練輪</a>
     </div>
     <div class="asof" id="asof">載入中…</div>
-  </header>
-
-  <div class="tabs">
-    <a id="tab-home" href="#/">總覽</a>
-    <a id="tab-income" href="#/income">收入</a>
-    <a id="tab-brain" href="#/brain">訓練輪</a>
   </div>
 
+  <div class="segbar" id="segbar"></div>
+
   <!-- ───────── HOME ───────── -->
-  <section id="v-home" class="stack">
-    <div class="grid-hero">
-      <div class="card">
+  <div class="screen on" id="s-home">
+    <div class="grid sel-accounts" id="homeGrid">
+      <section class="card" data-pane="budget">
         <h2>這期還能花</h2>
-        <div class="ringwrap">
-          <div class="ring" id="budgetRing">
-            <div class="track"></div>
-            <div class="hole"><span class="lbl">剩下</span><span class="big pos" id="ringBig">—</span><span class="lbl" id="ringSub"></span></div>
+        <div class="flexbody">
+          <div class="ringwrap">
+            <div class="ring" id="budgetRing"><div class="track"></div>
+              <div class="hole"><span class="lbl">剩下</span><span class="big pos" id="ringBig">—</span><span class="lbl" id="ringSub"></span></div>
+            </div>
+            <div class="ringside" id="budgetSide"><div class="empty">還沒設定預算。</div></div>
           </div>
-          <div class="ringside" id="budgetSide"><div class="empty">還沒設定預算。</div></div>
         </div>
-      </div>
-      <div class="card nw">
+      </section>
+
+      <section class="card" data-pane="nw">
         <h2>淨資產</h2>
-        <div><span class="big" id="nwBig">—</span><span class="delta" id="nwDelta"></span></div>
-        <div class="sparkbox"><canvas id="sparkChart"></canvas></div>
-        <div class="chiprow" id="nwChips"></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>帳戶 <span class="more" id="acctTotals"></span></h2>
-      <div id="acctBox"><div class="empty">載入中…</div></div>
-      <div class="note">點任何一個帳戶看它的餘額走勢、分類和完整紀錄。</div>
-    </div>
-
-    <div class="grid2">
-      <div class="card">
-        <h2>最近的帳</h2>
-        <div id="recentBox"><div class="empty">載入中…</div></div>
-      </div>
-      <div class="card">
-        <h2>近 90 天花在哪</h2>
-        <div class="donutwrap">
-          <div class="donutbox"><canvas id="catChart"></canvas>
-            <div class="ctr"><b id="catTotal"></b><span>90 天支出</span></div></div>
-          <div class="cat-legend" id="catLegend"></div>
+        <div class="flexbody">
+          <div class="nwtop"><span class="big" id="nwBig">—</span><span class="delta" id="nwDelta"></span></div>
+          <div class="cbox sparkwrap" style="margin:6px -4px 0"><canvas id="sparkChart"></canvas></div>
+          <div class="chiprow" id="nwChips"></div>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <div class="card">
-      <h2>每半月 收入 vs 支出</h2>
-      <div class="chartbox"><canvas id="flowChart"></canvas></div>
-      <div class="legend">
-        <span><i style="background:var(--s1)"></i>收入</span>
-        <span><i style="background:var(--s2)"></i>支出</span>
-        <span style="color:var(--muted)">每個月分成上半（1–15）／下半（16–月底），粗線是月份分界</span>
-      </div>
-    </div>
+      <section class="card" data-pane="accounts">
+        <h2>帳戶 <span class="more" id="acctTotals" style="cursor:default"></span></h2>
+        <div class="body" id="acctBox"><div class="empty">載入中…</div></div>
+      </section>
 
-    <div class="card">
-      <h2>待收款 <span class="more" onclick="go('#/income')">收入紀錄 →</span></h2>
-      <div id="pendingBox"><div class="empty">目前沒有待收款。</div></div>
+      <section class="card" data-pane="flows">
+        <h2>每半月 收入 vs 支出 <span class="more" style="cursor:default;color:var(--muted)">粗線＝月份分界</span></h2>
+        <div class="flexbody"><div class="cbox"><canvas id="flowChart"></canvas></div></div>
+      </section>
+
+      <section class="card" data-pane="cats">
+        <h2>近 90 天花在哪</h2>
+        <div class="flexbody">
+          <div class="donutwrap">
+            <div class="donutbox"><canvas id="catChart"></canvas>
+              <div class="ctr"><b id="catTotal"></b><span>90天</span></div></div>
+            <div class="cat-legend" id="catLegend"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" data-pane="recent">
+        <h2>最近的帳</h2>
+        <div class="body" id="recentBox"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="pending">
+        <h2>待收款 <span class="more" onclick="go('#/income')">收入 →</span></h2>
+        <div class="body" id="pendingBox"><div class="empty">目前沒有待收款。</div></div>
+      </section>
     </div>
-  </section>
+  </div>
 
   <!-- ───────── ACCOUNT ───────── -->
-  <section id="v-account" class="hidden stack">
-    <div class="back" onclick="go('#/')">← 回總覽</div>
-    <div class="card">
-      <div class="acct-head">
-        <div>
-          <div class="nm" id="aName">—</div>
-          <div id="aMeta" style="margin-top:5px"></div>
+  <div class="screen" id="s-account">
+    <div class="grid sel-aled" id="acctGrid">
+      <section class="card" data-pane="ahead">
+        <div class="ahead-in">
+          <div style="min-width:0">
+            <div class="back" onclick="go('#/')">← 回總覽</div>
+            <div class="nm" id="aName">—</div>
+            <div id="aMeta" style="margin-top:4px"></div>
+          </div>
+          <div style="text-align:right">
+            <div class="bal" id="aBal">—</div>
+            <div class="tag" id="aBalNote"></div>
+          </div>
         </div>
-        <div style="text-align:right">
-          <div class="bal" id="aBal">—</div>
-          <div class="tag" id="aBalNote"></div>
-        </div>
-      </div>
-      <div class="cover" id="aCover"></div>
-    </div>
+        <div class="cover" id="aCover"></div>
+      </section>
 
-    <div class="grid2">
-      <div class="card">
+      <section class="card" data-pane="acurve">
         <h2 id="aCurveTitle">餘額走勢</h2>
-        <div class="chartbox sm"><canvas id="acctCurve"></canvas></div>
-      </div>
-      <div class="card">
+        <div class="flexbody"><div class="cbox"><canvas id="acctCurve"></canvas></div></div>
+      </section>
+
+      <section class="card" data-pane="aflow">
         <h2>每半月 進 / 出</h2>
-        <div class="chartbox sm"><canvas id="acctFlow"></canvas></div>
-      </div>
-    </div>
+        <div class="flexbody"><div class="cbox"><canvas id="acctFlow"></canvas></div></div>
+      </section>
 
-    <div class="card">
-      <h2>這個帳戶近 90 天的分類</h2>
-      <div id="aCats"></div>
-    </div>
+      <section class="card" data-pane="acats">
+        <h2>近 90 天分類</h2>
+        <div class="body" id="aCats"></div>
+      </section>
 
-    <div class="card">
-      <h2>完整紀錄</h2>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-        <select id="aCat" class="fselect" onchange="aOffset=0;loadAccount()"></select>
-        <input id="aQ" class="finput" placeholder="搜商家/備註…" style="flex:1;min-width:140px" onchange="aOffset=0;loadAccount()">
-      </div>
-      <div id="aTotals" class="note" style="margin:0 0 8px"></div>
-      <div class="scroll" style="max-height:520px" id="aTable"></div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="pager" id="aPrev" onclick="aPage(-1)">← 前 60 筆</button>
-        <button class="pager" id="aNext" onclick="aPage(1)">後 60 筆 →</button>
-      </div>
+      <section class="card" data-pane="aled">
+        <h2>完整紀錄 <span class="more" id="aTotals" style="cursor:default;color:var(--muted)"></span></h2>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:9px;flex:0 0 auto">
+          <select id="aCat" class="fselect" onchange="aOffset=0;loadAccount()"></select>
+          <input id="aQ" class="finput" placeholder="搜商家/備註…" style="flex:1;min-width:120px" onchange="aOffset=0;loadAccount()">
+          <button class="pager" id="aPrev" onclick="aPage(-1)">←</button>
+          <button class="pager" id="aNext" onclick="aPage(1)">→</button>
+        </div>
+        <div class="body" id="aTable"></div>
+      </section>
     </div>
-  </section>
+  </div>
 
   <!-- ───────── INCOME ───────── -->
-  <section id="v-income" class="hidden stack">
-    <div class="stats3" id="incStats"></div>
-    <div class="card">
-      <h2>今年收入紀錄（已入帳）</h2>
-      <div class="scroll" id="incReceived" style="max-height:460px"></div>
+  <div class="screen" id="s-income">
+    <div class="grid sel-irecv" id="incGrid">
+      <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
+      <section class="card" data-pane="irecv">
+        <h2>今年收入紀錄（已入帳）</h2>
+        <div class="body" id="incReceived"></div>
+      </section>
+      <section class="card" data-pane="iexp">
+        <h2>預期收入 · 待收款</h2>
+        <div class="body" id="incExpected"></div>
+      </section>
     </div>
-    <div class="card">
-      <h2>預期收入 · 待收款</h2>
-      <div id="incExpected"></div>
-      <div class="note">接到新案子跟阿姨講一聲（例：「下個月接了一支 MV 大概 $2000」）就會自動補進來；入帳了說「XX 入帳了」她就劃掉。</div>
-    </div>
-  </section>
+  </div>
 
   <!-- ───────── BRAIN ───────── -->
-  <section id="v-brain" class="hidden stack">
-    <div class="card"><h2>她怎麼算「這期能花多少」</h2><div id="budgetMath"><div class="empty">還沒有預算資料。</div></div></div>
-    <div class="card"><h2>她怎麼算「淨資產」</h2><div id="nwMath"></div></div>
-    <div class="card"><h2>她記住的設定</h2><div id="configBox"></div></div>
-    <div class="card"><h2>她學到的商家 / 收入來源</h2><div class="scroll" id="memBox"></div></div>
-    <div class="card"><h2>對話紀錄</h2><div class="scroll" id="chatBox" style="max-height:340px;padding:0 14px"></div></div>
-  </section>
-</div>
+  <div class="screen" id="s-brain">
+    <div class="grid sel-bmath" id="brainGrid">
+      <section class="card" data-pane="bmath"><h2>她怎麼算「這期能花多少」</h2><div class="body" id="budgetMath"></div></section>
+      <section class="card" data-pane="bnw"><h2>淨資產 & 設定</h2><div class="body" id="nwMath"></div></section>
+      <section class="card" data-pane="bmem"><h2>她學到的商家</h2><div class="body" id="memBox"></div></section>
+      <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
+    </div>
+  </div>
 
-<div class="bottomnav">
-  <a id="bn-home" href="#/"><span class="ic">◎</span>總覽</a>
-  <a id="bn-income" href="#/income"><span class="ic">↓</span>收入</a>
-  <a id="bn-brain" href="#/brain"><span class="ic">✳</span>訓練輪</a>
+  <div class="bottomnav">
+    <a id="bn-home" href="#/"><span class="ic">◎</span>總覽</a>
+    <a id="bn-income" href="#/income"><span class="ic">↓</span>收入</a>
+    <a id="bn-brain" href="#/brain"><span class="ic">✳</span>訓練輪</a>
+  </div>
 </div>
 
 <script>
@@ -329,311 +412,296 @@ const catColor = c => CATCOLOR[c] || (CATCOLOR[c] = CATCOLORS[(_ci++) % CATCOLOR
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function getJSON(p){ const r = await fetch(p,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
+async function getJSON(p){ const r=await fetch(p,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
-const CHARTS = {};
-function chart(id, cfg){ if(CHARTS[id]) CHARTS[id].destroy(); CHARTS[id] = new Chart(el(id), cfg); return CHARTS[id]; }
+const CHARTS={};
+function chart(id,cfg){ if(CHARTS[id]) CHARTS[id].destroy(); CHARTS[id]=new Chart(el(id),cfg); return CHARTS[id]; }
+function resizeCharts(){ for(const k in CHARTS){ try{ CHARTS[k].resize(); }catch(e){} } }
+addEventListener('resize', ()=>{ clearTimeout(window._rz); window._rz=setTimeout(resizeCharts,120); });
 
-const QUIPS = ["錢不會自己長腳，是你花掉的。","看一下就好，毋通亂花。","有在存錢的人最水。","賺是本事，留得住才是功夫。"];
+const QUIPS=["錢不會自己長腳，是你花掉的。","看一下就好，毋通亂花。","有在存錢的人最水。","賺是本事，留得住才是功夫。"];
 el('quip').textContent = QUIPS[Math.floor(Math.random()*QUIPS.length)];
 
-Chart.defaults.font.family = 'system-ui,-apple-system,"PingFang TC",sans-serif';
-Chart.defaults.color = css('--muted');
-Chart.defaults.plugins.legend.display = false;
+Chart.defaults.font.family='system-ui,-apple-system,"PingFang TC",sans-serif';
+Chart.defaults.color=css('--muted');
+Chart.defaults.plugins.legend.display=false;
+Chart.defaults.maintainAspectRatio=false;
 
-/* half-month axis: heavier gridline + brighter label where a new month starts */
-function halfMonthScales(points, yFmt){
+function halfMonthScales(points,yFmt){
   return {
-    x:{ grid:{ color: c => points[c.index] && points[c.index].month_start ? css('--gridstrong') : 'transparent',
-               lineWidth: c => points[c.index] && points[c.index].month_start ? 1.5 : 0, drawTicks:false },
+    x:{ grid:{ color:c=>points[c.index]&&points[c.index].month_start?css('--gridstrong'):'transparent',
+               lineWidth:c=>points[c.index]&&points[c.index].month_start?1.5:0, drawTicks:false },
         border:{display:false},
-        ticks:{ color: c => points[c.index] && points[c.index].month_start ? css('--ink2') : css('--muted'),
-                font: c => ({weight: points[c.index] && points[c.index].month_start ? '700':'400', size:11}) } },
-    y:{ grid:{color:css('--grid')}, border:{display:false}, ticks:{callback:yFmt||(v=>F0(v))} }
+        ticks:{ autoSkip:false, maxRotation:0, font:c=>({size:10,
+                  weight:points[c.index]&&points[c.index].month_start?'700':'400'}),
+                color:c=>points[c.index]&&points[c.index].month_start?css('--ink2'):css('--muted') } },
+    y:{ grid:{color:css('--grid')}, border:{display:false},
+        ticks:{font:{size:10},maxTicksLimit:5,callback:yFmt||(v=>F0(v))} }
   };
 }
 
+/* ── mobile pane switcher ── */
+const SEGS = {
+  home:   [['accounts','帳戶'],['recent','最近的帳'],['flows','半月收支'],['cats','花在哪'],['pending','待收款']],
+  account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
+  income: [['irecv','已入帳'],['iexp','待收款']],
+  brain:  [['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
+};
+const GRID = {home:'homeGrid', account:'acctGrid', income:'incGrid', brain:'brainGrid'};
+function selectPane(view,pane){
+  const g = el(GRID[view]); if(!g) return;
+  g.className = g.className.replace(/\bsel-\S+/g,'').trim() + ' sel-' + pane;
+  [...el('segbar').children].forEach(b=>b.classList.toggle('on', b.dataset.pane===pane));
+  setTimeout(resizeCharts,60);
+}
+function buildSeg(view){
+  const bar = el('segbar'); const segs = SEGS[view]||[];
+  bar.innerHTML = segs.map(([p,label])=>`<button data-pane="${p}">${label}</button>`).join('');
+  [...bar.children].forEach(b=>b.onclick=()=>selectPane(view,b.dataset.pane));
+  if(segs.length) selectPane(view,segs[0][0]);
+}
+
 /* ── routing ── */
-function go(hash){ location.hash = hash; }
-const VIEWS = ['home','account','income','brain'];
+function go(h){ location.hash=h; }
+const VIEWS=['home','account','income','brain'];
 function setNav(name){
   for(const v of ['home','income','brain']){
-    const t = el('tab-'+v), b = el('bn-'+v);
-    const on = (v===name) || (name==='account' && v==='home');
-    if(t) t.classList.toggle('on', on);
-    if(b) b.classList.toggle('on', on);
+    const on = (v===name)||(name==='account'&&v==='home');
+    const t=el('tab-'+v), b=el('bn-'+v);
+    if(t) t.classList.toggle('on',on);
+    if(b) b.classList.toggle('on',on);
   }
 }
 async function route(){
-  const h = location.hash || '#/';
-  const m = h.match(/^#\/a\/(.+)$/);
-  let view = 'home';
-  if(m) view = 'account';
-  else if(h.startsWith('#/income')) view = 'income';
-  else if(h.startsWith('#/brain')) view = 'brain';
-  for(const v of VIEWS) el('v-'+v).classList.toggle('hidden', v!==view);
-  setNav(view);
-  window.scrollTo({top:0});
+  const h=location.hash||'#/';
+  const m=h.match(/^#\/a\/(.+)$/);
+  let view='home';
+  if(m) view='account';
+  else if(h.startsWith('#/income')) view='income';
+  else if(h.startsWith('#/brain')) view='brain';
+  for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
+  setNav(view); buildSeg(view);
   try{
-    if(view==='account'){ curAccount = decodeURIComponent(m[1]); aOffset=0; aInit=false; await loadAccount(); }
+    if(view==='account'){ curAccount=decodeURIComponent(m[1]); aOffset=0; aInit=false; await loadAccount(); }
     else if(view==='income'){ el('pageTitle').textContent='收入紀錄'; await loadIncome(); }
-    else if(view==='brain'){ el('pageTitle').textContent='訓練輪 · 她怎麼算的'; await loadBrain(); }
+    else if(view==='brain'){ el('pageTitle').textContent='訓練輪'; await loadBrain(); }
     else { el('pageTitle').textContent='默默，阿姨看著呢'; await loadHome(); }
-  }catch(e){ el('asof').innerHTML = '<span class="err">載入失敗（'+e.message+'）</span>'; }
+    resizeCharts();
+  }catch(e){ el('asof').innerHTML='<span class="err">載入失敗（'+e.message+'）</span>'; }
 }
-window.addEventListener('hashchange', route);
+addEventListener('hashchange', route);
 
 /* ── HOME ── */
-let homeLoaded = false;
+let homeLoaded=false;
 async function loadHome(){
-  if(homeLoaded) return; homeLoaded = true;
-  const [o, t, acc, rec] = await Promise.all([
-    getJSON('/api/overview'), getJSON('/api/trends'),
-    getJSON('/api/accounts'), getJSON('/api/ledger?limit=8')
-  ]);
-  el('asof').textContent = '更新於 ' + new Date(o.as_of).toLocaleString('zh-TW',{hour12:false});
+  if(homeLoaded) return; homeLoaded=true;
+  const [o,t,acc,rec] = await Promise.all([
+    getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts'), getJSON('/api/ledger?limit=25')]);
+  el('asof').textContent='更新於 '+new Date(o.as_of).toLocaleString('zh-TW',{hour12:false});
 
-  // budget ring
   if(o.budget){
     const b=o.budget, over=b.remaining<0;
-    const pctLeft = b.allowance>0 ? Math.max(0,Math.min(100,100*b.remaining/b.allowance)) : 0;
-    const ring = el('budgetRing');
-    ring.style.setProperty('--pct', over?100:pctLeft);
-    ring.style.setProperty('--rc', over?'#ff5c93':'#2ee5a9');
-    el('ringBig').textContent = F0(b.remaining);
-    el('ringBig').className = 'big ' + (over?'neg':'pos');
-    el('ringSub').textContent = `可花 ${F0(b.allowance)}`;
-    el('budgetSide').innerHTML =
+    const pctLeft=b.allowance>0?Math.max(0,Math.min(100,100*b.remaining/b.allowance)):0;
+    const r=el('budgetRing');
+    r.style.setProperty('--pct', over?100:pctLeft);
+    r.style.setProperty('--rc', over?'#ff5c93':'#2ee5a9');
+    el('ringBig').textContent=F0(b.remaining);
+    el('ringBig').className='big '+(over?'neg':'pos');
+    el('ringSub').textContent=`可花 ${F0(b.allowance)}`;
+    el('budgetSide').innerHTML=
       `<div class="kv"><span>已經花了</span><b>${F(b.spent)}</b></div>
        <div class="kv"><span>這期額度</span><b>${F0(b.allowance)}</b></div>
-       <div class="kv"><span>平均每天還能花</span><b>${b.per_day_left!=null?F0(b.per_day_left):'—'}</b></div>
-       <div class="daysleft">${b.period_label||''}　${b.period_start} ~ ${b.period_end} · 還有 ${b.days_left} 天</div>`;
+       <div class="kv"><span>每天還能花</span><b>${b.per_day_left!=null?F0(b.per_day_left):'—'}</b></div>
+       <div class="daysleft">${b.period_label||''}　${b.period_start} ~ ${b.period_end} · 剩 ${b.days_left} 天</div>`;
   }
 
-  // net worth
-  el('nwBig').textContent = F0(o.net_worth);
-  el('nwChips').innerHTML =
+  el('nwBig').textContent=F0(o.net_worth);
+  el('nwChips').innerHTML=
     `<span class="pill mint">現金 <b>${F0(o.assets)}</b></span>
-     <span class="pill pink">卡債 <b>${F0(o.debts)}</b></span>` +
-    (o.pending.total?`<span class="pill warnp">待收款 <b>${F0(o.pending.total)}</b></span>
-     <span class="pill">入帳後約 <b>${F0(o.pending.projected)}</b></span>`:'');
-  const ns = t.net_worth_series;
+     <span class="pill pink">卡債 <b>${F0(o.debts)}</b></span>`+
+    (o.pending.total?`<span class="pill warnp">待收 <b>${F0(o.pending.total)}</b></span>
+     <span class="pill">入帳後 <b>${F0(o.pending.projected)}</b></span>`:'');
+  const ns=t.net_worth_series;
   if(ns.length){
-    const last = ns[ns.length-1];
-    const cutoff = new Date(new Date(last.day).getTime()-30*86400000).toISOString().slice(0,10);
-    let base = ns[0]; for(const p of ns){ if(p.day<=cutoff) base=p; }
-    const d = last.net-base.net, pct = base.net?100*d/base.net:0;
-    el('nwDelta').textContent = (d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) · 30天`;
-    el('nwDelta').style.color = d>=0?'var(--good)':'var(--bad)';
+    const last=ns[ns.length-1];
+    const cut=new Date(new Date(last.day).getTime()-30*86400000).toISOString().slice(0,10);
+    let base=ns[0]; for(const p of ns){ if(p.day<=cut) base=p; }
+    const d=last.net-base.net, pct=base.net?100*d/base.net:0;
+    el('nwDelta').textContent=(d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) 30天`;
+    el('nwDelta').style.color=d>=0?'var(--accent)':'var(--bad)';
     chart('sparkChart',{type:'line',
       data:{labels:ns.map(p=>p.day),datasets:[{data:ns.map(p=>p.net),borderColor:'#2ee5a9',
         backgroundColor:'rgba(46,229,169,.10)',borderWidth:2,tension:.3,pointRadius:0,pointHoverRadius:4,fill:true}]},
-      options:{maintainAspectRatio:false,plugins:{tooltip:{intersect:false,mode:'index',callbacks:{label:c=>F(c.parsed.y)}}},
+      options:{plugins:{tooltip:{intersect:false,mode:'index',callbacks:{label:c=>F(c.parsed.y)}}},
         scales:{x:{display:false},y:{display:false}}}});
   }
 
-  // accounts — every row is a door
-  el('acctTotals').textContent = `現金 ${F0(acc.cash_total)} · 卡債 ${F0(acc.debt_total)}`;
-  el('acctTotals').style.cursor='default';
-  el('acctBox').innerHTML = acc.accounts.length ? acc.accounts.map(a=>{
-    const owe = a.kind==='credit';
-    const warn = a.coverage_note;
+  el('acctTotals').textContent=`現金 ${F0(acc.cash_total)} · 卡債 ${F0(acc.debt_total)}`;
+  el('acctBox').innerHTML= acc.accounts.length ? acc.accounts.map(a=>{
+    const owe=a.kind==='credit', warn=a.coverage_note;
     return `<div class="arow" onclick="go('#/a/${encodeURIComponent(a.id)}')">
       <i class="dot" style="background:${owe?'var(--s3)':'var(--s1)'}"></i>
-      <span class="an">${esc(a.name)}
-        <span class="sub">${esc(a.balance_src)} · ${a.n_txns} 筆紀錄${warn?` · <span style="color:var(--warn)">${esc(warn)}</span>`:''}</span></span>
-      <span class="av ${owe?'neg':''}">${owe?'-':''}${F(a.balance||0)}</span>
-      <span class="caret">›</span></div>`;
+      <span class="an">${esc(a.name)}<span class="sub">${esc(a.balance_src)} · ${a.n_txns} 筆${warn?` · <span style="color:var(--warn)">${esc(warn)}</span>`:''}</span></span>
+      <span class="av ${owe?'neg':''}">${owe?'-':''}${F(a.balance||0)}</span><span class="caret">›</span></div>`;
   }).join('') : '<div class="empty">還沒有帳戶資料。</div>';
 
-  // recent
-  el('recentBox').innerHTML = rec.rows.length ? rec.rows.map(t=>`
-    <div class="txrow"><i class="dot" style="background:${t.category==='未分類'?'rgba(255,255,255,.25)':catColor(t.category)}"></i>
-      <span class="m">${esc(t.merchant.slice(0,32))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.category)} · ${esc(t.account)}</span></span>
-      <span class="a ${t.amount<0?'':'pos'}">${F(t.amount)}</span></div>`).join('')
+  el('recentBox').innerHTML= rec.rows.length ? rec.rows.map(t=>`
+    <div class="arow" style="cursor:default"><i class="dot" style="background:${t.category==='未分類'?'rgba(255,255,255,.25)':catColor(t.category)}"></i>
+      <span class="an">${esc(t.merchant.slice(0,30))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.category)} · ${esc(t.account)}</span></span>
+      <span class="av ${t.amount<0?'':'pos'}">${F(t.amount)}</span></div>`).join('')
     : '<div class="empty">還沒有交易。</div>';
 
-  // category donut
-  const cs = t.category_spend.slice(0,5);
-  const other = t.category_spend.slice(5).reduce((s,x)=>s+x.amount,0);
+  const cs=t.category_spend.slice(0,5);
+  const other=t.category_spend.slice(5).reduce((s,x)=>s+x.amount,0);
   if(other>0) cs.push({category:'其他',amount:other});
-  el('catTotal').textContent = F0(t.category_spend.reduce((s,x)=>s+x.amount,0));
+  el('catTotal').textContent=F0(t.category_spend.reduce((s,x)=>s+x.amount,0));
   if(cs.length){
     chart('catChart',{type:'doughnut',
       data:{labels:cs.map(c=>c.category),datasets:[{data:cs.map(c=>c.amount),
-        backgroundColor:cs.map(c=>catColor(c.category)),borderColor:css('--surface'),borderWidth:3,borderRadius:3}]},
-      options:{maintainAspectRatio:false,cutout:'72%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
-    el('catLegend').innerHTML = cs.map(c=>
+        backgroundColor:cs.map(c=>catColor(c.category)),borderColor:'#1e2143',borderWidth:3,borderRadius:3}]},
+      options:{cutout:'70%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
+    el('catLegend').innerHTML=cs.map(c=>
       `<div class="cl"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(c.category)}<b>${F0(c.amount)}</b></div>`).join('');
-  } else el('catLegend').innerHTML='<div class="empty">近 90 天還沒有支出。</div>';
+  } else el('catLegend').innerHTML='<div class="empty">近 90 天沒有支出。</div>';
 
-  // half-month flows
-  const fl = t.flows || [];
-  if(fl.length){
-    chart('flowChart',{type:'bar',
-      data:{labels:fl.map(x=>x.label),datasets:[
-        {label:'收入',data:fl.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:5,maxBarThickness:20},
-        {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:5,maxBarThickness:20}]},
-      options:{maintainAspectRatio:false,
-        plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
-        scales:halfMonthScales(fl)}});
-  }
+  const fl=t.flows||[];
+  if(fl.length) chart('flowChart',{type:'bar',
+    data:{labels:fl.map(x=>x.label),datasets:[
+      {label:'收入',data:fl.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:18},
+      {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:18}]},
+    options:{plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+      scales:halfMonthScales(fl)}});
 
-  // pending
-  if(o.pending.items.length){
-    el('pendingBox').innerHTML = o.pending.items.map(p=>
+  el('pendingBox').innerHTML = o.pending.items.length ? o.pending.items.map(p=>
       `<div class="row"><span class="l">${esc(p.note)}${p.overdue?'<span class="chip warn">該進來了</span>':''}
-        <span class="tag">預計 ${esc(p.when||'未定')}</span></span><span class="r">${F(p.amount)}</span></div>`).join('')
-      + `<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(o.pending.total)}</span></div>`;
-  }
+        <span class="tag">${esc(p.when||'未定')}</span></span><span class="r">${F(p.amount)}</span></div>`).join('')
+      + `<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(o.pending.total)}</span></div>`
+    : '<div class="empty">目前沒有待收款。</div>';
 }
 
 /* ── ACCOUNT ── */
 let curAccount=null, aOffset=0, aInit=false;
 function aPage(d){ aOffset=Math.max(0,aOffset+d*60); loadAccount(); }
 async function loadAccount(){
-  const p = new URLSearchParams({id:curAccount, offset:aOffset, limit:60, periods:12});
-  const c = el('aCat').value; if(c) p.set('category',c);
-  const q = el('aQ').value.trim(); if(q) p.set('q',q);
-  const d = await getJSON('/api/account?'+p.toString());
-  const a = d.account, owe = a.kind==='credit';
+  const p=new URLSearchParams({id:curAccount,offset:aOffset,limit:60,periods:12});
+  const c=el('aCat').value; if(c) p.set('category',c);
+  const q=el('aQ').value.trim(); if(q) p.set('q',q);
+  const d=await getJSON('/api/account?'+p.toString());
+  const a=d.account, owe=a.kind==='credit';
 
-  el('pageTitle').textContent = a.name;
-  el('aName').textContent = a.name;
-  el('aMeta').innerHTML = `<span class="badge">${owe?'信用卡':'現金/存款'}</span>
-    <span class="badge">餘額來源：${esc(a.balance_src)}</span>
-    ${a.sources&&a.sources.length?`<span class="badge">資料：${esc(a.sources.join(' + '))}</span>`:''}`;
-  el('aBal').textContent = (owe?'-':'')+F(a.balance||0);
-  el('aBal').className = 'bal '+(owe?'owe':'cash');
-  el('aBalNote').textContent = owe?'目前欠款':(a.balance_date?`銀行 ${a.balance_date} 的餘額`:'目前餘額');
+  el('pageTitle').textContent=a.name;
+  el('aName').textContent=a.name;
+  el('aMeta').innerHTML=`<span class="badge">${owe?'信用卡':'現金/存款'}</span>
+    <span class="badge">餘額：${esc(a.balance_src)}</span>
+    ${a.sources&&a.sources.length?`<span class="badge">資料：${esc(a.sources.join('+'))}</span>`:''}`;
+  el('aBal').textContent=(owe?'-':'')+F(a.balance||0);
+  el('aBal').className='bal '+(owe?'neg':'pos');
+  el('aBalNote').textContent=owe?'目前欠款':(a.balance_date?`銀行 ${a.balance_date}`:'目前餘額');
 
-  const warn = a.coverage_note;
-  el('aCover').className = 'cover'+(warn?' warn':'');
-  el('aCover').innerHTML = a.n_txns
+  const warn=a.coverage_note;
+  el('aCover').className='cover'+(warn?' warn':'');
+  el('aCover').innerHTML=a.n_txns
     ? `紀錄涵蓋 <b>${esc(a.first)}</b> ~ <b>${esc(a.last)}</b>，共 ${a.n_txns} 筆`
-      + (warn?`　⚠️ ${esc(warn)}　→ 把最新的帳單截圖傳給阿姨就補上了`:'　✓ 是最新的')
+      +(warn?`　⚠️ ${esc(warn)} → 傳最新截圖給阿姨就補上了`:'　✓ 最新')
     : '還沒有這個帳戶的交易紀錄。';
 
-  el('aCurveTitle').textContent = owe?'欠款走勢':'餘額走勢';
-  const cur = d.curve.filter(x=>x.value!==null);
+  el('aCurveTitle').textContent=owe?'欠款走勢':'餘額走勢';
   chart('acctCurve',{type:'line',
     data:{labels:d.curve.map(x=>x.label),datasets:[{data:d.curve.map(x=>x.value),
       borderColor:owe?'#e2477e':'#2ee5a9',backgroundColor:owe?'rgba(226,71,126,.10)':'rgba(46,229,169,.10)',
       borderWidth:2,tension:.3,pointRadius:2,pointHoverRadius:5,fill:true,spanGaps:false}]},
-    options:{maintainAspectRatio:false,plugins:{tooltip:{callbacks:{title:c=>d.curve[c[0].dataIndex].key,label:c=>F(c.parsed.y)}}},
+    options:{plugins:{tooltip:{callbacks:{title:c=>d.curve[c[0].dataIndex].key,label:c=>F(c.parsed.y)}}},
       scales:halfMonthScales(d.curve)}});
-  if(!cur.length) el('aCurveTitle').textContent += '（資料不足）';
 
   chart('acctFlow',{type:'bar',
     data:{labels:d.series.map(x=>x.label),datasets:[
-      {label:'進',data:d.series.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:5,maxBarThickness:18},
-      {label:'出',data:d.series.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:5,maxBarThickness:18}]},
-    options:{maintainAspectRatio:false,
-      plugins:{tooltip:{callbacks:{title:c=>d.series[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+      {label:'進',data:d.series.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:16},
+      {label:'出',data:d.series.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:16}]},
+    options:{plugins:{tooltip:{callbacks:{title:c=>d.series[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
       scales:halfMonthScales(d.series)}});
 
-  const tot = d.categories.reduce((s,x)=>s+x.amount,0);
-  el('aCats').innerHTML = d.categories.length ? d.categories.map(c=>`
+  const tot=d.categories.reduce((s,x)=>s+x.amount,0);
+  el('aCats').innerHTML=d.categories.length? d.categories.map(c=>`
     <div class="row"><span class="l"><i class="dot" style="background:${catColor(c.category)}"></i>${esc(c.category)}
-      <span class="tag">${tot?Math.round(100*c.amount/tot):0}%</span></span>
-      <span class="r">${F(c.amount)}</span></div>`).join('')
-    : '<div class="empty">近 90 天這個帳戶沒有支出。</div>';
+      <span class="tag">${tot?Math.round(100*c.amount/tot):0}%</span></span><span class="r">${F(c.amount)}</span></div>`).join('')
+    : '<div class="empty">近 90 天沒有支出。</div>';
 
   if(!aInit){
-    el('aCat').innerHTML = '<option value="">所有分類</option>'+d.facet_categories.map(c=>`<option>${esc(c)}</option>`).join('');
-    aInit = true;
+    el('aCat').innerHTML='<option value="">所有分類</option>'+d.facet_categories.map(c=>`<option>${esc(c)}</option>`).join('');
+    aInit=true;
   }
-  el('aTotals').textContent = `符合 ${d.matched.toLocaleString()} 筆 — 支出 ${F(d.total_out)}，進帳 ${F(d.total_in)}`
-    + (d.matched>60?`（第 ${d.offset+1}–${Math.min(d.offset+60,d.matched)} 筆）`:'');
-  el('aTable').innerHTML = d.ledger.length ? `<table>
-    <thead><tr><th>日期</th><th>商家</th><th class="num">金額</th><th>分類</th><th>來源</th><th>備註</th></tr></thead><tbody>`+
-    d.ledger.map(t=>`<tr><td>${esc(t.date)}</td>
-      <td style="white-space:normal;max-width:240px">${esc(t.merchant)}</td>
-      <td class="num ${t.amount<0?'neg':'pos'}">${F(t.amount)}</td>
-      <td>${esc(t.category)}</td><td class="tag">${esc(t.source)}</td>
-      <td style="white-space:normal;max-width:150px;color:var(--muted)">${esc(t.note||'')}</td></tr>`).join('')+
-    '</tbody></table>' : '<div class="empty" style="padding:14px">沒有符合的交易。</div>';
-  el('aPrev').style.display = d.offset>0?'block':'none';
-  el('aNext').style.display = d.offset+60<d.matched?'block':'none';
+  el('aTotals').textContent=`${d.matched.toLocaleString()} 筆 · 支出 ${F0(d.total_out)} · 進帳 ${F0(d.total_in)}`
+    +(d.matched>60?`（${d.offset+1}–${Math.min(d.offset+60,d.matched)}）`:'');
+  el('aTable').innerHTML=d.ledger.length? `<table>
+    <thead><tr><th>日期</th><th>商家</th><th class="num">金額</th><th>分類</th><th>來源</th></tr></thead><tbody>`+
+    d.ledger.map(t=>`<tr><td>${esc(t.date)}</td><td style="white-space:normal;max-width:280px">${esc(t.merchant)}</td>
+      <td class="num ${t.amount<0?'neg':'pos'}">${F(t.amount)}</td><td>${esc(t.category)}</td>
+      <td class="tag">${esc(t.source)}</td></tr>`).join('')+'</tbody></table>'
+    : '<div class="empty" style="padding:12px">沒有符合的交易。</div>';
+  el('aPrev').style.visibility=d.offset>0?'visible':'hidden';
+  el('aNext').style.visibility=d.offset+60<d.matched?'visible':'hidden';
 }
 
 /* ── INCOME ── */
 let incLoaded=false;
 async function loadIncome(){
   if(incLoaded) return; incLoaded=true;
-  const d = await getJSON('/api/income');
-  el('incStats').innerHTML = [
-    ['今年已入帳', F0(d.received_total), `${d.received.length} 筆`],
-    ['待收款（預期）', F0(d.expected_total), `${d.expected.length} 筆`],
-    ['合計（含待收）', F0(d.received_total+d.expected_total), '']
+  const d=await getJSON('/api/income');
+  el('incStats').innerHTML=[
+    ['今年已入帳',F0(d.received_total),`${d.received.length} 筆`],
+    ['待收款',F0(d.expected_total),`${d.expected.length} 筆`],
+    ['合計',F0(d.received_total+d.expected_total),'']
   ].map(([k,v,s])=>`<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${s?`<div class="sub">${s}</div>`:''}</div>`).join('');
-  el('incReceived').innerHTML = d.received.length ? `<table>
+  el('incReceived').innerHTML=d.received.length? `<table>
     <thead><tr><th>日期</th><th>項目</th><th>方式</th><th class="num">金額</th></tr></thead><tbody>`+
-    d.received.map(r=>`<tr><td>${esc(r.date)}</td><td style="white-space:normal">${esc(r.name)}<div class="tag">${esc(r.note)}</div></td>
+    d.received.map(r=>`<tr><td>${esc(r.date)}</td><td style="white-space:normal">${esc(r.name)}</td>
       <td>${esc(r.method||'—')}</td><td class="num pos">${F(r.amount)}</td></tr>`).join('')+
     `<tr><td></td><td><b>合計</b></td><td></td><td class="num"><b>${F(d.received_total)}</b></td></tr></tbody></table>`
-    : '<div class="empty" style="padding:14px">今年還沒有入帳紀錄。</div>';
-  let rows = d.expected.map(e=>
+    : '<div class="empty" style="padding:12px">今年還沒有入帳紀錄。</div>';
+  let rows=d.expected.map(e=>
     `<div class="row"><span class="l">${esc(e.note)}${e.overdue?'<span class="chip warn">該進來了</span>':''}
-       <span class="tag">預計 ${esc(e.when||'未定')}</span></span><span class="r">${F(e.amount)}</span></div>`).join('');
-  for(let i=0;i<Math.max(3,6-d.expected.length);i++)
-    rows += `<div class="row" style="opacity:.4"><span class="l" style="color:var(--muted)">預留欄位 —</span><span class="r" style="color:var(--muted)">$—</span></div>`;
-  if(d.expected.length)
-    rows += `<div class="row"><span class="l"><b style="color:var(--ink)">待收款合計</b></span><span class="r">${F(d.expected_total)}</span></div>`;
-  el('incExpected').innerHTML = rows;
+      <span class="tag">${esc(e.when||'未定')}</span></span><span class="r">${F(e.amount)}</span></div>`).join('');
+  for(let i=0;i<Math.max(2,5-d.expected.length);i++)
+    rows+=`<div class="row" style="opacity:.4"><span class="l" style="color:var(--muted)">預留欄位 —</span><span class="r" style="color:var(--muted)">$—</span></div>`;
+  if(d.expected.length) rows+=`<div class="row"><span class="l"><b style="color:var(--ink)">合計</b></span><span class="r">${F(d.expected_total)}</span></div>`;
+  el('incExpected').innerHTML=rows+'<div class="note">接到新案子跟阿姨講一聲就會補進來；入帳了說一聲她就劃掉。</div>';
 }
 
 /* ── BRAIN ── */
 let brainLoaded=false;
 async function loadBrain(){
   if(brainLoaded) return; brainLoaded=true;
-  const d = await getJSON('/api/brain');
+  const d=await getJSON('/api/brain');
   if(d.budget_detail){
     const b=d.budget_detail;
-    const pipe = b.booked_pipeline.length
-      ? b.booked_pipeline.map(p=>`${esc(p.note||'某案')} ${F0(p.amount)}（${esc(p.when||'?')}）`).join('、')
-      : '（沒有已排定的案子）';
-    const blend = Math.round((b.blend??.5)*100);
-    el('budgetMath').innerHTML = `
-      <div class="formula">
-        1️⃣ 預期收入：淡月底 <b>${F0(b.monthly_baseline)}</b>/月，加上已接的案子（${pipe}），
-           換算成 <b>${F0(b.expected_period)}</b> / 半月。<br>
-        2️⃣ 實際收入：最近 6 個半月真的入帳的錢，平均 <b>${F0(b.actual_period)}</b> / 半月。<br>
-        3️⃣ 收入基準 ＝ 預期 <span class="op">×</span>${100-blend}% <span class="op">+</span> 實際 <span class="op">×</span>${blend}%
-           <span class="op">=</span> <b>${F0(b.income_period)}</b> / 半月。<br>
-        4️⃣ 可花額度 ＝ 收入基準 <b>${F0(b.income_period)}</b>
-           <span class="op">−</span> 固定開銷 <b>${F0(b.fixed_period)}</b>（月 ${F0(b.fixed_monthly)} 按天數攤）
-           <span class="op">−</span> 存錢 <b>${F0(b.savings_period)}</b>
-           <span class="op">=</span> <b>${F0(b.allowance)}</b>。<br>
-        5️⃣ 這期（${b.period_start}~${b.period_end}）已花 <b>${F(b.spent)}</b>，
-           剩 <b class="${b.remaining<0?'neg':'pos'}">${F(b.remaining)}</b>，還有 ${b.days_left} 天。
-      </div>
-      <div class="note">週期是每月 1–15 號、16–月底（半月），固定開銷按實際天數攤，不是兩週輪一次。</div>`;
-  }
-  const nw=d.networth;
-  el('nwMath').innerHTML =
+    const pipe=b.booked_pipeline.length? b.booked_pipeline.map(p=>`${esc(p.note||'某案')} ${F0(p.amount)}（${esc(p.when||'?')}）`).join('、'):'（沒有已排定的案子）';
+    const blend=Math.round((b.blend??.5)*100);
+    el('budgetMath').innerHTML=`<div class="formula">
+      1️⃣ 預期收入：淡月底 <b>${F0(b.monthly_baseline)}</b>/月，加上已接的案子（${pipe}），換算 <b>${F0(b.expected_period)}</b> / 半月。<br>
+      2️⃣ 實際收入：最近 6 個半月真的入帳，平均 <b>${F0(b.actual_period)}</b> / 半月。<br>
+      3️⃣ 收入基準 ＝ 預期 <span class="op">×</span>${100-blend}% <span class="op">+</span> 實際 <span class="op">×</span>${blend}% <span class="op">=</span> <b>${F0(b.income_period)}</b>。<br>
+      4️⃣ 可花額度 ＝ <b>${F0(b.income_period)}</b> <span class="op">−</span> 固定 <b>${F0(b.fixed_period)}</b>（月 ${F0(b.fixed_monthly)} 按天數攤）<span class="op">−</span> 存錢 <b>${F0(b.savings_period)}</b> <span class="op">=</span> <b>${F0(b.allowance)}</b>。<br>
+      5️⃣ 這期（${b.period_start}~${b.period_end}）已花 <b>${F(b.spent)}</b>，剩 <b class="${b.remaining<0?'neg':'pos'}">${F(b.remaining)}</b>，還有 ${b.days_left} 天。
+      </div><div class="note">週期＝每月 1–15 / 16–月底，固定開銷按實際天數攤。</div>`;
+  } else el('budgetMath').innerHTML='<div class="empty">還沒有預算資料。</div>';
+  const nw=d.networth, c=d.config;
+  el('nwMath').innerHTML=
     nw.rows.map(r=>`<div class="row"><span class="l">${esc(r.name)} <span class="tag">${r.kind}${r.src==='同步'?'·同步':''}</span></span>
-      <span class="r ${r.amount<0?'neg':''}">${F(r.amount)}</span></div>`).join('') +
-    `<div class="row"><span class="l">現金/存款合計 − 卡債 ${F0(nw.debts)}</span><span class="r">淨資產 ${F(nw.net)}</span></div>` +
-    `<div class="note">來源：${nw.source==='hybrid'?'銀行同步（Chase）＋你自己報的（Apple/Venmo）':nw.source==='ledger'?'你報的帳戶':'銀行同步餘額'}。</div>`;
-  const c=d.config;
-  const accts=(c.accounts||[]).map(a=>`${esc(a.name||'帳戶')}（${a.type==='credit'?'欠款':'現金'}）${F0(a.amount)}`).join('、')||'—';
-  el('configBox').innerHTML = `
-    <div class="row"><span class="l">每月固定開銷</span><span class="r">${F0(c.fixed_monthly)}</span></div>
-    <div class="row"><span class="l">存錢目標</span><span class="r">${F0(c.savings_amount)} / ${c.savings_cadence==='monthly'?'月':'半月'}</span></div>
-    <div class="row"><span class="l">淡月底收入</span><span class="r">${F0(c.monthly_baseline)} / 月</span></div>
-    <div class="row"><span class="l">今年到目前實收</span><span class="r">${F0(c.ytd_income)}</span></div>
-    <div class="row"><span class="l">緊急預備金目標</span><span class="r">${F0(c.emergency_target)}</span></div>
-    <div class="row"><span class="l">帳戶</span><span class="r" style="font-weight:400">${accts}</span></div>`;
-  el('memBox').innerHTML = d.merchant_memory.length ? `<table>
-    <thead><tr><th>商家 / 來源</th><th>分類</th><th>類型</th><th>備註</th></tr></thead><tbody>`+
+      <span class="r ${r.amount<0?'neg':''}">${F(r.amount)}</span></div>`).join('')+
+    `<div class="row"><span class="l">現金 − 卡債 ${F0(nw.debts)}</span><span class="r">淨資產 ${F(nw.net)}</span></div>
+     <div class="row"><span class="l">每月固定開銷</span><span class="r">${F0(c.fixed_monthly)}</span></div>
+     <div class="row"><span class="l">存錢目標</span><span class="r">${F0(c.savings_amount)} / ${c.savings_cadence==='monthly'?'月':'半月'}</span></div>
+     <div class="row"><span class="l">淡月底收入</span><span class="r">${F0(c.monthly_baseline)} / 月</span></div>
+     <div class="row"><span class="l">緊急預備金目標</span><span class="r">${F0(c.emergency_target)}</span></div>`;
+  el('memBox').innerHTML=d.merchant_memory.length? `<table>
+    <thead><tr><th>商家</th><th>分類</th><th>類型</th><th>備註</th></tr></thead><tbody>`+
     d.merchant_memory.map(m=>`<tr><td class="mono">${esc(m.key)}</td><td>${esc(m.category||'')}</td>
-      <td>${m.is_income===true?'收入':m.is_income===false?'轉帳/還款':'支出'}</td>
+      <td>${m.is_income===true?'收入':m.is_income===false?'轉帳':'支出'}</td>
       <td style="white-space:normal">${esc(m.note||'')}</td></tr>`).join('')+'</tbody></table>'
-    : '<div class="empty" style="padding:14px">她還沒學到任何商家。</div>';
-  el('chatBox').innerHTML = d.chat.length ? d.chat.map(m=>
+    : '<div class="empty" style="padding:12px">還沒學到商家。</div>';
+  el('chatBox').innerHTML=d.chat.length? d.chat.map(m=>
     `<div class="msg ${m.role}"><div class="who2">${m.role==='assistant'?'陳會計':'默默'} · ${m.at?new Date(m.at).toLocaleString('zh-TW',{hour12:false}):''}</div>${esc(m.content)}</div>`).join('')
-    : '<div class="empty" style="padding:14px">還沒有對話。</div>';
+    : '<div class="empty" style="padding:12px">還沒有對話。</div>';
 }
 
 route();
