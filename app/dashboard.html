@@ -64,7 +64,7 @@
   [data-pane=pending]{grid-area:pending}
 
   /* budget ring */
-  .ringwrap{display:flex;align-items:center;gap:14px;height:100%}
+  .ringwrap{display:flex;align-items:center;gap:14px;flex:1;min-height:0}
   .ring{position:relative;flex:0 0 auto;width:min(132px,34%);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
     background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.08) 0)}
@@ -73,11 +73,22 @@
   .ring .hole .lbl{font-size:10px;color:var(--muted)}
   .ring .hole .big{font-size:22px;font-weight:750;letter-spacing:-.7px}
   .ring .hole .big.pos{color:var(--accent)} .ring .hole .big.neg{color:var(--bad)}
-  .ringside{flex:1;min-width:0}
-  .kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--grid)}
+  .ringside{flex:1;min-width:0;min-height:0;max-height:100%;overflow:auto}
+  .kv{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
   .kv:last-of-type{border-bottom:none}
   .kv b{font-variant-numeric:tabular-nums;white-space:nowrap}
-  .daysleft{font-size:10.5px;color:var(--muted);margin-top:5px}
+  .daysleft{font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.45}
+  /* "how was this worked out" — the reasoning is real but it is not the headline, and
+     stacking six rows plus three footnotes into one card clipped the bottom of it. */
+  .whytoggle{font-size:10.5px;color:var(--accent);cursor:pointer;margin-top:3px;
+    display:inline-flex;align-items:center;gap:4px;user-select:none}
+  .why{flex:0 0 auto;overflow:auto;max-height:42%;margin-top:8px;padding-top:8px;
+    border-top:1px solid var(--grid);font-size:11.5px;color:var(--ink2);line-height:1.6}
+  .why .lens{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+  .why .lens b{font-variant-numeric:tabular-nums}
+  .why .lens.on{color:var(--ink)}
+  .why .lens .sub{display:block;font-size:10px;color:var(--muted)}
+  .why p{margin:6px 0 0;font-size:10.5px;color:var(--muted)}
 
   /* net worth */
   .nwtop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;flex:0 0 auto}
@@ -276,10 +287,11 @@
         <div class="flexbody">
           <div class="ringwrap">
             <div class="ring" id="budgetRing"><div class="track"></div>
-              <div class="hole"><span class="lbl">剩下</span><span class="big pos" id="ringBig">—</span><span class="lbl" id="ringSub"></span></div>
+              <div class="hole"><span class="lbl">這期還剩</span><span class="big pos" id="ringBig">—</span><span class="lbl" id="ringSub"></span></div>
             </div>
             <div class="ringside" id="budgetSide"><div class="empty">還沒設定預算。</div></div>
           </div>
+          <div class="why" id="budgetWhy" hidden></div>
         </div>
       </section>
 
@@ -415,6 +427,11 @@ const CATCOLOR = {}; let _ci = 0;
 const catColor = c => CATCOLOR[c] || (CATCOLOR[c] = CATCOLORS[(_ci++) % CATCOLORS.length]);
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
+function toggleWhy(){
+  const w=el('budgetWhy'); if(!w) return;
+  w.hidden=!w.hidden;
+  const c=el('whyCaret'); if(c) c.textContent = w.hidden?'▸':'▾';
+}
 // If two blocks ever disagree again, say so on screen rather than showing two numbers
 // and letting Momo work out which one lied.
 function showAudit(problems){
@@ -429,6 +446,7 @@ function showAudit(problems){
   }
   bar.innerHTML='⚠️ 數字對不起來：'+seen.map(esc).join('｜');
 }
+const md = d => (d||'').slice(5).replace('-','/');
 const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function getJSON(p){ const r=await fetch(p,{credentials:'same-origin'}); if(!r.ok) throw new Error(r.status); return r.json(); }
 
@@ -519,43 +537,39 @@ async function loadHome(){
   showAudit([...(o.audit||[]),...(t.audit||[]),...(acc.audit||[])]);
 
   if(o.budget){
-    const b=o.budget, over=b.remaining<0;
+    const b=o.budget, gap=b.shortfall||0, over=b.remaining<0;
     const pctLeft=b.allowance>0?Math.max(0,Math.min(100,100*b.remaining/b.allowance)):0;
     const r=el('budgetRing');
     r.style.setProperty('--pct', over?100:pctLeft);
     r.style.setProperty('--rc', over?'#ff5c93':'#2ee5a9');
     el('ringBig').textContent=F0(b.remaining);
     el('ringBig').className='big '+(over?'neg':'pos');
-    el('ringSub').textContent=`可花 ${F0(b.allowance)}`;
-    // 缺口 is a fact about the month, not a spending rule — it gets its own line so it
-    // can never be mistaken for "you may spend a negative amount".
-    const gap = b.shortfall||0;
-    // Three lenses decide this number; showing which one bound is the whole point —
-    // an allowance Momo can't interrogate is one she won't trust.
-    const lensRow = (b.lenses||[]).map(L=>{
-      const on = L.name===b.binding;
-      return `<div class="kv" title="${esc(L.why||'')}">
-        <span>${on?'▸ ':''}${esc(L.name)}</span>
-        <b style="color:${on?'var(--accent)':'var(--muted)'}">${F0(L.value)}</b></div>`;
-    }).join('');
+    el('ringSub').textContent = b.per_day_left!=null ? `一天 ${F0(b.per_day_left)}` : '';
+
+    // Only what Momo acts on lives here. The three lenses are the reasoning behind the
+    // number, not the number — six rows plus three footnotes clipped the card.
     el('budgetSide').innerHTML=
-      `<div class="kv"><span>已經花了</span><b>${F(b.spent)}</b></div>
-       <div class="kv"><span>這期額度</span><b>${F0(b.allowance)}</b></div>
-       <div class="kv"><span>每天還能花</span><b>${b.per_day_left!=null?F0(b.per_day_left):'—'}</b></div>
-       ${gap<0?`<div class="kv"><span style="color:var(--warn)">這期的缺口</span>
-          <b style="color:var(--warn)">${F0(gap)}</b></div>`:''}
-       ${lensRow}
-       <div class="daysleft">${gap<0?'缺口＝進來的錢不夠付固定開銷，不管花不花都會少這麼多，從水位補。<br>':''}
-         ${b.trend_warning&&b.lenses&&b.lenses[2]&&b.lenses[2].value<0?
-           `⚠ 最近每期花 ${F0(b.recent_median)}，淨值每期掉 ${F0(Math.abs(b.net_drift_per_period))}。<br>`:''}
-         ${b.binding?`可以花是照「${esc(b.binding)}」算的：${esc(b.binding_why||'')}<br>`:''}
-         ${b.partial?`從 ${b.budget_from} 起算（這期只管 ${Math.round(b.coverage*100)}%）　`:''}
-         ${b.period_label||''}　${b.period_start} ~ ${b.period_end} · 剩 ${b.days_left} 天</div>`;
-    if(gap<0){
-      el('ringSub').textContent = (b.deficit_kind==='timing'
-        ? `可花 ${F0(b.allowance)}・缺口 ${F0(gap)}，錢在路上`
-        : `可花 ${F0(b.allowance)}・缺口 ${F0(gap)}，沒款要進`);
-    }
+      (gap<0?`<div class="kv"><span style="color:var(--warn)">這期的缺口</span>
+         <b style="color:var(--warn)">${F0(gap)}</b></div>`:'')
+      + `<div class="kv"><span>已經花了</span><b>${F(b.spent)}</b></div>
+         <div class="kv"><span>這期額度</span><b>${F0(b.allowance)}</b></div>
+         <div class="daysleft">${esc(b.period_label||'')} ${md(b.period_start)}–${md(b.period_end)}
+           · 剩 ${b.days_left} 天${b.partial?` · ${md(b.budget_from)} 起算`:''}</div>
+         <div class="whytoggle" onclick="toggleWhy()"><span id="whyCaret">▸</span> 怎麼算出來的</div>`;
+
+    const lensRows=(b.lenses||[]).map(L=>{
+      const on=L.name===b.binding;
+      return `<div class="lens ${on?'on':''}"><span>${on?'▸ ':''}${esc(L.name)}
+        <span class="sub">${esc(L.why||'')}</span></span>
+        <b style="color:${on?'var(--accent)':L.value<0?'var(--bad)':'var(--muted)'}">${F0(L.value)}</b></div>`;
+    }).join('');
+    const notes=[];
+    if(gap<0) notes.push('缺口＝進來的錢不夠付固定開銷，不管花不花都會少這麼多，從水位補。這不是叫你別花。');
+    if(b.trend_warning&&b.lenses&&b.lenses[2]&&b.lenses[2].value<0)
+      notes.push(`⚠ 最近每期花 ${F0(b.recent_median)}，淨值每期掉 ${F0(Math.abs(b.net_drift_per_period))}。`);
+    if(b.emergency&&b.emergency.months)
+      notes.push(`緊急預備金目標 ${F0(b.emergency.target)}（約 ${b.emergency.months} 個月最低開銷，每期重算）。`);
+    el('budgetWhy').innerHTML = lensRows + notes.map(n=>`<p>${esc(n)}</p>`).join('');
   }
 
   el('nwBig').textContent=F0(o.net_worth);
