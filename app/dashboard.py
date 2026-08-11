@@ -22,7 +22,7 @@ from sqlalchemy import select
 from . import (accounts as acct, allowance, analytics as AN, budget, categories,
                changelog as CL,
                export as EX, facts as F, fixed as FX, networth, period as P,
-               prefs, stability as STAB, tax as TAX, taxonomy)
+               prefs, season as SE, stability as STAB, tax as TAX, taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -659,10 +659,12 @@ async def api_plan(request: Request):
         return _deny()
     async with Session() as s:
         f = await F.build(s)
+        te = await AN.to_earn(s, 3, f)
         return {
             "categories": await AN.category_series(s, 12, f),
             "standing": await AN.standing(s, f),
-            "to_earn": await AN.to_earn(s, 3, f),
+            "to_earn": te,
+            "season": await SE.progress(s, te["tiers"], f),
             "audit": f.audit(),
         }
 

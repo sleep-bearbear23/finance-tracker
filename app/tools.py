@@ -78,9 +78,25 @@ SCHEMAS: list[dict] = [
                                         "overdue invoice count for less instead of "
                                         "flattering the plan."},
                 "note": {"type": "string"},
+                "confidence": {"type": "number",
+                               "description": "0–1. How much of this one to actually count on. "
+                                              "Set it ONLY when Momo says something about whether "
+                                              "this production pays — 「這家一向準時」 → 1, "
+                                              "「這筆我覺得要不回來了」 → 0.2. Her view beats the "
+                                              "default, because she knows who pays and the "
+                                              "model does not."},
             },
             "required": ["which"],
         },
+    },
+    {
+        "name": "start_new_season",
+        "description": (
+            "Reset the three-month earning target and start the scoreboard over from today. "
+            "Use when Momo says a chapter is done and she wants to start counting again — "
+            "「重新開始算這一季」. It freezes today's targets; work already booked shows as the "
+            "starting position, not as progress she made."),
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "mark_payment_received",
@@ -319,13 +335,20 @@ async def add_expected_payment(s, rec, amount, note, when=None, force=False):
     return {"ok": True, "summary": rec.summary, "item": item}
 
 
-async def update_expected_payment(s, rec, which, amount=None, when=None, note=None):
+async def update_expected_payment(s, rec, which, amount=None, when=None, note=None,
+                                  confidence=None):
     items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
     old, amb = _resolve(items, which, "note")
     if old is None:
         return _miss(which, items, "note", amb, "待收款")
     before = dict(old)
     hit = await prefs.update_invoice(s, which, amount, when, note)
+    if confidence is not None and hit is not None:
+        items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
+        row = _find(items, hit.get("note") or which, "note")
+        if row is not None:
+            row["confidence"] = min(1.0, max(0.0, float(confidence)))
+            await set_kv(s, "cfg_upcoming", json.dumps(items, ensure_ascii=False))
     bits = []
     if amount is not None and float(before.get("amount") or 0) != float(amount):
         bits.append(f"{_money(before.get('amount'))} → {_money(amount)}")
@@ -333,6 +356,8 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
         bits.append(f"{before.get('when') or '未定'} → {when}")
     if note and before.get("note") != note:
         bits.append(f"備註改成「{note}」")
+    if confidence is not None:
+        bits.append(f"這筆只當 {float(confidence):.0%} 算")
     rec.says(f"改了待收款「{before.get('note')}」：" + ("、".join(bits) or "沒有實際變動"))
     return {"ok": True, "summary": rec.summary, "item": hit}
 
@@ -526,8 +551,21 @@ async def answer_pending_charges(s, rec, reply):
     return {"ok": True, "summary": rec.summary, "items": out["items"]}
 
 
+async def start_new_season(s, rec):
+    from . import analytics as AN, season as SE
+    te = await AN.to_earn(s, 3)
+    old = await SE.get(s)
+    new = await SE.start(s, te["tiers"])
+    hold = new["targets"].get("持平")
+    rec.says(f"這一季重新開始算：{new['start']} 到 {new['end']}，"
+             f"持平目標 {_money(hold)}"
+             + (f"（上一季是 {old['start']} 開始的）" if old else ""))
+    return {"ok": True, "summary": rec.summary, "season": new}
+
+
 HANDLERS = {
     "answer_pending_charges": answer_pending_charges,
+    "start_new_season": start_new_season,
     "add_expected_payment": add_expected_payment,
     "update_expected_payment": update_expected_payment,
     "mark_payment_received": mark_payment_received,

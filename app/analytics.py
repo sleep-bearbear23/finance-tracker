@@ -264,10 +264,17 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     ]
 
     perf = await income_performance(session, f)
+    # "16.1 個案子" was $8,877 ÷ the median DEPOSIT ($550) — a population that includes a
+    # $185 Zelle from a friend and a $300 flat-pay day. The unit Momo thinks in is a
+    # booking, and she now records those, so the median booking is the honest denominator.
+    # It falls back to the median payment while there are too few bookings to be a median.
+    book = sorted(float(p.get("amount") or 0) for p in pend_items)
+    med_gig = round(statistics.median(book), 2) if len(book) >= 2 else 0.0
     med = perf["median_payment"] or 0.0
+    unit = med_gig or med
     for t in tiers:
-        t["gigs"] = round(t["need"] / med, 1) if med > 0 else None
-        t["bare_gigs"] = round(t["bare"] / med, 1) if med > 0 else None
+        t["gigs"] = round(t["need"] / unit, 1) if unit > 0 else None
+        t["bare_gigs"] = round(t["bare"] / unit, 1) if unit > 0 else None
 
     from . import prefs
     today = now().date()
@@ -284,6 +291,8 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
         "pending_haircut": round(pending_face - pending, 2),
         "pending_items": sorted(late, key=lambda x: -x["late_days"]),
         "median_payment": med,
+        "median_gig": med_gig,
+        "gig_unit": unit,
         "fixed_monthly": fixed_monthly,
         "lean_flex_monthly": lean_flex,
         "normal_flex_monthly": normal_flex,

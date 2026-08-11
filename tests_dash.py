@@ -233,8 +233,16 @@ async def main():
           _prefs.landing({"amount": 1.0}) is None)
 
     today = _date(2026, 8, 11)
-    check("money not yet due counts in full",
-          near(_prefs.confidence({"when": "2026-08"}, today), 1.0))
+    # Not-yet-due is deliberately under 1.0: an invoice that is not late *yet* is still
+    # not money, and $4,400 of her own $10,000 outstanding is already months past wrap.
+    check("money not yet due is worth less than its face value",
+          near(_prefs.confidence({"when": "2026-08"}, today), _prefs.PRE_DUE_CONFIDENCE),
+          str(_prefs.confidence({"when": "2026-08"}, today)))
+    check("…but more than a late one",
+          _prefs.confidence({"when": "2026-08"}, today)
+          > _prefs.confidence({"when": "2026-05"}, today))
+    check("her own read on a production beats the default outright",
+          near(_prefs.confidence({"when": "2026-05", "confidence": 1.0}, today), 1.0))
     check("a month late counts for four fifths",
           near(_prefs.confidence({"when": "2026-06"}, today), 0.8),
           str(_prefs.confidence({"when": "2026-06"}, today)))

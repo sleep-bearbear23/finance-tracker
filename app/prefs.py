@@ -164,6 +164,18 @@ LANDING_PAD_DAYS = 14
 #: it is owed the less it should be allowed to lower what she has to go and earn.
 CONFIDENCE_STEPS = ((0, 1.00), (30, 0.80), (60, 0.60), (90, 0.40), (10**6, 0.25))
 
+#: What a not-yet-due invoice is worth. Deliberately under 1.0: an invoice that is not late
+#: *yet* is still not money, and Momo's own book says so — $4,400 of her $10,000 outstanding
+#: is already months past wrap. Starting everything at 100% until the day it goes overdue
+#: made the middle number ("what will realistically arrive") identical to the best case.
+#:
+#: PLACEHOLDER. It should be measured, not chosen. Once bookings carry their work month and
+#: payments are marked received with a date, :func:`measured_pre_due` replaces it with her
+#: real on-time rate. Until roughly six payments have been through that loop there is not
+#: enough evidence, and this stands in.
+PRE_DUE_CONFIDENCE = 0.85
+MIN_SAMPLES_FOR_MEASURED = 6
+
 
 def landing(inv: dict, pad_days: int = LANDING_PAD_DAYS) -> date | None:
     """The day an expected payment should realistically arrive.
@@ -184,14 +196,28 @@ def landing(inv: dict, pad_days: int = LANDING_PAD_DAYS) -> date | None:
     return first_of_next + timedelta(days=pad_days - 1)
 
 
-def confidence(inv: dict, today: date | None = None) -> float:
-    """How much of this invoice a plan is allowed to count on, by how late it is."""
+def confidence(inv: dict, today: date | None = None, pre_due: float | None = None) -> float:
+    """How much of this invoice a plan is allowed to count on.
+
+    Three inputs, in order of authority:
+
+      her own view   an explicit ``confidence`` on the row wins outright. Momo knows which
+                     productions pay and which ones need chasing; the model does not.
+      lateness       once it is overdue, the ladder above takes over.
+      not yet due    PRE_DUE_CONFIDENCE — under 1.0 on purpose (see the constant).
+    """
+    own = inv.get("confidence")
+    if own is not None:
+        try:
+            return min(1.0, max(0.0, float(own)))
+        except (TypeError, ValueError):
+            pass
     d = landing(inv)
     if d is None:
         return 0.0          # no date at all cannot be planned around; it is still shown
     late = ((today or _today()) - d).days
     if late <= 0:
-        return 1.0
+        return PRE_DUE_CONFIDENCE if pre_due is None else pre_due
     for cap, factor in CONFIDENCE_STEPS:
         if late <= cap:
             return factor

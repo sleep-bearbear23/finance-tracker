@@ -301,11 +301,40 @@
   .monthsep:first-child{padding-top:0}
 
   #s-plan > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.15fr 1fr;
-    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+    grid-template-columns:1.25fr 1fr .95fr;
+    grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
     grid-template-areas:
-      "toearn  standing"
-      "cats    trend";}
+      "toearn  ssn      standing"
+      "cats    cats     trend";}
+  [data-pane=ssn]{grid-area:ssn}
+
+  /* 這一季: the target as a track with three milestones on it, not three separate goals */
+  .track{position:relative;height:7px;border-radius:999px;background:rgba(255,255,255,.06);
+    margin:9px 0 5px;overflow:hidden}
+  .track i{position:absolute;inset:0 auto 0 0;border-radius:999px}
+  .track i.landed{background:var(--accent)}
+  .track i.booked{background:rgba(46,229,169,.32)}
+  .tmark{position:absolute;top:-3px;width:1px;height:13px;background:rgba(255,255,255,.35)}
+  .tierhead{display:flex;align-items:baseline;gap:10px}
+  .tierhead .nm2{font-size:12px;color:var(--ink2);letter-spacing:.08em;flex:0 0 2.6em}
+  .tierhead .amt2{font-size:21px;font-weight:200;letter-spacing:-.7px;font-variant-numeric:tabular-nums}
+  .tierhead .pct{margin-left:auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .tierrow{padding:12px 0;border-bottom:1px solid var(--grid)}
+  .tierrow:last-child{border-bottom:none}
+  .tierrow .sub2{font-size:10.5px;color:var(--muted);line-height:1.5}
+  .tierrow .left{font-size:11.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+  .tierrow.done .left{color:var(--accent)}
+
+  /* the log of what moved it */
+  .ev2{display:flex;align-items:baseline;gap:10px;padding:9px 0;border-bottom:1px solid var(--grid)}
+  .ev2:last-child{border-bottom:none}
+  .ev2 .d{flex:0 0 3.4em;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .ev2 .w{flex:1;min-width:0;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev2 .w .s{display:block;font-size:9.5px;color:var(--muted);white-space:normal;margin-top:2px}
+  .ev2 .g{flex:0 0 auto;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--muted)}
+  .ev2 .plus{flex:0 0 auto;font-size:11.5px;font-variant-numeric:tabular-nums}
+  .ev2.mine .plus{color:var(--accent)}
+  .ev2.mine .w{color:var(--ink)}
   [data-pane=toearn]{grid-area:toearn} [data-pane=standing]{grid-area:standing}
   [data-pane=cats]{grid-area:cats} [data-pane=trend]{grid-area:trend}
 
@@ -474,6 +503,7 @@
     #s-cal  > .grid.sel-calbars > [data-pane=calbars],
     #s-cal  > .grid.sel-calpend > [data-pane=calpend],
     #s-plan > .grid.sel-toearn   > [data-pane=toearn],
+    #s-plan > .grid.sel-ssn      > [data-pane=ssn],
     #s-plan > .grid.sel-standing > [data-pane=standing],
     #s-plan > .grid.sel-cats     > [data-pane=cats],
     #s-plan > .grid.sel-trend    > [data-pane=trend],
@@ -664,8 +694,13 @@
     <div class="grid sel-toearn" id="planGrid">
 
       <section class="card" data-pane="toearn">
-        <h2>未來三個月要賺多少 <span class="more" id="teMeta"></span></h2>
+        <h2>這一季要賺多少 <span class="more" id="teMeta"></span></h2>
         <div class="body" id="teBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="ssn">
+        <h2>進度 <span class="more" id="ssnMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="ssnBox"><div class="empty">計算中…</div></div>
       </section>
 
       <section class="card" data-pane="standing">
@@ -815,7 +850,7 @@ function halfMonthScales(points,yFmt){
 /* ── mobile pane switcher ── */
 const SEGS = {
   home:   [['accounts','帳戶'],['flows','半月收支']],
-  plan:   [['toearn','要賺多少'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
+  plan:   [['toearn','要賺多少'],['ssn','進度'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
   acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
@@ -976,33 +1011,76 @@ async function loadPlan(){
   const d = await getJSON('/api/plan');
   stamp(); showAudit(d.audit||[]);
 
-  /* 需要賺 — the number Momo holds up against a gig offer */
-  const te=d.to_earn;
-  /* The headline is the FLOOR — what she has to earn if none of the outstanding money
-     shows up. Leading with the pending-reduced figure let 生存 render as $0, which is a
-     dashboard telling a freelancer she needs no work for three months on the strength of
-     an invoice that has been unpaid since May. Momo's rule: expected income is an index
-     of dryness, never an illusion of doing well. So the conditional number is the second
-     line, and it is always phrased as a condition. */
+  /* 這一季 — the target, and how far she has got against it.
+     Momo: "I come back successfully secured a job in October that pays me 2k… I wanna be
+     able to see my success reflected on this block." The three tiers are milestones on one
+     track now, not three separate goals, and the track fills with what she has actually
+     secured. The FLOOR stays the headline (her call): the big number never depends on
+     anyone else paying. */
+  const te=d.to_earn, ss=d.season;
+  const byName={}; (ss.tiers||[]).forEach(t=>byName[t.name]=t);
   el('teMeta').textContent = te.pending_face>0
-    ? (te.pending_haircut>0 ? `待收 ${F0(te.pending_face)}，逾期打折後只當 ${F0(te.pending)}`
+    ? (te.pending_haircut>0 ? `待收 ${F0(te.pending_face)}，打折後只當 ${F0(te.pending)}`
                             : `待收 ${F0(te.pending_face)}`) : '';
   el('teBox').innerHTML = te.tiers.map(t=>{
-    const saved = Math.max(0, t.bare - t.need);
-    return `<div class="tier">
-      <span class="nm">${esc(t.name)}</span>
-      <span class="amt">${F0(t.bare)}</span>
-      <span class="sub">每月 ${F0(t.bare_per_month)}${t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:''}<br>${esc(t.why)}
-        ${saved>0?`<br><span style="color:var(--accent)">待收的錢真的進來的話 → ${F0(t.need)}
-          （每月 ${F0(t.per_month)}）</span>`:''}</span>
+    const p = byName[t.name] || {pct:0, pct_landed:0, remaining:t.bare};
+    return `<div class="tierrow ${p.cleared?'done':''}">
+      <div class="tierhead">
+        <span class="nm2">${esc(t.name)}</span>
+        <span class="amt2">${F0(t.bare)}</span>
+        <span class="pct">${p.pct.toFixed(0)}%</span>
+      </div>
+      <div class="track">
+        <i class="booked" style="width:${Math.min(100,p.pct)}%"></i>
+        <i class="landed" style="width:${Math.min(100,p.pct_landed)}%"></i>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline">
+        <span class="left">${p.cleared?'✓ 已達標':`還差 ${F0(p.remaining)}`}</span>
+        <span class="sub2" style="margin-left:auto">每月 ${F0(t.bare_per_month)}${t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:''}</span>
+      </div>
+      <div class="sub2" style="margin-top:3px">${esc(t.why)}</div>
     </div>`;}).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
-        大字是「一毛都沒收到」要賺的數字。${esc(te.note)} 中位數一筆 ${F0(te.median_payment)}。</p>`
-    + ((te.pending_items||[]).filter(p=>p.confidence<1).length
+        大字是「一毛都沒收到」要賺的，實心＝已入帳、淡色＝已排定（按信心打折）。
+        一個案子抓 ${F0(te.gig_unit)}${te.median_gig?'（你接的案子的中位數）':'（一筆進帳的中位數）'}。
+        ${esc(te.note)}</p>`
+    /* only the genuinely LATE ones get a warning. The 85% pre-due discount applies to
+       everything and is explained in the note above — repeating it per row turned a
+       systemic assumption into four alarms. */
+    + ((te.pending_items||[]).filter(p=>p.late_days>0).length
         ? `<p style="font-size:10px;color:var(--warn);line-height:1.6;margin:6px 0 0">`
-          + (te.pending_items||[]).filter(p=>p.confidence<1).map(p=>
-              `⚠ ${esc((p.note||'').slice(0,26))} ${F0(p.amount)} 晚了 ${p.late_days} 天，只當 ${Math.round(p.confidence*100)}% 算`).join('<br>')
+          + (te.pending_items||[]).filter(p=>p.late_days>0).map(p=>
+              `⚠ ${esc((p.note||'').slice(0,24))} ${F0(p.amount)} 晚了 ${p.late_days} 天，`
+              + `只當 ${Math.round(p.confidence*100)}% 算`).join('<br>')
           + `</p>` : '');
+
+  /* the log: what was asked of her, and what each thing she went and got did to it */
+  el('ssnMeta').textContent = `${md(ss.start)}–${md(ss.end)} · 還有 ${ss.days_left} 天`;
+  const rows = (ss.events||[]).slice().reverse().map(e=>{
+    const amt = e.weighted!=null ? e.weighted : e.amount;
+    const cut = e.confidence!=null && e.confidence<1
+      ? `　面額 ${F0(e.amount)}，只當 ${Math.round(e.confidence*100)}%` : '';
+    const late = e.lands_after ? `　${md(e.lands)} 才入帳，算在這一季的努力裡` : '';
+    return `<div class="ev2 ${e.mine?'mine':''}">
+      <span class="d">${md(e.date)}</span>
+      <span class="w">${e.mine?'★ ':''}${esc(e.label)}
+        <span class="s">${e.kind==='landed'?'已入帳':'已排定'}${cut}${late}</span></span>
+      <span class="plus">+${F0(amt)}</span>
+      <span class="g">還差 ${F0(e.remaining)}</span>
+    </div>`;}).join('');
+  const opened = ss.opened_with||{};
+  el('ssnBox').innerHTML =
+    `<div class="kv"><span>這一季自己找到的</span><b class="pos">${F0(ss.won_this_season||0)}</b></div>
+     <div class="kv"><span>已入帳</span><b>${F0(ss.landed)}</b></div>
+     <div class="kv"><span>已排定（打折後）</span><b>${F0(ss.booked)}</b></div>
+     <div class="daysleft">開季時手上已經有 ${F0(opened.booked_face||0)}（${opened.n||0} 筆）——
+       那是起跑點，不是成績。時間過了 ${ss.pace}%。</div>`
+    + (rows || '<div class="empty">還沒有進帳，也還沒接到案子。</div>')
+    + ((ss.rebases||[]).length
+        ? (ss.rebases||[]).map(r=>`<div class="ev2"><span class="d">${md(r.at)}</span>
+            <span class="w" style="color:var(--warn)">目標變了，不是你退步
+            <span class="s">${r.changes.map(c=>`${esc(c.tier)} ${F0(c.from)} → ${F0(c.to)}`).join('、')}</span></span></div>`).join('')
+        : '');
 
   /* the three walls */
   const st=d.standing, em=st.emergency, tx=st.tax;

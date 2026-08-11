@@ -27,6 +27,7 @@ Path("/tmp/tools.db").unlink(missing_ok=True)
 from sqlalchemy import func, select  # noqa: E402
 
 from app import agent, changelog, fixed, migrate, prefs, tools  # noqa: E402
+from app.config import now as _now2  # noqa: E402, F401
 from app.db import Session, engine, get_kv, init_db  # noqa: E402
 from app.models import Change, MerchantMemory, Transaction  # noqa: E402
 
@@ -303,6 +304,68 @@ async def main():
         check("undo puts the charges back on the waiting list",
               t1.status == "prompted" and t1.category is None,
               f"{t1.status} / {t1.category}")
+
+        print("\n[12] the season: a target that remembers, and a gig that shows up as progress")
+        from app import analytics as AN, season as SE  # noqa: PLC0415
+
+        te = await AN.to_earn(s, 3)
+        before = await SE.progress(s, te["tiers"])
+        hold_b = next(t for t in before["tiers"] if t["name"] == "持平")
+        check("a season opens by itself rather than asking her to start one",
+              bool(before.get("start")) and before["days_left"] > 0,
+              f'{before.get("start")}–{before.get("end")}')
+        check("the target is the FLOOR, not the pending-reduced number",
+              near(hold_b["target"], next(t["bare"] for t in te["tiers"] if t["name"] == "持平")))
+
+        got = await tools.run(s, "add_expected_payment",
+                              {"amount": 2000, "note": "十月新案子", "when": "2026-10"},
+                              source_text="我十月接到一個新案子 $2000")
+        after = await SE.progress(s, (await AN.to_earn(s, 3))["tiers"])
+        hold_a = next(t for t in after["tiers"] if t["name"] == "持平")
+        check("going out and booking work moves the bar", hold_a["pct"] > hold_b["pct"],
+              f'{hold_b["pct"]}% → {hold_a["pct"]}%')
+        check("…and the gap closes by the discounted amount, not the face value",
+              hold_b["remaining"] - hold_a["remaining"] < 2000,
+              f'closed {hold_b["remaining"] - hold_a["remaining"]:.0f} of $2,000')
+        check("the target itself did NOT move underneath her",
+              near(hold_a["target"], hold_b["target"]),
+              f'{hold_b["target"]} → {hold_a["target"]}')
+
+        mine = [e for e in after["events"] if e.get("mine")]
+        check("the new job is logged as hers, not as a starting position",
+              any("十月新案子" in e["label"] for e in mine), str([e["label"] for e in mine]))
+        check("work done inside the season counts even when it pays just after it",
+              any(e.get("lands_after") for e in after["events"]),
+              str([(e["label"], e.get("lands")) for e in after["events"]]))
+        check("the log's running total lands exactly on the headline",
+              near(after["events"][-1]["running"], after["secured"]),
+              f'{after["events"][-1]["running"]} vs {after["secured"]}')
+        check("what she found this season is counted apart from what she walked in with",
+              after["won_this_season"] > 0 and
+              after["won_this_season"] <= after["booked"], str(after["won_this_season"]))
+
+        # her own read on a production beats the model's default
+        conf = await tools.run(s, "update_expected_payment",
+                               {"which": "十月新案子", "confidence": 0.2})
+        worse = await SE.progress(s, (await AN.to_earn(s, 3))["tiers"])
+        hold_w = next(t for t in worse["tiers"] if t["name"] == "持平")
+        check("she can say a production probably will not pay, and it counts for less",
+              conf["ok"] and hold_w["remaining"] > hold_a["remaining"],
+              f'{hold_a["remaining"]} → {hold_w["remaining"]}')
+
+        fresh = await tools.run(s, "start_new_season", {})
+        check("she can start the season over", fresh["ok"], str(fresh)[:90])
+        reopened = await SE.progress(s, (await AN.to_earn(s, 3))["tiers"])
+        check("a fresh season counts nothing she already had as her own achievement",
+              near(reopened["won_this_season"], 0.0), str(reopened["won_this_season"]))
+        check("…but the work she is holding still counts toward the target",
+              reopened["secured"] > 0, str(reopened["secured"]))
+
+        check("a not-yet-due invoice is not worth its face value",
+              prefs.confidence({"when": "2026-12", "amount": 1}, None) < 1.0,
+              str(prefs.confidence({"when": "2026-12", "amount": 1}, None)))
+        check("her explicit view overrides the default outright",
+              near(prefs.confidence({"when": "2026-12", "confidence": 1.0}), 1.0))
 
         check("the tools were offered to the model at all",
               len(tools.SCHEMAS) >= 12 and all("input_schema" in t for t in tools.SCHEMAS),
