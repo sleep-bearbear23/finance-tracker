@@ -97,16 +97,44 @@ def current_key() -> str:
 # ── income ───────────────────────────────────────────────────────────
 async def income_actual(session, end_key: str | None = None, n: int = ACTUAL_WINDOW) -> float:
     """Average confirmed income per half-month over the trailing window.
-    Imported history (source='notion') is display-only and never sets the live basis."""
+
+    Averaged over the periods we actually have records for, not over all `n`. The bank
+    sync only reaches back as far as its first imported transaction — mid-June, in Momo's
+    case, because SimpleFIN backfills 45 days. Dividing $1,585 by six half-months when
+    only four of them had a bank connection understated her income by a third and pinned
+    the plan lens below zero for reasons that had nothing to do with her earnings.
+
+    Imported history (source='notion') stays display-only and never sets the live basis."""
     end_key = end_key or current_key()
     keys = P.last_n(end_key, n)
     lo, _ = P.key_bounds(keys[0])
     _, hi = P.key_bounds(keys[-1])
-    rows = (await session.execute(select(Transaction).where(
-        Transaction.amount > 0, Transaction.status == "income", Transaction.source != "notion"
-    ))).scalars().all()
-    total = sum(t.amount for t in rows if (d := eff_date(t)) and lo <= d <= hi)
-    return total / n if n else 0.0
+    rows = (await session.execute(select(Transaction))).scalars().all()
+
+    # Only accounts that can RECEIVE money tell us anything about income. The Apple Card
+    # feed reaches back to 2024 but is card spending — it can never contain a deposit, so
+    # its depth says nothing about whether we'd have seen a paycheque.
+    bank = [d for t in rows if t.source == "simplefin" and (d := eff_date(t))]
+    if not bank:
+        return 0.0
+    first = min(bank)
+    today = now().date()
+
+    # Weight each period by the share of it the bank feed actually covers, so a period
+    # the sync only caught the tail of doesn't count as a full month of zero income.
+    weight = 0.0
+    for k in keys:
+        klo, khi = P.key_bounds(k)
+        start, end = max(klo, first), min(khi, today)
+        if end >= start:
+            weight += ((end - start).days + 1) / P.days_in(k)
+    if weight <= 0:
+        return 0.0
+
+    total = sum(t.amount for t in rows
+                if t.amount > 0 and t.status == "income" and t.source != "notion"
+                and (d := eff_date(t)) and lo <= d <= hi)
+    return total / weight
 
 
 async def income_expected(session, start_key: str | None = None, n: int = EXPECT_HORIZON) -> float:
