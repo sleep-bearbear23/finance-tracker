@@ -108,28 +108,34 @@
   /* The overview was doing five jobs. It is a glance now — what can I spend, what am I
      worth, where is it, and how have the last six months gone. Everything else earned
      its own page. */
+  /* 帳戶 used to span both rows, which left it 40% empty — six accounts do not fill 800px.
+     One row each, and 每半月收支 gets the full width it wanted: twelve periods × two bars
+     was cramped into two thirds of the page. */
   #s-home > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.05fr 1.3fr .92fr;
-    grid-template-rows:minmax(0,1fr) minmax(0,1.15fr);
+    grid-template-columns:1.22fr 1.25fr .96fr;
+    grid-template-rows:minmax(0,1.28fr) minmax(0,1fr);
     grid-template-areas:
       "budget   nw       accounts"
-      "flows    flows    accounts";}
+      "flows    flows    flows";}
   [data-pane=budget]{grid-area:budget} [data-pane=nw]{grid-area:nw}
   [data-pane=accounts]{grid-area:accounts} [data-pane=flows]{grid-area:flows}
   [data-pane=cats]{grid-area:cats} [data-pane=recent]{grid-area:recent}
   [data-pane=pending]{grid-area:pending}
 
-  /* budget ring */
-  .ringwrap{display:flex;align-items:center;gap:14px;flex:1;min-height:0}
-  .ring{position:relative;flex:0 0 auto;width:min(132px,34%);aspect-ratio:1}
+  /* budget ring — the headline of the whole app, so it gets the height the card has.
+     It used to be pinned at 132px inside a 380px-tall card, which left the card looking
+     half empty and made the one number Momo actually acts on the smallest thing on it. */
+  .ringwrap{display:flex;align-items:center;gap:20px;flex:1;min-height:0}
+  .ring{position:relative;flex:0 0 auto;width:clamp(132px,25vh,240px);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
     background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.06) 0);
     -webkit-mask:radial-gradient(circle, transparent 60%, #000 61%);
             mask:radial-gradient(circle, transparent 60%, #000 61%)}
   .ring .hole{position:absolute;inset:0;border-radius:50%;background:transparent;
     display:flex;flex-direction:column;align-items:center;justify-content:center}
-  .ring .hole .lbl{font-size:9px;font-weight:300;letter-spacing:.12em;color:var(--muted)}
-  .ring .hole .big{font-size:26px;font-weight:200;letter-spacing:-1.4px;font-variant-numeric:tabular-nums;line-height:1}
+  .ring .hole .lbl{font-size:clamp(9px,1.1vh,11px);font-weight:300;letter-spacing:.12em;color:var(--muted)}
+  .ring .hole .big{font-size:clamp(26px,4.1vh,40px);font-weight:200;letter-spacing:-1.4px;
+    font-variant-numeric:tabular-nums;line-height:1;margin:3px 0 1px}
   .ring .hole .big.pos{color:var(--accent)} .ring .hole .big.neg{color:var(--bad)}
   .ringside{flex:1;min-width:0;min-height:0;max-height:100%;overflow:auto}
   .kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:300;padding:7px 0;border-bottom:1px solid var(--grid)}
@@ -157,8 +163,8 @@
   .nwtop{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;flex:0 0 auto}
   .nwtop .big{font-size:clamp(28px,3.3vw,38px);font-weight:250;letter-spacing:-1.8px;color:var(--accent);line-height:1;font-variant-numeric:tabular-nums}
   .nwtop .delta{font-size:12px;font-weight:650}
-  .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto}
-  .pill{font-size:11px;padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.05);
+  .chiprow{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;flex:0 0 auto}
+  .pill{font-size:10.5px;padding:5px 9px;border-radius:999px;background:rgba(255,255,255,.05);
     border:1px solid var(--border);color:var(--ink2);white-space:nowrap;
     -webkit-backdrop-filter:blur(10px) saturate(150%);backdrop-filter:blur(10px) saturate(150%);
     box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.35),
@@ -387,8 +393,8 @@
 
   @media(max-width:900px){
     #s-home > .grid{grid-template-columns:1fr 1fr;
-      grid-template-rows:auto auto minmax(0,1fr);
-      grid-template-areas:"budget nw" "flows flows" "accounts recent";}
+      grid-template-rows:minmax(0,1fr) minmax(0,.85fr) minmax(0,1fr);
+      grid-template-areas:"budget nw" "accounts accounts" "flows flows";}
     [data-pane=cats],[data-pane=pending]{display:none}
     #s-account > .grid{grid-template-columns:1fr 1fr;
       grid-template-rows:auto minmax(0,.9fr) minmax(0,1.2fr);
@@ -406,7 +412,11 @@
     .tabs{display:none} .asof{display:none} .brandtxt .quip{display:none}
     .bottomnav{display:flex}
     .segbar{display:flex}
-    .ring{width:104px}
+    /* the viewport-height clamp is for the desktop card; on a phone the ring is fixed and
+       the figure has to fit the hole, not the screen */
+    .ring{width:128px}
+    .ring .hole .big{font-size:23px;letter-spacing:-1px}
+    .ring .hole .lbl{font-size:8.5px;letter-spacing:.08em}
     .nwtop .big{font-size:26px}
     [data-pane=nw] .sparkwrap{display:none}
     .stats3{grid-template-columns:repeat(2,1fr);gap:8px}
@@ -548,7 +558,7 @@
       <section class="card" data-pane="ahead">
         <div class="ahead-in">
           <div style="min-width:0">
-            <div class="back" onclick="go('#/')">← 回總覽</div>
+            <div class="back" id="aBack" onclick="go(backTo)">← 回帳戶</div>
             <div class="nm" id="aName">—</div>
             <div id="aMeta" style="margin-top:4px"></div>
           </div>
@@ -820,6 +830,11 @@ function setNav(name){
     if(b) b.classList.toggle('on',on);
   }
 }
+/* Where "← 回…" goes. An account detail is reachable from two lists, so the back link
+   remembers which one you actually came from instead of always dumping you on 總覽 —
+   Momo: "when click on an account in accounts tab and then back button, it returns to
+   home page rather than accounts tab". */
+let backTo='#/accounts';
 async function route(){
   const h=location.hash||'#/';
   const m=h.match(/^#\/a\/(.+)$/);
@@ -830,6 +845,8 @@ async function route(){
   else if(h.startsWith('#/cal')) view='cal';
   else if(h.startsWith('#/income')) view='income';
   else if(h.startsWith('#/brain')) view='brain';
+  if(view==='home')  { backTo='#/';         el('aBack').textContent='← 回總覽'; }
+  if(view==='acct')  { backTo='#/accounts'; el('aBack').textContent='← 回帳戶'; }
   for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
   setNav(view); buildSeg(view);
   try{
