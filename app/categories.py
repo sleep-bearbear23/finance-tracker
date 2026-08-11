@@ -106,7 +106,11 @@ _RX_RULES: list[tuple[str, str]] = [
      r"flower|bloom connection|st\.? vincent", "Art & Work Supplies"),
     (r"\bcvs\b|walgreens|rite aid|pharmacy|uscis", "Health"),
     (r"petco|petsmart|chewy|pet food", "Pets"),
-    (r"sephora|ulta\b|olive young|sally beauty|hair salon|\bnail|barber|superbcut", "Beauty"),
+    (r"sephora|ulta\b|olive young|sally beauty|hair salon|beauty salon|\bnail|barber|superbcut", "Beauty"),
+    (r"pet center|pet shop", "Pets"),
+    (r"kazu ?nori|rice & nori|carls jr|carl's jr|cravings|loft and pops|poke bar", "Eating Out"),
+    (r"sencha|matcha", "Coffee"),
+    (r"cinepolis", "Fun & Going Out"),
     (r"uniqlo|zara\b|h&m|hm\.com|free people|ross stores|goodwill|windsor|hollister|"
      r"american eagle|lovisa|casetify|vintage|thrift|daiso|ikea|bed bath|apple store|"
      r"target|amazon|amzn|ebay|etsy", "Shopping"),
@@ -143,6 +147,8 @@ _TRANSFER_KEYWORDS = [
     # paying the Apple Card from Chase shows up like this — money moving, not spending
     "applecard", "apple card ach", "gsbank", "goldman sachs bank", "ach deposit internet transfer",
     "venmo cashout", "venmo payment",
+    # Chase moving money between Momo's own accounts (checking ↔ investment sweep, ACH pushes)
+    "deposit sweep", "intra day", "intra-day", "banklink ach",
 ]
 
 

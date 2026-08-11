@@ -37,8 +37,9 @@ async def ensure_accounts(session) -> int:
 
 
 async def run(session) -> tuple[int, int]:
-    """Returns (n_categorized, n_swept_transfers)."""
-    if await get_kv(session, "cleanup_v1") == "1":
+    """Returns (n_categorized, n_swept_transfers). Flag bumps whenever the rules widen,
+    so each rules upgrade re-sweeps history once."""
+    if await get_kv(session, "cleanup_v2") == "1":
         return 0, 0
 
     rows = (await session.execute(select(Transaction))).scalars().all()
@@ -60,7 +61,7 @@ async def run(session) -> tuple[int, int]:
                 t.category = g
                 n_cat += 1
 
-    await set_kv(session, "cleanup_v1", "1")
+    await set_kv(session, "cleanup_v2", "1")
     if n_cat or n_xfer:
         await session.commit()
     return n_cat, n_xfer
