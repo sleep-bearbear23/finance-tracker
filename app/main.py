@@ -247,6 +247,46 @@ async def health_detail():
     return out
 
 
+@app.post("/project_note")
+async def project_note(request: Request):
+    """張特助 hands over a BOOKED project with confirmed income. She raises it with Momo
+    herself, in her own voice — 「你的特助剛剛跟我說…」 — not as a forwarded system line."""
+    if not settings.INGEST_TOKEN or request.query_params.get("key") != os.environ.get("OPS_KEY", ""):
+        return Response(status_code=403)
+    d = await request.json()
+    code = str(d.get("code", ""))[:40]
+    title = str(d.get("title", ""))[:80]
+    company = str(d.get("company", ""))[:80]
+    rate = str(d.get("rate", ""))[:40]
+    days = d.get("days") or 0
+    async with Session() as s:
+        seen = await get_kv(s, f"proj_{code}")
+        if seen:
+            return {"ok": True, "duplicate": True}
+        await set_kv(s, f"proj_{code}", now().isoformat(timespec="minutes"))
+        owner = await get_kv(s, enrichment.OWNER_KEY)
+        if not owner:
+            return {"ok": True, "queued": False}
+        facts = "、".join(x for x in (
+            f"案子代號 {code}", title, f"製作方 {company}" if company else "",
+            f"報價 {rate}" if rate else "", f"預計 {days} 天" if days else "") if x)
+        try:
+            msg = await llm.freeform(
+                "默默的特助（張特助）剛剛通知你：她接了一個新案子，之後會有收入。\n"
+                f"案子資訊：{facts}\n"
+                "用你自己的口氣跟默默提這件事——開頭要讓她知道是特助跟你說的"
+                "（像「你的特助剛剛跟我說…」），然後問你需要知道的那一兩件事"
+                "（什麼時候付、怎麼付、要不要先算進這期預算）。三句以內，別列清單。")
+        except Exception:
+            msg = (f"你的特助剛剛跟我說你接了 {code} 這個案子"
+                   + (f"（{company}）" if company else "") + "。"
+                   + (f"報價 {rate}。" if rate else "")
+                   + "錢什麼時候會進來？我先幫你記著。")
+        await line_client.push(owner, msg)
+        await memory.remember(s, "assistant", msg)
+    return {"ok": True}
+
+
 @app.post("/ingest/tap")
 async def ingest_tap(request: Request):
     """Called by the iOS Shortcut on every Apple Pay tap (Apple Card real-time)."""

@@ -245,6 +245,12 @@ async def invoice_ack(kind: str, item: dict) -> str:
     return await _say(instr, max_tokens=160)
 
 
+async def freeform(instruction: str, max_tokens: int = 260) -> str:
+    """Say something in her voice from a one-off instruction (used when 張特助 hands over
+    a newly booked project and she needs to raise it with Momo herself)."""
+    return await _say(instruction, max_tokens=max_tokens)
+
+
 async def deploy_note(commit_message: str) -> str:
     instr = (
         "你（默默的理財阿姨）剛更新上線。工程師寫的更新內容是英文技術描述："
