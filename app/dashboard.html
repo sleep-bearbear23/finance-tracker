@@ -69,7 +69,8 @@
   .brandtxt h1{font-size:14px;margin:0;font-weight:400;letter-spacing:.06em;white-space:nowrap}
   .brandtxt .quip{font-size:10.5px;font-weight:300;letter-spacing:.03em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tabs{display:inline-flex;gap:2px;background:rgba(255,255,255,.04);border:1px solid var(--border);
-    border-radius:999px;padding:3px;margin-left:auto;
+    border-radius:999px;padding:3px;margin-left:auto;max-width:100%;overflow-x:auto;
+    scrollbar-width:none;-ms-overflow-style:none;
     -webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);
     box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.3), 0 2px 10px rgba(0,0,0,.4)}
   .tabs a{font-size:11.5px;color:var(--ink2);padding:7px 16px;border-radius:999px;font-weight:300;
@@ -77,6 +78,7 @@
   .tabs a.on{color:var(--accent);background:rgba(255,255,255,.05);
     box-shadow:inset 0 0 0 1px rgba(46,229,169,.28),
                inset 1px 1px 1px -.5px rgba(255,255,255,.4)}
+  .tabs::-webkit-scrollbar{display:none}
   .asof{font-size:10px;font-weight:300;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
 
   .screen{flex:1;min-height:0;display:none}
@@ -258,6 +260,37 @@
   .cover.warn{border-color:rgba(255,176,46,.35);background:rgba(255,176,46,.08);color:var(--warn)}
 
   /* ── INCOME screen ── */
+  #s-acct > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.25fr 1fr;
+    grid-template-rows:minmax(0,1.1fr) minmax(0,1fr);
+    grid-template-areas:
+      "alist  acomp"
+      "alist  arecent";}
+  [data-pane=alist]{grid-area:alist} [data-pane=acomp]{grid-area:acomp}
+  [data-pane=arecent]{grid-area:arecent}
+
+  #s-cal > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.25fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
+    grid-template-areas:
+      "callist  calbars"
+      "callist  calpend";}
+  [data-pane=callist]{grid-area:callist} [data-pane=calbars]{grid-area:calbars}
+  [data-pane=calpend]{grid-area:calpend}
+
+  /* a dated row: when, what, how much */
+  .ev{display:flex;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid var(--grid)}
+  .ev:last-child{border-bottom:none}
+  .ev .when{flex:0 0 5.4em;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .ev .what{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .what .sub{display:block;font-size:10px;color:var(--muted);margin-top:2px;
+    overflow:hidden;text-overflow:ellipsis}
+  .ev .amt{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ev.soon .when{color:var(--warn)}
+  .monthsep{font-size:9.5px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;
+    padding:14px 0 4px;border-bottom:1px solid var(--grid)}
+  .monthsep:first-child{padding-top:0}
+
   #s-plan > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1.15fr 1fr;
     grid-template-rows:minmax(0,1fr) minmax(0,1fr);
@@ -345,12 +378,15 @@
 
     /* one hero + exactly one switchable pane; only that pane scrolls.
        NOTE: hide rules are kept at LOWER specificity than the sel-* show rules. */
-    #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid, #s-plan > .grid{
+    #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid, #s-plan > .grid,
+    #s-acct > .grid, #s-cal > .grid{
       display:flex;flex-direction:column;gap:8px}
     #s-home > .grid > [data-pane],
     #s-account > .grid > [data-pane],
     #s-income > .grid > [data-pane],
     #s-plan > .grid > [data-pane],
+    #s-acct > .grid > [data-pane],
+    #s-cal > .grid > [data-pane],
     #s-brain > .grid > [data-pane]{display:none}
 
     /* pinned heroes */
@@ -369,6 +405,12 @@
     #s-account > .grid.sel-acurve > [data-pane=acurve],
     #s-account > .grid.sel-aflow  > [data-pane=aflow],
     #s-account > .grid.sel-acats  > [data-pane=acats],
+    #s-acct > .grid.sel-alist   > [data-pane=alist],
+    #s-acct > .grid.sel-acomp   > [data-pane=acomp],
+    #s-acct > .grid.sel-arecent > [data-pane=arecent],
+    #s-cal  > .grid.sel-callist > [data-pane=callist],
+    #s-cal  > .grid.sel-calbars > [data-pane=calbars],
+    #s-cal  > .grid.sel-calpend > [data-pane=calpend],
     #s-plan > .grid.sel-toearn   > [data-pane=toearn],
     #s-plan > .grid.sel-standing > [data-pane=standing],
     #s-plan > .grid.sel-cats     > [data-pane=cats],
@@ -409,6 +451,8 @@
     <div class="tabs">
       <a id="tab-home" href="#/">總覽</a>
       <a id="tab-plan" href="#/plan">計畫</a>
+      <a id="tab-acct" href="#/accounts">帳戶</a>
+      <a id="tab-cal" href="#/cal">行事曆</a>
       <a id="tab-income" href="#/income">收入</a>
       <a id="tab-brain" href="#/brain">訓練輪</a>
     </div>
@@ -504,6 +548,52 @@
   </div>
 
   <!-- ───────── INCOME ───────── -->
+  <div class="screen" id="s-acct">
+    <div class="grid sel-alist" id="acctsGrid">
+
+      <section class="card" data-pane="alist">
+        <h2>所有帳戶 <span class="more" id="alistMeta"></span></h2>
+        <div class="body" id="alistBox"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="acomp">
+        <h2>錢在哪</h2>
+        <div class="flexbody"><div class="donutwrap">
+          <div class="donutbox"><canvas id="acompChart"></canvas>
+            <div class="ctr"><b id="acompTotal">—</b><span>可動用＋投資</span></div></div>
+          <div class="cat-legend" id="acompLegend"></div>
+        </div></div>
+      </section>
+
+      <section class="card" data-pane="arecent">
+        <h2>最近的帳 <span class="more" onclick="go('#/brain')">完整紀錄 →</span></h2>
+        <div class="body" id="arecentBox"><div class="empty">載入中…</div></div>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="screen" id="s-cal">
+    <div class="grid sel-callist" id="calGrid">
+
+      <section class="card" data-pane="callist">
+        <h2>接下來 <span class="more" id="calMeta"></span></h2>
+        <div class="body" id="calBox"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="calbars">
+        <h2>每月進出 <span class="more">只算有日期的</span></h2>
+        <div class="flexbody"><div class="cbox"><canvas id="calChart"></canvas></div></div>
+      </section>
+
+      <section class="card" data-pane="calpend">
+        <h2>待收款 <span class="more" id="calPendMeta"></span></h2>
+        <div class="body" id="calPendBox"><div class="empty">載入中…</div></div>
+      </section>
+
+    </div>
+  </div>
+
   <div class="screen" id="s-plan">
     <div class="grid sel-toearn" id="planGrid">
 
@@ -556,8 +646,10 @@
 
   <div class="bottomnav">
     <a id="bn-home" href="#/"><span class="ic">◎</span>總覽</a>
+    <a id="bn-plan" href="#/plan"><span class="ic">◇</span>計畫</a>
+    <a id="bn-acct" href="#/accounts"><span class="ic">▤</span>帳戶</a>
+    <a id="bn-cal" href="#/cal"><span class="ic">◷</span>行事曆</a>
     <a id="bn-income" href="#/income"><span class="ic">↓</span>收入</a>
-    <a id="bn-brain" href="#/brain"><span class="ic">✳</span>訓練輪</a>
   </div>
 </div>
 
@@ -584,6 +676,8 @@ function toggleWhy(){
 }
 // If two blocks ever disagree again, say so on screen rather than showing two numbers
 // and letting Momo work out which one lied.
+const stamp = t => el('asof').textContent =
+  '更新於 '+new Date(t||Date.now()).toLocaleString('zh-TW',{hour12:false});
 function showAudit(problems){
   const seen=[...new Set((problems||[]).filter(Boolean))];
   let bar=document.getElementById('auditBar');
@@ -630,11 +724,14 @@ function halfMonthScales(points,yFmt){
 const SEGS = {
   home:   [['accounts','帳戶'],['flows','半月收支']],
   plan:   [['toearn','要賺多少'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
+  acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
+  cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   income: [['irecv','已入帳'],['iexp','待收款']],
   brain:  [['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
-const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', income:'incGrid', brain:'brainGrid'};
+const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', acct:'acctsGrid',
+              cal:'calGrid', income:'incGrid', brain:'brainGrid'};
 function selectPane(view,pane){
   const g = el(GRID[view]); if(!g) return;
   g.className = g.className.replace(/\bsel-\S+/g,'').trim() + ' sel-' + pane;
@@ -650,10 +747,10 @@ function buildSeg(view){
 
 /* ── routing ── */
 function go(h){ location.hash=h; }
-const VIEWS=['home','account','plan','income','brain'];
+const VIEWS=['home','account','plan','acct','cal','income','brain'];
 function setNav(name){
-  for(const v of ['home','plan','income','brain']){
-    const on = (v===name)||(name==='account'&&v==='home');
+  for(const v of ['home','plan','acct','cal','income','brain']){
+    const on = (v===name)||(name==='account'&&v==='acct');
     const t=el('tab-'+v), b=el('bn-'+v);
     if(t) t.classList.toggle('on',on);
     if(b) b.classList.toggle('on',on);
@@ -665,6 +762,8 @@ async function route(){
   let view='home';
   if(m) view='account';
   else if(h.startsWith('#/plan')) view='plan';
+  else if(h.startsWith('#/accounts')) view='acct';
+  else if(h.startsWith('#/cal')) view='cal';
   else if(h.startsWith('#/income')) view='income';
   else if(h.startsWith('#/brain')) view='brain';
   for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
@@ -672,6 +771,8 @@ async function route(){
   try{
     if(view==='account'){ curAccount=decodeURIComponent(m[1]); aOffset=0; aInit=false; await loadAccount(); }
     else if(view==='plan'){ el('pageTitle').textContent='計畫'; await loadPlan(); }
+    else if(view==='acct'){ el('pageTitle').textContent='帳戶'; await loadAccounts(); }
+    else if(view==='cal'){ el('pageTitle').textContent='行事曆'; await loadCal(); }
     else if(view==='income'){ el('pageTitle').textContent='收入紀錄'; await loadIncome(); }
     else if(view==='brain'){ el('pageTitle').textContent='訓練輪'; await loadBrain(); }
     else { el('pageTitle').textContent='默默，阿姨看著呢'; await loadHome(); }
@@ -686,7 +787,7 @@ async function loadHome(){
   if(homeLoaded) return; homeLoaded=true;
   const [o,t,acc] = await Promise.all([
     getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts')]);
-  el('asof').textContent='更新於 '+new Date(o.as_of).toLocaleString('zh-TW',{hour12:false});
+  stamp(o.as_of);
   showAudit([...(o.audit||[]),...(t.audit||[]),...(acc.audit||[])]);
 
   if(o.budget){
@@ -773,7 +874,7 @@ let planLoaded=false;
 async function loadPlan(){
   if(planLoaded) return; planLoaded=true;
   const d = await getJSON('/api/plan');
-  showAudit(d.audit||[]);
+  stamp(); showAudit(d.audit||[]);
 
   /* 需要賺 — the number Momo holds up against a gig offer */
   const te=d.to_earn;
@@ -843,6 +944,96 @@ async function loadPlan(){
                  ticks:{color:css('--muted'),font:{size:10}}},
               y:{grid:{color:css('--grid')},ticks:{color:css('--muted'),font:{size:10},
                  callback:v=>F0(v)}}}}});
+}
+
+/* ── ACCOUNTS (all of them) ── */
+let acctsLoaded=false;
+async function loadAccounts(){
+  if(acctsLoaded) return; acctsLoaded=true;
+  const [acc, rec] = await Promise.all([getJSON('/api/accounts'), getJSON('/api/ledger?limit=40')]);
+  stamp(); showAudit(acc.audit||[]);
+
+  el('alistMeta').textContent =
+    `現金 ${F0(acc.cash_total)}${acc.invest_total?` · 投資 ${F0(acc.invest_total)}`:''} · 卡債 ${F0(acc.debt_total)}`;
+  const kindName = {cash:'現金', invest:'投資', credit:'欠款'};
+  el('alistBox').innerHTML = acc.accounts.map(a=>{
+    const owe=a.kind==='credit', inv=a.kind==='invest';
+    return `<div class="arow" onclick="go('#/a/${encodeURIComponent(a.id)}')">
+      <i class="dot" style="background:${owe?'var(--s3)':inv?'var(--s5)':'var(--s1)'}"></i>
+      <span class="an">${esc(a.name)}<span class="sub">${esc(kindName[a.kind]||'')} · ${esc(a.balance_src)}
+        · ${a.n_txns} 筆${a.last?` · 到 ${esc(a.last)}`:''}
+        ${a.coverage_note?` · <span style="color:var(--warn)">${esc(a.coverage_note)}</span>`:''}</span></span>
+      <span class="av ${owe?'neg':''}">${owe?'-':''}${F(a.balance||0)}</span><span class="caret">›</span></div>`;
+  }).join('') + (acc.records&&acc.records.length ? `<div class="monthsep">只是紀錄，不是帳戶</div>` +
+    acc.records.map(r=>`<div class="arow" style="cursor:default"><i class="dot" style="background:rgba(255,255,255,.2)"></i>
+      <span class="an">${esc(r.name)}<span class="sub">${r.n_txns} 筆</span></span></div>`).join('') : '');
+
+  /* where the money sits — cash and investments only; debt is not a place money is */
+  const pos = acc.accounts.filter(a=>a.kind!=='credit' && (a.balance||0)>0);
+  el('acompTotal').textContent = F0(pos.reduce((s,a)=>s+a.balance,0));
+  if(pos.length){
+    chart('acompChart',{type:'doughnut',
+      data:{labels:pos.map(a=>a.name),datasets:[{data:pos.map(a=>a.balance),
+        backgroundColor:pos.map((a,i)=>a.kind==='invest'?'#9085e9':CATCOLORS[i%CATCOLORS.length]),
+        borderColor:'#0b0b11',borderWidth:3,borderRadius:3}]},
+      options:{cutout:'72%',plugins:{tooltip:{callbacks:{label:c=>c.label+'  '+F(c.parsed)}}}}});
+    const tot = pos.reduce((s,a)=>s+a.balance,0);
+    el('acompLegend').innerHTML = pos.map((a,i)=>
+      `<div class="cl"><i class="dot" style="background:${a.kind==='invest'?'#9085e9':CATCOLORS[i%CATCOLORS.length]}"></i>
+       ${esc(a.name)}<b>${Math.round(100*a.balance/tot)}%</b></div>`).join('');
+  }
+
+  el('arecentBox').innerHTML = rec.rows.length ? rec.rows.map(t=>`
+    <div class="arow" style="cursor:default"><i class="dot" style="background:${t.category?catColor(t.category):'rgba(255,255,255,.25)'}"></i>
+      <span class="an">${esc((t.merchant||'').slice(0,34))}<span class="sub">${esc(t.date.slice(5))} · ${esc(t.cat_label||cz(t.category))} · ${esc(t.account)}</span></span>
+      <span class="av ${t.amount<0?'':'pos'}">${F(t.amount)}</span></div>`).join('')
+    : '<div class="empty">還沒有交易。</div>';
+}
+
+/* ── CALENDAR ── */
+let calLoaded=false;
+async function loadCal(){
+  if(calLoaded) return; calLoaded=true;
+  const [c, o] = await Promise.all([getJSON('/api/calendar'), getJSON('/api/overview')]);
+  stamp(o.as_of);
+
+  const KIND={renewal:'扣款', tax:'繳稅', income:'進帳'};
+  el('calMeta').textContent = `${c.items.length} 件`;
+  let lastMonth='';
+  el('calBox').innerHTML = c.items.length ? c.items.map(it=>{
+    const mo = it.date.slice(0,7);
+    const sep = mo!==lastMonth ? `<div class="monthsep">${mo.replace('-','／')}</div>` : '';
+    lastMonth = mo;
+    const soon = it.days<=21;
+    const amt = it.amount==null ? '<span style="color:var(--muted)">—</span>'
+      : `<span style="color:${it.amount>=0?'var(--accent)':'var(--ink)'}">${F0(it.amount)}</span>`;
+    return sep + `<div class="ev ${soon?'soon':''}">
+      <span class="when">${esc(it.date.slice(5))}<br>${it.days>=0?`${it.days} 天`:'已過'}</span>
+      <span class="what">${esc(it.label)}<span class="sub">${esc(KIND[it.kind]||'')} · ${esc(it.note)}</span></span>
+      <span class="amt">${amt}</span></div>`;
+  }).join('') : '<div class="empty">接下來沒有排定的事。</div>';
+
+  const bm=c.by_month||[];
+  if(bm.length) chart('calChart',{type:'bar',
+    data:{labels:bm.map(x=>x.month.slice(2).replace('-','/')),datasets:[
+      {label:'進',data:bm.map(x=>x.in),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:20},
+      {label:'出',data:bm.map(x=>x.out),backgroundColor:'#e2477e',borderRadius:4,maxBarThickness:20}]},
+    options:{plugins:{legend:{display:true,position:'bottom',
+        labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+                color:css('--ink2'),font:{size:10},padding:12}},
+      tooltip:{callbacks:{label:x=>x.dataset.label+'  '+F(x.parsed.y)}}},
+      scales:{x:{grid:{display:false},ticks:{color:css('--muted'),font:{size:10}}},
+              y:{grid:{color:css('--grid')},ticks:{color:css('--muted'),font:{size:10},callback:v=>F0(v)}}}}});
+
+  const p=o.pending;
+  el('calPendMeta').textContent = p.total ? `合計 ${F0(p.total)}` : '';
+  el('calPendBox').innerHTML = p.items.length ? p.items.map(x=>
+      `<div class="row"><span class="l" title="${esc(x.note)}"><span class="nm">${esc(x.note)}</span>
+        ${x.overdue?'<span class="chip warn">該進來了</span>':''}
+        <span class="tag">${esc(x.when||'未定')}</span></span><span class="r">${F(x.amount)}</span></div>`).join('')
+      + `<div class="row"><span class="l"><b style="color:var(--ink)">入帳後可動用</b></span>
+         <span class="r">${F(p.projected)}</span></div>`
+    : '<div class="empty">目前沒有待收款。</div>';
 }
 
 /* ── ACCOUNT ── */
