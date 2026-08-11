@@ -230,6 +230,10 @@ async def main():
     check("with no wrap date, the clock starts at the end of the work month",
           _prefs.landing(sept) == _date(2026, 9, 30) + timedelta(days=_prefs.PAY_LAG_DAYS),
           str(_prefs.landing(sept)))
+    check("a date the production actually gave her beats every estimate",
+          _prefs.landing({"when": "2026-09", "wrapped_on": "2026-09-14",
+                          "expect_on": "2026-09-25"}) == _date(2026, 9, 25),
+          str(_prefs.landing({"when": "2026-09", "expect_on": "2026-09-25"})))
     check("a real wrap date beats the month — 9/2 and 9/28 are not the same money",
           _prefs.landing({"when": "2026-09", "wrapped_on": "2026-09-02"})
           < _prefs.landing({"when": "2026-09", "wrapped_on": "2026-09-28"}))
