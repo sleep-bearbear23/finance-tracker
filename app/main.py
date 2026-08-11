@@ -156,6 +156,9 @@ async def lifespan(app: FastAPI):
             ne = await cleanup.ensure_accounts(s)  # Apple Card / GS Savings / Venmo always in ledger
             if ne:
                 print(f"[cleanup] added {ne} known manual account(s) to the ledger")
+            nd = await cleanup.dedupe_ledger(s)  # drop manual copies of bank-synced accounts
+            if nd:
+                print(f"[cleanup] removed {nd} duplicate ledger account(s)")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

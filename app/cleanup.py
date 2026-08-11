@@ -21,6 +21,35 @@ _KNOWN_MANUAL_ACCOUNTS = [
 ]
 
 
+async def dedupe_ledger(session) -> int:
+    """Drop manual ledger entries that duplicate an account the bank already syncs
+    (or a same-account alias). Runs once; the bank copy always wins."""
+    from sqlalchemy import select as _select
+
+    from . import accounts as acct
+    from .models import Account
+
+    if await get_kv(session, "dedupe_ledger_v1") == "1":
+        return 0
+    synced = [acct.norm(a.name) for a in
+              (await session.execute(_select(Account))).scalars().all()]
+    prof = await prefs.get_income_profile(session)
+    ledger = prof.get("accounts") or []
+    kept, dropped = [], 0
+    seen: list[str] = []
+    for m in ledger:
+        nm = m.get("name") or ""
+        if acct.norm(nm) and (acct.duplicates(nm, synced) or acct.duplicates(nm, seen)):
+            dropped += 1
+            continue
+        seen.append(acct.norm(nm))
+        kept.append(m)
+    if dropped:
+        await prefs.set_income_profile(session, {"accounts": kept})
+    await set_kv(session, "dedupe_ledger_v1", "1")
+    return dropped
+
+
 async def ensure_accounts(session) -> int:
     """Make sure Momo's known manual accounts exist in the ledger. Returns how many were added."""
     if await get_kv(session, "ensure_accounts_v1") == "1":

@@ -13,6 +13,7 @@ balance are always talking about the same money.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 
 from sqlalchemy import select
@@ -27,9 +28,39 @@ _CARD_WORDS = ("card", "freedom", "credit", "visa", "mastercard", "amex", "disco
 NOTION_ID = "record:notion"
 OTHER_ID = "manual:other"
 
+# One account wearing two names: a manual-ledger name (left) is the SAME account the bank
+# already syncs (right) — e.g. Momo's "J.P. Morgan Investment" IS Chase "Self-Directed (7435)".
+# The synced copy always wins; the manual duplicate is dropped.
+_ALIASES = [
+    (("jpmorgan", "jpmorganinvestment", "investment"), ("selfdirected",)),
+]
+
+
+def duplicates(manual_name: str, known_norms: list[str]) -> bool:
+    """True when a manual entry is really one of the accounts we already know
+    (identical name, one containing the other, or a known alias)."""
+    m = norm(manual_name)
+    if len(m) < 4:
+        return False
+    for s in known_norms:
+        if len(s) >= 4 and (m == s or m in s or s in m):
+            return True
+    for left, right in _ALIASES:
+        if any(k in m for k in left) and any(any(k in s for k in right) for s in known_norms):
+            return True
+    return False
+
 
 def slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-") or "unknown"
+    """A stable url-safe id. Names written in Chinese would otherwise collapse to the same
+    ascii stub (「Chase 支票」and「Chase 存款」both → 'chase'), so when characters get dropped
+    we append a short hash of the full name to keep every account distinct."""
+    base = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    full = norm(name)
+    if base.replace("-", "") != full:  # something (e.g. CJK) was dropped
+        h = hashlib.sha1(full.encode("utf-8")).hexdigest()[:6]
+        base = f"{base}-{h}" if base else h
+    return base or "unknown"
 
 
 def norm(name: str) -> str:
@@ -59,19 +90,28 @@ async def registry(session) -> dict[str, dict]:
         }
 
     # 2) manual ledger accounts (Apple Card, Apple GS Savings, Venmo, cash…)
+    #    Anything the bank already syncs is skipped — one account, listed once.
+    known = [norm(a["name"]) for a in out.values()]
     prof = await prefs.get_income_profile(session)
     for m in (prof.get("accounts") or []):
         nm = m.get("name") or "帳戶"
+        if duplicates(nm, known):
+            continue  # the synced copy already covers it
         try:
             amt = float(m.get("amount") or 0)
         except (TypeError, ValueError):
             amt = 0.0
-        out[f"manual:{slug(nm)}"] = {
-            "id": f"manual:{slug(nm)}", "name": nm,
+        aid = f"manual:{slug(nm)}"
+        if aid in out:  # same slug twice in the ledger — keep whichever states a balance
+            if amt <= (out[aid]["balance"] or 0):
+                continue
+        out[aid] = {
+            "id": aid, "name": nm,
             "kind": "credit" if m.get("type") == "credit" else "cash",
             "balance": amt, "balance_src": "自己報", "org": "", "balance_date": None,
             "raw_ids": set(),
         }
+        known.append(norm(nm))
     return out
 
 
