@@ -68,6 +68,12 @@ SCHEMAS: list[dict] = [
                 "wrapped_on": {"type": "string",
                                "description": "YYYY-MM-DD the shoot finished, when known. The "
                                               "payment clock runs from this, not from the month."},
+                "expect_on": {"type": "string",
+                              "description": "YYYY-MM-DD, but ONLY when a production actually "
+                                             "told her a date — 「他們說這個月底付」. It overrides "
+                                             "the estimate outright. Never invent one; without "
+                                             "it the date is derived from the wrap plus the "
+                                             "usual lag, which is the honest default."},
                 "force": {"type": "boolean",
                           "description": "Only after Momo confirms it is genuinely a second, "
                                          "separate job — not the one already on the list."},
@@ -101,6 +107,12 @@ SCHEMAS: list[dict] = [
                                "description": "YYYY-MM-DD it wrapped. Setting this also moves the "
                                               "stage to wrapped and restarts the payment clock "
                                               "from the real date."},
+                "expect_on": {"type": "string",
+                              "description": "YYYY-MM-DD, but ONLY when a production actually "
+                                             "told her a date — 「他們說這個月底付」. It overrides "
+                                             "the estimate outright. Never invent one; without "
+                                             "it the date is derived from the wrap plus the "
+                                             "usual lag, which is the honest default."},
                 "confidence": {"type": "number",
                                "description": "0–1. How much of this one to actually count on. "
                                               "Set it ONLY when Momo says something about whether "
@@ -378,7 +390,7 @@ def _miss(which: str, items: list[dict], field: str, ambiguous: list[dict], what
 
 
 async def add_expected_payment(s, rec, amount, note, when=None, days=None,
-                               stage=None, wrapped_on=None, force=False):
+                               stage=None, wrapped_on=None, expect_on=None, force=False):
     # A duplicate here is not a cosmetic problem: 待收款 feeds the projection and the
     # 需要賺 index, so the same job entered twice tells her she can afford things twice.
     if not force:
@@ -389,7 +401,7 @@ async def add_expected_payment(s, rec, amount, note, when=None, days=None,
                               f"（{dup.get('when') or '未定'}）。是要改那一筆，還是真的是另一個案子？"
                               "確定是新的再用 force=true。")}
     item = await prefs.add_invoice(s, amount, when, note, stage=stage,
-                                   wrapped_on=wrapped_on, days=days)
+                                   wrapped_on=wrapped_on, days=days, expect_on=expect_on)
     land = prefs.landing(item)
     st = prefs.stage_of(item)
     conf = prefs.confidence(item)
@@ -401,7 +413,7 @@ async def add_expected_payment(s, rec, amount, note, when=None, days=None,
 
 
 async def update_expected_payment(s, rec, which, amount=None, when=None, note=None,
-                                  days=None, stage=None, wrapped_on=None,
+                                  days=None, stage=None, wrapped_on=None, expect_on=None,
                                   confidence=None):
     items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
     old, amb = _resolve(items, which, "note")
@@ -409,7 +421,7 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
         return _miss(which, items, "note", amb, "待收款")
     before = dict(old)
     hit = await prefs.update_invoice(s, which, amount, when, note)
-    extra = {k: v for k, v in (("days", days), ("stage", stage),
+    extra = {k: v for k, v in (("days", days), ("stage", stage), ("expect_on", expect_on),
                                ("wrapped_on", wrapped_on), ("confidence", confidence))
              if v is not None}
     if extra and hit is not None:
@@ -439,6 +451,8 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
                     + f"，信心 {prefs.confidence(before):.0%} → {prefs.confidence(hit or before):.0%}")
     if days is not None:
         bits.append(f"拍 {days} 天")
+    if expect_on:
+        bits.append(f"對方說 {str(expect_on)[:10]} 付，預估入帳日改成這天")
     if confidence is not None:
         bits.append(f"這筆只當 {float(confidence):.0%} 算")
     rec.says(f"改了待收款「{before.get('note')}」：" + ("、".join(bits) or "沒有實際變動"))

@@ -94,7 +94,7 @@ async def set_income_profile(session, data: dict) -> None:
                 # silently wipe stage / wrap date / day count on the next profile paste
                 row = {"amount": amt, "when": u.get("when"), "note": u.get("note"),
                        "status": u.get("status") or "pending"}
-                for k in ("stage", "wrapped_on", "days", "confidence"):
+                for k in ("stage", "wrapped_on", "days", "confidence", "expect_on"):
                     if u.get(k) is not None:
                         row[k] = u[k]
                 clean.append(row)
@@ -194,14 +194,24 @@ def stage_of(inv: dict) -> str:
 def landing(inv: dict, lag_days: int = PAY_LAG_DAYS) -> date | None:
     """The day an expected payment should realistically arrive.
 
-    Anchored on the WRAP date when Momo has told us one — that is when a production's
-    clock actually starts, and 「9/2 殺青」 and 「9/28 殺青」 are not the same money. Without
-    a wrap date it falls back to the end of the work month, which is the latest the work
-    could have finished.
+    Three sources, in order of authority:
+
+      expect_on    a date a production actually gave her. Beats every model — Momo often
+                   knows ("they said end of the month"), and until this existed she had no
+                   way to say so and everything was forced through the generic lag.
+      wrapped_on   the day the shoot finished, plus the lag. 「9/2 殺青」 and 「9/28 殺青」
+                   are not the same money.
+      when         the work month, assumed to have finished at month end, plus the lag.
 
     This one function is the only place that opinion lives. It used to exist three times
     with three different answers, so the calendar said a September job landed on 10/14,
     the income page booked it in September, and the horizon test used 10/1."""
+    told = str(inv.get("expect_on") or "")[:10]
+    if len(told) == 10:
+        try:
+            return date.fromisoformat(told)
+        except ValueError:
+            pass
     w = str(inv.get("wrapped_on") or "")[:10]
     if len(w) == 10:
         try:
@@ -365,7 +375,7 @@ async def mark_invoice(session, which, status="received") -> dict | None:
 
 
 async def add_invoice(session, amount, when=None, note=None, *, stage=None,
-                      wrapped_on=None, days=None) -> dict:
+                      wrapped_on=None, days=None, expect_on=None) -> dict:
     """Record a new expected payment Momo just booked."""
     items = _load_list(await get_kv(session, "cfg_upcoming"))
     item = {"amount": float(amount), "when": when, "note": note, "status": "pending"}
@@ -374,6 +384,8 @@ async def add_invoice(session, amount, when=None, note=None, *, stage=None,
     if wrapped_on:
         item["wrapped_on"] = str(wrapped_on)[:10]
         item.setdefault("stage", "wrapped")
+    if expect_on:
+        item["expect_on"] = str(expect_on)[:10]
     if days:
         try:
             item["days"] = int(days)
