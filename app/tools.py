@@ -24,6 +24,7 @@ from .db import get_kv, set_kv
 from .models import MerchantMemory, Transaction
 
 CADENCES = ("monthly", "quarterly", "semiannual", "annual")
+_STAGE_ZH = {"booked": "已接（還沒拍）", "wrapped": "已殺青", "invoiced": "已開發票"}
 _CAD_ZH = {"monthly": "每月", "quarterly": "每季", "semiannual": "每半年", "annual": "每年"}
 
 
@@ -54,6 +55,19 @@ SCHEMAS: list[dict] = [
                                         "one field. NEVER move it forward to make a late "
                                         "job look on time: lateness is measured from it, "
                                         "and an old job counts for less on purpose."},
+                "days": {"type": "integer",
+                         "description": "Shoot days. She almost always says it — 「拍八天」 — and "
+                                        "it is what her day rate is computed from, so capture it "
+                                        "whenever she does."},
+                "stage": {"type": "string", "enum": ["booked", "wrapped", "invoiced"],
+                          "description": "booked = the shoot has not happened yet (default). "
+                                         "wrapped = the work is done. invoiced = the invoice "
+                                         "is in. A booked job is riskier than a wrapped one and "
+                                         "counts for less, so do not call something wrapped "
+                                         "until she says it wrapped."},
+                "wrapped_on": {"type": "string",
+                               "description": "YYYY-MM-DD the shoot finished, when known. The "
+                                              "payment clock runs from this, not from the month."},
                 "force": {"type": "boolean",
                           "description": "Only after Momo confirms it is genuinely a second, "
                                          "separate job — not the one already on the list."},
@@ -78,13 +92,22 @@ SCHEMAS: list[dict] = [
                                         "overdue invoice count for less instead of "
                                         "flattering the plan."},
                 "note": {"type": "string"},
+                "days": {"type": "integer", "description": "Shoot days, if she says them now."},
+                "stage": {"type": "string", "enum": ["booked", "wrapped", "invoiced"],
+                          "description": "Move it along the pipeline. 「這個殺青了」 → wrapped, "
+                                         "「發票開出去了」 → invoiced. Each step retires real risk "
+                                         "and the money counts for more."},
+                "wrapped_on": {"type": "string",
+                               "description": "YYYY-MM-DD it wrapped. Setting this also moves the "
+                                              "stage to wrapped and restarts the payment clock "
+                                              "from the real date."},
                 "confidence": {"type": "number",
                                "description": "0–1. How much of this one to actually count on. "
                                               "Set it ONLY when Momo says something about whether "
                                               "this production pays — 「這家一向準時」 → 1, "
                                               "「這筆我覺得要不回來了」 → 0.2. Her view beats the "
-                                              "default, because she knows who pays and the "
-                                              "model does not."},
+                                              "stage and the lateness both, because she knows "
+                                              "who pays and the model does not."},
             },
             "required": ["which"],
         },
@@ -354,7 +377,8 @@ def _miss(which: str, items: list[dict], field: str, ambiguous: list[dict], what
             "error": f"{what}裡找不到「{which}」"}
 
 
-async def add_expected_payment(s, rec, amount, note, when=None, force=False):
+async def add_expected_payment(s, rec, amount, note, when=None, days=None,
+                               stage=None, wrapped_on=None, force=False):
     # A duplicate here is not a cosmetic problem: 待收款 feeds the projection and the
     # 需要賺 index, so the same job entered twice tells her she can afford things twice.
     if not force:
@@ -364,13 +388,20 @@ async def add_expected_payment(s, rec, amount, note, when=None, force=False):
                     "error": (f"已經有一筆很像的：「{dup.get('note')}」{_money(dup.get('amount'))}"
                               f"（{dup.get('when') or '未定'}）。是要改那一筆，還是真的是另一個案子？"
                               "確定是新的再用 force=true。")}
-    item = await prefs.add_invoice(s, amount, when, note)
+    item = await prefs.add_invoice(s, amount, when, note, stage=stage,
+                                   wrapped_on=wrapped_on, days=days)
+    land = prefs.landing(item)
+    st = prefs.stage_of(item)
+    conf = prefs.confidence(item)
     rec.says(f"加了一筆待收款：{note} {_money(amount)}"
-             + (f"，預計 {when} 入帳" if when else "，還沒說什麼時候"))
+             + (f"（{days} 天，一天 {_money(float(amount) / days)}）" if days else "")
+             + f"　{_STAGE_ZH[st]}，先當 {conf:.0%} 算"
+             + (f"，預估 {land} 入帳" if land else "，還沒說什麼時候"))
     return {"ok": True, "summary": rec.summary, "item": item}
 
 
 async def update_expected_payment(s, rec, which, amount=None, when=None, note=None,
+                                  days=None, stage=None, wrapped_on=None,
                                   confidence=None):
     items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
     old, amb = _resolve(items, which, "note")
@@ -378,12 +409,21 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
         return _miss(which, items, "note", amb, "待收款")
     before = dict(old)
     hit = await prefs.update_invoice(s, which, amount, when, note)
-    if confidence is not None and hit is not None:
+    extra = {k: v for k, v in (("days", days), ("stage", stage),
+                               ("wrapped_on", wrapped_on), ("confidence", confidence))
+             if v is not None}
+    if extra and hit is not None:
         items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
         row = _find(items, hit.get("note") or which, "note")
         if row is not None:
-            row["confidence"] = min(1.0, max(0.0, float(confidence)))
+            if "confidence" in extra:
+                extra["confidence"] = min(1.0, max(0.0, float(extra["confidence"])))
+            if "wrapped_on" in extra:
+                extra["wrapped_on"] = str(extra["wrapped_on"])[:10]
+                extra.setdefault("stage", "wrapped")
+            row.update(extra)
             await set_kv(s, "cfg_upcoming", json.dumps(items, ensure_ascii=False))
+            hit = dict(row)
     bits = []
     if amount is not None and float(before.get("amount") or 0) != float(amount):
         bits.append(f"{_money(before.get('amount'))} → {_money(amount)}")
@@ -391,6 +431,14 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
         bits.append(f"{before.get('when') or '未定'} → {when}")
     if note and before.get("note") != note:
         bits.append(f"備註改成「{note}」")
+    if stage or wrapped_on:
+        st = prefs.stage_of(hit or before)
+        was = prefs.stage_of(before)
+        bits.append(f"{_STAGE_ZH[was]} → {_STAGE_ZH[st]}"
+                    + (f"（{wrapped_on} 殺青）" if wrapped_on else "")
+                    + f"，信心 {prefs.confidence(before):.0%} → {prefs.confidence(hit or before):.0%}")
+    if days is not None:
+        bits.append(f"拍 {days} 天")
     if confidence is not None:
         bits.append(f"這筆只當 {float(confidence):.0%} 算")
     rec.says(f"改了待收款「{before.get('note')}」：" + ("、".join(bits) or "沒有實際變動"))

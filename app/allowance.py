@@ -372,7 +372,16 @@ async def compute(session, key: str | None = None) -> dict:
 
     # the pile
     nw = await networth.compute(session)
-    survival_monthly = fixed_monthly + LEAN_FLEX_MONTHLY
+    # The lean floor used to be the constant above. Momo asked for these numbers to be
+    # computed rather than typed, and this one feeds the emergency target — a floor set too
+    # low quietly shrinks the fund she is supposed to be building toward.
+    try:
+        _flex = await FX.observed_flex(session)
+        lean_monthly = _flex["lean"] if _flex.get("enough") and _flex["lean"] > 0 \
+            else LEAN_FLEX_MONTHLY
+    except Exception:
+        lean_monthly = LEAN_FLEX_MONTHLY
+    survival_monthly = fixed_monthly + lean_monthly
     emerg = await emergency_target(session, survival_monthly)
     emerg_target = emerg["target"]
     rungs = ladder(survival_monthly, emerg_target)

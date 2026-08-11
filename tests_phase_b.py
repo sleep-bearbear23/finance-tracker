@@ -124,8 +124,16 @@ async def main():
 
         print("\n[4] the ladder, from real survival burn")
         a = await AL.compute(s, key)
-        surv = a["fixed_monthly"] + AL.LEAN_FLEX_MONTHLY
-        check("survival burn ≈ $2,071", near(surv, 2071, 5), f"{surv:.2f}")
+        # The lean floor is computed from her own leanest half-months now, not a constant,
+        # so the test has to read it from the same place the ladder does.
+        _fl = await FX.observed_flex(s)
+        lean = _fl["lean"] if _fl.get("enough") and _fl["lean"] > 0 else AL.LEAN_FLEX_MONTHLY
+        surv = a["fixed_monthly"] + lean
+        check("survival burn = fixed + the lean floor, both computed",
+              surv > a["fixed_monthly"] and lean > 0, f"{a['fixed_monthly']:.0f} + {lean:.0f}")
+        check("the lean floor comes from her record, not a typed constant",
+              _fl.get("enough") is True and _fl["periods"] >= 3,
+              f'{_fl.get("periods")} periods')
         rungs = {r["name"]: r["amount"] for r in a["ladder"]}
         check("第一階 = 1 month survival", near(rungs["第一階"], surv))
         check("第三階 = 3 months survival", near(rungs["第三階"], surv * 3))

@@ -90,12 +90,14 @@ async def set_income_profile(session, data: dict) -> None:
             except (TypeError, ValueError, AttributeError):
                 continue
             if amt > 0:
-                clean.append({
-                    "amount": amt,
-                    "when": u.get("when"),
-                    "note": u.get("note"),
-                    "status": u.get("status") or "pending",
-                })
+                # keep every field a booking can carry — stripping to four keys here would
+                # silently wipe stage / wrap date / day count on the next profile paste
+                row = {"amount": amt, "when": u.get("when"), "note": u.get("note"),
+                       "status": u.get("status") or "pending"}
+                for k in ("stage", "wrapped_on", "days", "confidence"):
+                    if u.get(k) is not None:
+                        row[k] = u[k]
+                clean.append(row)
         await set_kv(session, "cfg_upcoming", json.dumps(clean))
 
     accts = data.get("accounts")
@@ -154,57 +156,80 @@ async def is_work_income_source(session, desc: str) -> bool:
 
 
 # ── when does booked money actually land, and how much of it should we believe ──
-#: Productions pay after the month they were invoiced for, and late. Momo asked for the
-#: padding explicitly; it only ever makes the plan tighter.
-LANDING_PAD_DAYS = 14
+#: Days from wrap to money. Momo's own book is the evidence: Prince in Workboots wrapped in
+#: mid-May and was still unpaid in August. Net-45 is not pessimism, it is her median
+#: experience, and the padding only ever makes the plan tighter.
+PAY_LAG_DAYS = 45
 
-#: How much of an invoice to count once it is late. Prince in Workboots wrapped in mid-May
-#: and is still unpaid in August — counting that at 100% told the 需要賺 index she could
-#: survive three months on $0 of new work. Money owed is not money arrived, and the longer
-#: it is owed the less it should be allowed to lower what she has to go and earn.
+#: Where a job is in its life. Momo specified Booked → Wrapped → Paid at the very start;
+#: only Paid was ever built, so a shoot that has not happened yet was counted exactly like
+#: one that wrapped in May. These are the risks that are actually different:
+#:
+#:   booked    the shoot has not happened. Vertical schedules move, get cut, get dropped —
+#:             production risk sits on top of collection risk
+#:   wrapped   the work exists and cannot be un-done. Only collection is in question
+#:   invoiced  the paperwork is in and the clock has formally started
+#:
+#: Lateness decays these further; the two multiply, because they are separate risks.
+STAGE_CONFIDENCE = {"booked": 0.70, "wrapped": 0.90, "invoiced": 0.95}
+STAGES = tuple(STAGE_CONFIDENCE)
+DEFAULT_STAGE = "booked"
+
+#: How much of an invoice survives being late, on top of its stage. Prince in Workboots
+#: counted at 100% told the 需要賺 index she could survive three months on $0 of new work.
 CONFIDENCE_STEPS = ((0, 1.00), (30, 0.80), (60, 0.60), (90, 0.40), (10**6, 0.25))
 
-#: What a not-yet-due invoice is worth. Deliberately under 1.0: an invoice that is not late
-#: *yet* is still not money, and Momo's own book says so — $4,400 of her $10,000 outstanding
-#: is already months past wrap. Starting everything at 100% until the day it goes overdue
-#: made the middle number ("what will realistically arrive") identical to the best case.
-#:
-#: PLACEHOLDER. It should be measured, not chosen. Once bookings carry their work month and
-#: payments are marked received with a date, :func:`measured_pre_due` replaces it with her
-#: real on-time rate. Until roughly six payments have been through that loop there is not
-#: enough evidence, and this stands in.
-PRE_DUE_CONFIDENCE = 0.85
-MIN_SAMPLES_FOR_MEASURED = 6
+#: Nothing is ever worth literally nothing while it is still owed — but it can get close.
+CONFIDENCE_FLOOR = 0.10
 
 
-def landing(inv: dict, pad_days: int = LANDING_PAD_DAYS) -> date | None:
+def stage_of(inv: dict) -> str:
+    st = str(inv.get("stage") or "").lower()
+    if st in STAGE_CONFIDENCE:
+        return st
+    # a job with a wrap date on it has, by definition, wrapped
+    return "wrapped" if inv.get("wrapped_on") else DEFAULT_STAGE
+
+
+def landing(inv: dict, lag_days: int = PAY_LAG_DAYS) -> date | None:
     """The day an expected payment should realistically arrive.
 
-    ``when`` is the month the WORK belongs to, not the day of the wire — Momo knows her
-    shoot dates and never knows a production's cheque run. So: end of that month, plus a
-    fortnight of the lateness that always happens.
+    Anchored on the WRAP date when Momo has told us one — that is when a production's
+    clock actually starts, and 「9/2 殺青」 and 「9/28 殺青」 are not the same money. Without
+    a wrap date it falls back to the end of the work month, which is the latest the work
+    could have finished.
 
-    This one function is now the only place that opinion lives. It used to exist three
-    times with three different answers, so the calendar said a September job landed on
-    10/14, the income page booked it in September, and the horizon test used 10/1."""
-    w = str(inv.get("when") or "")[:7]
+    This one function is the only place that opinion lives. It used to exist three times
+    with three different answers, so the calendar said a September job landed on 10/14,
+    the income page booked it in September, and the horizon test used 10/1."""
+    w = str(inv.get("wrapped_on") or "")[:10]
+    if len(w) == 10:
+        try:
+            return date.fromisoformat(w) + timedelta(days=lag_days)
+        except ValueError:
+            pass
+    m = str(inv.get("when") or "")[:7]
     try:
-        y, m = int(w[:4]), int(w[5:7])
-        first_of_next = date(y + (m // 12), (m % 12) + 1, 1)
+        y, mo = int(m[:4]), int(m[5:7])
+        month_end = date(y + (mo // 12), (mo % 12) + 1, 1) - timedelta(days=1)
     except (ValueError, IndexError):
         return None
-    return first_of_next + timedelta(days=pad_days - 1)
+    return month_end + timedelta(days=lag_days)
 
 
-def confidence(inv: dict, today: date | None = None, pre_due: float | None = None) -> float:
+def confidence(inv: dict, today: date | None = None) -> float:
     """How much of this invoice a plan is allowed to count on.
 
     Three inputs, in order of authority:
 
       her own view   an explicit ``confidence`` on the row wins outright. Momo knows which
                      productions pay and which ones need chasing; the model does not.
-      lateness       once it is overdue, the ladder above takes over.
-      not yet due    PRE_DUE_CONFIDENCE — under 1.0 on purpose (see the constant).
+      stage          booked / wrapped / invoiced — how much of the risk is already retired
+      lateness       how far past its expected landing it has drifted
+
+    Stage and lateness multiply. They are independent: a shoot can fall through *and* a
+    production can sit on an invoice, and a booked gig that is also two months overdue is
+    genuinely worse than either alone.
     """
     own = inv.get("confidence")
     if own is not None:
@@ -212,16 +237,17 @@ def confidence(inv: dict, today: date | None = None, pre_due: float | None = Non
             return min(1.0, max(0.0, float(own)))
         except (TypeError, ValueError):
             pass
+    base = STAGE_CONFIDENCE[stage_of(inv)]
     d = landing(inv)
     if d is None:
         return 0.0          # no date at all cannot be planned around; it is still shown
     late = ((today or _today()) - d).days
     if late <= 0:
-        return PRE_DUE_CONFIDENCE if pre_due is None else pre_due
+        return base
     for cap, factor in CONFIDENCE_STEPS:
         if late <= cap:
-            return factor
-    return CONFIDENCE_STEPS[-1][1]
+            return max(CONFIDENCE_FLOOR, round(base * factor, 4))
+    return max(CONFIDENCE_FLOOR, round(base * CONFIDENCE_STEPS[-1][1], 4))
 
 
 def _today() -> date:
@@ -230,9 +256,56 @@ def _today() -> date:
 
 
 def believable(items: list[dict], today: date | None = None) -> float:
-    """The pending total after the lateness haircut — what a plan may lean on."""
+    """The pending total after the stage and lateness haircuts — what a plan may lean on."""
     today = today or _today()
     return round(sum(float(i.get("amount") or 0) * confidence(i, today) for i in items), 2)
+
+
+_CN_NUM = {"一": 1, "兩": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
+           "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
+
+
+def _days_in_text(text: str) -> int:
+    """「拍八天」 / 「8 天」 / 「5 days」 → the number of shoot days."""
+    t = text or ""
+    m = re.search(r"(\d+)\s*(?:天|days?\b)", t, re.I)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return 0
+    m = re.search(r"([一二兩三四五六七八九]|十[一二]?)\s*天", t)
+    return _CN_NUM.get(m.group(1), 0) if m else 0
+
+
+def day_rate(items: list[dict], received: list[dict] | None = None) -> dict:
+    """Her dollars-per-shoot-day, from jobs where the day count is known.
+
+    Momo: "instead of estimating gig amount, have a algorithm to calculate my average day
+    rate the past three months and use that number to calculate how many more work days I
+    need." She has always said the days out loud — 「9/6-9/15，拍八天」 — and the system
+    threw them away. A target in days is a target she can hold against a calendar.
+    """
+    rows = [*(items or []), *(received or [])]
+    pairs = []
+    for r in rows:
+        try:
+            d = int(r.get("days") or 0)
+            a = float(r.get("amount") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not d:
+            # she has been saying it in the note all along — 「9/6-9/15，拍八天」 — so read
+            # it rather than wait for every old booking to be re-entered
+            d = _days_in_text(f"{r.get('note') or ''} {r.get('merchant_desc') or ''}")
+        if d > 0 and a > 0:
+            pairs.append((a, d))
+    if not pairs:
+        return {"rate": 0.0, "n": 0, "days": 0, "total": 0.0}
+    total = sum(a for a, _ in pairs)
+    days = sum(d for _, d in pairs)
+    return {"rate": round(total / days, 2), "n": len(pairs), "days": days,
+            "total": round(total, 2)}
 
 
 async def pending_invoices(session) -> list:
@@ -291,10 +364,21 @@ async def mark_invoice(session, which, status="received") -> dict | None:
     return hit
 
 
-async def add_invoice(session, amount, when=None, note=None) -> dict:
+async def add_invoice(session, amount, when=None, note=None, *, stage=None,
+                      wrapped_on=None, days=None) -> dict:
     """Record a new expected payment Momo just booked."""
     items = _load_list(await get_kv(session, "cfg_upcoming"))
     item = {"amount": float(amount), "when": when, "note": note, "status": "pending"}
+    if stage in STAGE_CONFIDENCE:
+        item["stage"] = stage
+    if wrapped_on:
+        item["wrapped_on"] = str(wrapped_on)[:10]
+        item.setdefault("stage", "wrapped")
+    if days:
+        try:
+            item["days"] = int(days)
+        except (TypeError, ValueError):
+            pass
     items.append(item)
     await set_kv(session, "cfg_upcoming", json.dumps(items))
     return item

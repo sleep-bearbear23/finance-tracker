@@ -61,8 +61,9 @@ async def main():
         pend = await prefs.pending_invoices(s)
         check("it shows up as a pending payment",
               any(near(p["amount"], 2800) for p in pend), str(pend))
-        check("the summary says what it did, with the number",
-              "2,800" in out["summary"] and "2026-09" in out["summary"], out["summary"])
+        check("the summary says what it did, with the number and the stage",
+              "2,800" in out["summary"] and "已接" in out["summary"]
+              and "70%" in out["summary"], out["summary"])
         check("it logged exactly one change", await n_changes(s) == before + 1)
 
         print("\n[2] a tool that cannot find its target fails loudly and writes nothing")
@@ -373,12 +374,22 @@ async def main():
         check("a season opens by itself rather than asking her to start one",
               bool(before.get("start")) and before["days_left"] > 0,
               f'{before.get("start")}–{before.get("end")}')
+        _bare = next(t["bare"] for t in te["tiers"] if t["name"] == "持平")
+        _need = next(t["need"] for t in te["tiers"] if t["name"] == "持平")
         check("the target is the FLOOR, not the pending-reduced number",
-              near(hold_b["target"], next(t["bare"] for t in te["tiers"] if t["name"] == "持平")))
+              hold_b["target"] >= _bare * 0.95 and (hold_b["target"] > _need or _need == _bare),
+              f'target {hold_b["target"]} vs floor {_bare} vs after-pending {_need}')
+        check("…and it is scaled to the length of this tax period",
+              0.6 < hold_b["target"] / _bare < 1.5,
+              f'{hold_b["target"] / _bare:.2f}× a three-month target')
 
+        # inside the season she is actually in — the seasons are tax periods now, so a
+        # hard-coded month would fall outside the window half the year
+        this_month = _now2().strftime("%Y-%m")
         got = await tools.run(s, "add_expected_payment",
-                              {"amount": 2000, "note": "十月新案子", "when": "2026-10"},
-                              source_text="我十月接到一個新案子 $2000")
+                              {"amount": 2000, "note": "新接的案子", "when": this_month,
+                               "days": 5},
+                              source_text="我接到一個新案子 $2000")
         after = await SE.progress(s, (await AN.to_earn(s, 3))["tiers"])
         hold_a = next(t for t in after["tiers"] if t["name"] == "持平")
         check("going out and booking work moves the bar", hold_a["pct"] > hold_b["pct"],
@@ -392,10 +403,12 @@ async def main():
 
         mine = [e for e in after["events"] if e.get("mine")]
         check("the new job is logged as hers, not as a starting position",
-              any("十月新案子" in e["label"] for e in mine), str([e["label"] for e in mine]))
+              any("新接的案子" in e["label"] for e in mine), str([e["label"] for e in mine]))
         check("work done inside the season counts even when it pays just after it",
               any(e.get("lands_after") for e in after["events"]),
               str([(e["label"], e.get("lands")) for e in after["events"]]))
+        check("the season knows which tax payment it feeds",
+              bool((await SE.get(s) or {}).get("tax")), str((await SE.get(s) or {}).get("tax")))
         check("the log's running total lands exactly on the headline",
               near(after["events"][-1]["running"], after["secured"]),
               f'{after["events"][-1]["running"]} vs {after["secured"]}')
@@ -405,7 +418,7 @@ async def main():
 
         # her own read on a production beats the model's default
         conf = await tools.run(s, "update_expected_payment",
-                               {"which": "十月新案子", "confidence": 0.2})
+                               {"which": "新接的案子", "confidence": 0.2})
         worse = await SE.progress(s, (await AN.to_earn(s, 3))["tiers"])
         hold_w = next(t for t in worse["tiers"] if t["name"] == "持平")
         check("she can say a production probably will not pay, and it counts for less",

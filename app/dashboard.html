@@ -1043,13 +1043,19 @@ async function loadPlan(){
       </div>
       <div style="display:flex;gap:10px;align-items:baseline">
         <span class="left">${p.cleared?'✓ 已達標':`還差 ${F0(p.remaining)}`}</span>
-        <span class="sub2" style="margin-left:auto">每月 ${F0(t.bare_per_month)}${t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:''}</span>
+        <span class="sub2" style="margin-left:auto">每月 ${F0(t.bare_per_month)}${
+        t.bare_work_days!=null ? `　≈ ${t.bare_work_days} 個拍攝日`
+                               : (t.bare_gigs?`　≈ ${t.bare_gigs} 個案子`:'')}</span>
       </div>
       <div class="sub2" style="margin-top:3px">${esc(t.why)}</div>
     </div>`;}).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
         大字是「一毛都沒收到」要賺的，實心＝已入帳、淡色＝已排定（按信心打折）。
-        一個案子抓 ${F0(te.gig_unit)}${te.median_gig?'（你接的案子的中位數）':'（一筆進帳的中位數）'}。
+        ${te.day_rate&&te.day_rate.rate>0
+          ? `一天抓 ${F0(te.day_rate.rate)}（近期 ${te.day_rate.n} 個案子、${te.day_rate.days} 個工作天算出來的）`
+          : `一個案子抓 ${F0(te.gig_unit)}`}。
+        固定 ${F0(te.fixed_monthly)}／月、最省 ${F0(te.lean_flex_monthly)}／月、
+        實際花法 ${F0(te.normal_flex_monthly)}／月，都是${esc(te.lean_basis)}。
         ${esc(te.note)}</p>`
     /* only the genuinely LATE ones get a warning. The 85% pre-due discount applies to
        everything and is explained in the note above — repeating it per row turned a
@@ -1062,7 +1068,8 @@ async function loadPlan(){
           + `</p>` : '');
 
   /* the log: what was asked of her, and what each thing she went and got did to it */
-  el('ssnMeta').textContent = `${md(ss.start)}–${md(ss.end)} · 還有 ${ss.days_left} 天`;
+  el('ssnMeta').textContent = `${md(ss.start)}–${md(ss.end)} · 還有 ${ss.days_left} 天`
+    + (ss.tax ? ` · ${ss.tax.label} 稅 ${md(ss.tax.due)} 繳` : '');
   const rows = (ss.events||[]).slice().reverse().map(e=>{
     const amt = e.weighted!=null ? e.weighted : e.amount;
     const cut = e.confidence!=null && e.confidence<1
@@ -1080,8 +1087,10 @@ async function loadPlan(){
     `<div class="kv"><span>這一季自己找到的</span><b class="pos">${F0(ss.won_this_season||0)}</b></div>
      <div class="kv"><span>已入帳</span><b>${F0(ss.landed)}</b></div>
      <div class="kv"><span>已排定（打折後）</span><b>${F0(ss.booked)}</b></div>
-     <div class="daysleft">開季時手上已經有 ${F0(opened.booked_face||0)}（${opened.n||0} 筆）——
-       那是起跑點，不是成績。時間過了 ${ss.pace}%。</div>`
+     <div class="daysleft">這一季跟你的預繳稅同一個區間${ss.tax?`（${esc(ss.tax.label)}，${md(ss.tax.due)} 要繳）`:''}，
+       所以「這一季收了多少」跟「那天要繳多少」問的是同一件事。
+       開季時手上已經有 ${F0(opened.booked_face||0)}（${opened.n||0} 筆）——那是起跑點，不是成績。
+       時間過了 ${ss.pace}%。</div>`
     + (rows || '<div class="empty">還沒有進帳，也還沒接到案子。</div>')
     + ((ss.rebases||[]).length
         ? (ss.rebases||[]).map(r=>`<div class="ev2"><span class="d">${md(r.at)}</span>

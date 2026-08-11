@@ -227,30 +227,43 @@ async def main():
     # answer this differently — calendar said 10/14, the income page said September, the
     # horizon test said 10/1 — so the same job appeared in two months at once.
     sept = {"when": "2026-09", "amount": 2800.0, "note": "Avia 九月檔期"}
-    check("landing is the month after the work, plus the grace period",
-          _prefs.landing(sept) == _date(2026, 10, 14), str(_prefs.landing(sept)))
+    check("with no wrap date, the clock starts at the end of the work month",
+          _prefs.landing(sept) == _date(2026, 9, 30) + timedelta(days=_prefs.PAY_LAG_DAYS),
+          str(_prefs.landing(sept)))
+    check("a real wrap date beats the month — 9/2 and 9/28 are not the same money",
+          _prefs.landing({"when": "2026-09", "wrapped_on": "2026-09-02"})
+          < _prefs.landing({"when": "2026-09", "wrapped_on": "2026-09-28"}))
     check("an invoice with no month has no landing at all",
           _prefs.landing({"amount": 1.0}) is None)
 
     today = _date(2026, 8, 11)
-    # Not-yet-due is deliberately under 1.0: an invoice that is not late *yet* is still
-    # not money, and $4,400 of her own $10,000 outstanding is already months past wrap.
-    check("money not yet due is worth less than its face value",
-          near(_prefs.confidence({"when": "2026-08"}, today), _prefs.PRE_DUE_CONFIDENCE),
-          str(_prefs.confidence({"when": "2026-08"}, today)))
-    check("…but more than a late one",
-          _prefs.confidence({"when": "2026-08"}, today)
-          > _prefs.confidence({"when": "2026-05"}, today))
-    check("her own read on a production beats the default outright",
-          near(_prefs.confidence({"when": "2026-05", "confidence": 1.0}, today), 1.0))
-    check("a month late counts for four fifths",
-          near(_prefs.confidence({"when": "2026-06"}, today), 0.8),
-          str(_prefs.confidence({"when": "2026-06"}, today)))
-    check("wrapped in May and still unpaid in August counts for three fifths",
-          near(_prefs.confidence({"when": "2026-05"}, today), 0.6),
-          str(_prefs.confidence({"when": "2026-05"}, today)))
-    check("half a year late counts for a quarter",
-          near(_prefs.confidence({"when": "2026-01"}, today), 0.25))
+    # Not-yet-due is deliberately under 1.0: an invoice that is not late *yet* is still not
+    # money. How far under now depends on how much risk the job has actually retired.
+    booked = {"when": "2026-09"}
+    wrapped = {"when": "2026-09", "stage": "wrapped", "wrapped_on": "2026-09-14"}
+    invoiced = {"when": "2026-09", "stage": "invoiced", "wrapped_on": "2026-09-14"}
+    check("a shoot that has not happened is the riskiest kind of money",
+          near(_prefs.confidence(booked, today), 0.70),
+          str(_prefs.confidence(booked, today)))
+    check("wrapping retires the production risk",
+          near(_prefs.confidence(wrapped, today), 0.90))
+    check("invoicing retires a little more",
+          near(_prefs.confidence(invoiced, today), 0.95))
+    check("stage and lateness compound — a booked job that is also overdue is worse than either",
+          _prefs.confidence({"when": "2026-04"}, today)
+          < min(0.70, _prefs.confidence({"when": "2026-04", "stage": "invoiced"}, today)),
+          str(_prefs.confidence({"when": "2026-04"}, today)))
+    check("nothing owed is ever worth literally zero",
+          _prefs.confidence({"when": "2020-01"}, today) >= _prefs.CONFIDENCE_FLOOR)
+    check("her own read on a production beats stage and lateness both",
+          near(_prefs.confidence({"when": "2026-01", "confidence": 1.0}, today), 1.0))
+    check("a day rate comes out of the day counts she already says out loud",
+          near(_prefs.day_rate([{"amount": 2800, "days": 8}])["rate"], 350.0))
+    check("lateness keeps eating it after the stage has had its say",
+          0.95 > _prefs.confidence({"when": "2026-05", "stage": "invoiced"}, today)
+          > _prefs.confidence({"when": "2026-02", "stage": "invoiced"}, today),
+          f'5月 {_prefs.confidence({"when": "2026-05", "stage": "invoiced"}, today)} / '
+          f'2月 {_prefs.confidence({"when": "2026-02", "stage": "invoiced"}, today)}')
     check("no date at all cannot be planned around",
           near(_prefs.confidence({"amount": 1.0}, today), 0.0))
     check("the haircut only ever shrinks the total",

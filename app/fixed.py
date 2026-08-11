@@ -223,3 +223,115 @@ async def calendar(session, months: int = 14) -> list[dict]:
             due = date(y, m, min(due.day, 28))
             guard += 1
     return sorted(out, key=lambda x: x["due"])
+
+
+# ── what her costs ACTUALLY are, as opposed to what the rows say ─────
+#: How many half-months of history to read the observed figures from. Six is a quarter —
+#: long enough to smooth a heavy fortnight, short enough that last winter is not voting.
+OBSERVED_PERIODS = 6
+
+#: The stated rows and the ledger will never agree exactly. Past this, something is wrong:
+#: a row is stale, a bill is missing, or a subscription quietly went up.
+DIVERGENCE_FLAG = 0.10
+
+
+async def _by_period(session, treatments: set[str], periods: int,
+                     require_bank: bool = False) -> list[float]:
+    """Spend per half-month in the given treatment groups, oldest first.
+
+    ``require_bank`` drops periods the bank feed does not reach. It matters more than it
+    sounds: her rent is a Zelle out of Chase, and Chase only backfills 45 days, so a
+    six-period window mostly predates the data. Averaging over months where the biggest
+    fixed cost is simply absent produces a confident, tidy, wrong number — the first run
+    of this reported her fixed life at $702/month against a real $1,521."""
+    from . import budget
+    from . import facts as F
+    from . import taxonomy as T
+    f = await F.build(session)
+    keys = P.last_n(budget.current_key(), periods + 1)[:-1]   # drop the half we are in
+    if require_bank:
+        bank = [budget.eff_date(t) for t in f.txns if t.source == "simplefin"]
+        bank = [d for d in bank if d]
+        if not bank:
+            return []
+        first = P.key_for(min(bank))
+        keys = [k for k in keys if k > first]      # strictly after the first partial period
+    per = dict.fromkeys(keys, 0.0)
+    for t in f.txns:
+        if not budget.is_spend(t):
+            continue
+        d = budget.eff_date(t)
+        if not d:
+            continue
+        k = P.key_for(d)
+        if k not in per:
+            continue
+        if (T.treatment(t.category) or "") in treatments:
+            per[k] += budget.spend_amount(t)
+    return [round(per[k], 2) for k in keys]
+
+
+async def observed_fixed_monthly(session, periods: int = OBSERVED_PERIODS) -> dict:
+    """What actually left her accounts on 固定-treatment categories, per month.
+
+    Momo asked for the fixed number to be computed rather than typed. It cannot simply
+    REPLACE the rows, and the reason is worth keeping: GEICO takes $884 in November and
+    Ultra $186 in December, so a trailing three-month window contains neither, and an
+    average over it would quietly tell her the fixed life is $147/month cheaper than it
+    is. The rows are the only thing that can amortise a lump. So the rows stay the plan,
+    and this is the reconciliation — it says when the plan has gone stale."""
+    from . import taxonomy as T
+    vals = await _by_period(session, {T.FIXED}, periods, require_bank=True)
+    if len(vals) < 2:
+        return {"monthly": 0.0, "periods": len(vals), "series": vals, "enough": False}
+    return {"monthly": round(sum(vals) / len(vals) * 2, 2), "periods": len(vals),
+            "series": vals, "enough": True}
+
+
+async def reconcile(session, periods: int = OBSERVED_PERIODS) -> dict:
+    """Plan vs. reality on fixed costs, with a flag when they have drifted apart.
+
+    Compared like for like, which took a correction. Her single biggest fixed cost —
+    「ZELLE PAYMENT TO MOM $1,000」 — is booked as a transfer, so it is not spending in the
+    ledger and never will be. Measuring the whole stated total against observed card spend
+    reported her fixed life at $543/month against a real $1,521 and raised a permanent
+    alarm about a $978 hole that does not exist. Only the rows that actually flow through
+    as spending are in the comparison; the ones she sends by hand are listed apart."""
+    rows_all = await rows(session, include_sinking=False)
+    by_hand = [r for r in rows_all if r.get("manual")]
+    stated_all = round(sum(r["monthly"] for r in rows_all), 2)
+    stated = round(sum(r["monthly"] for r in rows_all if not r.get("manual")), 2)
+    obs = await observed_fixed_monthly(session, periods)
+    gap = round(obs["monthly"] - stated, 2)
+    rel = abs(gap) / stated if stated else 0.0
+    return {"stated_all": stated_all, "stated": stated,
+            "observed": obs["monthly"], "gap": gap,
+            "by_hand": [{"name": r["name"], "monthly": r["monthly"]} for r in by_hand],
+            "by_hand_monthly": round(sum(r["monthly"] for r in by_hand), 2),
+            "periods": obs["periods"], "series": obs["series"],
+            "enough": obs.get("enough", False),
+            "diverged": bool(obs.get("enough")) and rel > DIVERGENCE_FLAG,
+            "note": ("這張表是計畫，右邊是最近 "
+                     f"{obs['periods']} 個半月真的刷掉的。自己轉帳的（房租那種）銀行記成轉帳、"
+                     "不算支出，所以不放進來比；半年一期的 GEICO、電話費也不會出現在最近幾個月。"
+                     "差太多才是有一筆沒記到、或哪一筆漲價了。")}
+
+
+async def observed_flex(session, periods: int = OBSERVED_PERIODS) -> dict:
+    """Her flexible spending, per month: the lean end and the middle of her own record.
+
+    LEAN_FLEX_MONTHLY was a constant I typed ($550), with a comment claiming it came from
+    her cheapest months. It did not — nothing recomputed it. This does: the 25th percentile
+    of her real half-month flexible spend is a floor she has actually lived on, and it
+    moves as she does."""
+    from . import taxonomy as T
+    groups = {t for t in T.TREATMENT_LABEL if t not in (T.FIXED, T.SKIP)}
+    vals = sorted(v for v in await _by_period(session, groups, periods))
+    if len(vals) < 3:
+        return {"lean": 0.0, "median": 0.0, "periods": len(vals), "enough": False}
+    import statistics
+    # a real interpolated quartile — index arithmetic on six values just returns the
+    # minimum, and one unusually quiet fortnight should not become the definition of lean
+    q1 = statistics.quantiles(vals, n=4)[0] if len(vals) >= 4 else min(vals)
+    return {"lean": round(q1 * 2, 2), "median": round(statistics.median(vals) * 2, 2),
+            "periods": len(vals), "enough": True, "series": vals}

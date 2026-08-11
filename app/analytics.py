@@ -212,9 +212,24 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     tax_st = a["tax"]
     fixed_monthly = await FX.monthly_total(session)
 
-    # what living actually costs, per month, from her own record
-    lean_flex = AL.LEAN_FLEX_MONTHLY
-    normal_flex = round((a["recent_median"] or 0) * 2, 2) or lean_flex
+    # What living actually costs, per month, from her own record. The middle tier was
+    # already live — it is her recent half-month median doubled — but the floor was a
+    # constant I typed ($550) with a comment claiming it came from her cheapest months.
+    # Nothing recomputed it. Now the 25th percentile of her real flexible half-months does,
+    # so the floor is a number she has actually lived on, and it moves as she does.
+    flex = await FX.observed_flex(session)
+    if flex.get("enough") and flex["lean"] > 0:
+        lean_flex, normal_flex = flex["lean"], flex["median"]
+        lean_basis = (f"近 {flex['periods']} 期實際彈性支出：最省的四分之一 / 中位數")
+    else:
+        lean_flex = AL.LEAN_FLEX_MONTHLY
+        normal_flex = round((a["recent_median"] or 0) * 2, 2) or lean_flex
+        lean_basis = "預設值，資料還不夠算"
+    # Both tiers must come off the SAME series. Taking the floor from one population
+    # (all non-fixed spend) and the middle from another (only what eats the allowance)
+    # produced 生存 $12,144 against 持平 $11,542 — surviving costing more than breaking
+    # even, which is not a thing that can be true.
+    lean_flex = min(lean_flex, normal_flex)
     # a["savings_period"] is what survived this period's soft-savings skip; the index has
     # to plan for the intention, or a lean fortnight would quietly lower the whole target
     from . import prefs
@@ -280,8 +295,20 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     today = now().date()
     late = [{"note": p.get("note"), "amount": float(p.get("amount") or 0),
              "when": p.get("when"), "confidence": prefs.confidence(p, today),
+             "stage": prefs.stage_of(p), "days": p.get("days"),
+             "wrapped_on": p.get("wrapped_on"),
              "late_days": max(0, (today - (prefs.landing(p) or today)).days)}
             for p in pend_items]
+
+    # A target in dollars is a target she cannot hold against a calendar. Momo: "have an
+    # algorithm to calculate my average day rate the past three months and use that number
+    # to calculate how many more work days I need."
+    dr = prefs.day_rate(pend_items, _paid_with_days(f))
+    booked_days = sum(int(p.get("days") or 0) for p in pend_items)
+    if dr["rate"] > 0:
+        for t in tiers:
+            t["work_days"] = round(t["need"] / dr["rate"], 1)
+            t["bare_work_days"] = round(t["bare"] / dr["rate"], 1)
 
     return {
         "months": months,
@@ -293,6 +320,10 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
         "median_payment": med,
         "median_gig": med_gig,
         "gig_unit": unit,
+        "day_rate": dr,
+        "booked_days": booked_days,
+        "lean_basis": lean_basis,
+        "fixed_reconcile": await FX.reconcile(session),
         "fixed_monthly": fixed_monthly,
         "lean_flex_monthly": lean_flex,
         "normal_flex_monthly": normal_flex,
@@ -309,6 +340,18 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
                  "而且越拖越久的帳算得越少：晚一個月只當八成，超過三個月只當四分之一。"
                  "綠色那行是「錢都收得到」的版本，那是條件，不是計畫。"),
     }
+
+
+def _paid_with_days(f: F.Facts) -> list[dict]:
+    """Income rows that carry a day count, for the day-rate average. Manual income logged
+    with 「拍八天」 counts; a bank deposit has no idea how long the shoot was."""
+    out = []
+    for t in f.txns:
+        d = getattr(t, "note", None) or ""
+        m = re.search(r"(\d+)\s*(?:天|days?)", d)
+        if m and budget.is_income(t):
+            out.append({"amount": t.amount, "days": int(m.group(1))})
+    return out
 
 
 def emergency_accounts(f: F.Facts) -> list[dict]:
@@ -513,8 +556,12 @@ async def calendar_items(session, days: int = 400) -> dict:
                     "label": (p.get("note") or "某案")[:48],
                     "amount": float(p.get("amount") or 0), "cat": None,
                     "confidence": conf, "late_days": max(0, late),
-                    "note": (f"預估到帳（{p.get('when')} 的案子＋{prefs.LANDING_PAD_DAYS} 天寬限）"
-                             + (f"・晚了 {late} 天，只當 {conf:.0%} 算" if late > 0 else ""))})
+                    "stage": prefs.stage_of(p),
+                    "note": (("殺青 " + str(p.get("wrapped_on"))[:10] if p.get("wrapped_on")
+                              else f"{p.get('when')} 的案子")
+                             + f"＋{prefs.PAY_LAG_DAYS} 天付款期"
+                             + (f"・晚了 {late} 天" if late > 0 else "")
+                             + f"，只當 {conf:.0%} 算")})
 
     out.sort(key=lambda x: x["date"])
     months: dict[str, dict] = defaultdict(lambda: {"in": 0.0, "out": 0.0})

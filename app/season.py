@@ -36,14 +36,32 @@ from .db import get_kv, set_kv
 
 KEY = "cfg_season"
 
-#: Momo chose "starts the day you start one, runs three months" over aligning to tax
-#: quarters — she is two thirds through Q3 and a scoreboard that opens 42 days behind is
-#: not a scoreboard.
-SEASON_DAYS = 92
+#: A rolling three months has no finish line — the start date walks forward with today, so
+#: there is never a moment where she finds out how the quarter went. Momo: "we keep the
+#: season date align with tax seasons, so I can actually see how much money I actually
+#: received this season, how much I'm expecting, and how much more I need before a fixed
+#: end date."
+#:
+#: The boundaries are the IRS estimated-tax periods, which are NOT calendar quarters —
+#: Jun–Aug, Sep–Dec, Jan–Mar, Apr–May. Uneven on purpose, and worth it: the season's income
+#: is exactly the income the next payment is assessed on, so 「這一季賺了多少」 and 「9/15 要繳
+#: 多少」 are finally the same question. Targets scale with the period's real length.
+SEASON_DAYS = 92          # only a fallback, if the tax table runs out
 
-#: The target is refrozen if the underlying figure drifts more than this, so ordinary
-#: noise in her spending median does not rewrite the goalposts every fortnight.
-DRIFT_TO_REBASE = 0.08
+#: Momo: "goals and estimated income need can refresh every week." Frozen forever goes
+#: stale; live tracking turns a bad fortnight into apparent backsliding. Weekly is
+#: predictable, and every move is written to the log as its own event.
+REFRESH_DAYS = 7
+
+
+def _months(lo: date, hi: date) -> float:
+    return ((hi - lo).days + 1) / 30.4
+
+
+def _scale(lo: date, hi: date) -> float:
+    """The tiers are computed over a three-month horizon; a season may be 2 or 4."""
+    from .analytics import HORIZON_MONTHS
+    return _months(lo, hi) / HORIZON_MONTHS
 
 
 async def get(session) -> dict | None:
@@ -55,15 +73,36 @@ async def get(session) -> dict | None:
     return d if isinstance(d, dict) else None
 
 
+def bounds(today: date) -> tuple[date, date, dict | None]:
+    """The tax period today sits in, and the payment it feeds."""
+    from . import tax as TAX
+    for d in TAX.DEADLINES:
+        try:
+            lo = date.fromisoformat(d["covers"][0])
+            hi = date.fromisoformat(d["covers"][1])
+        except (ValueError, KeyError, IndexError):
+            continue
+        if lo <= today <= hi:
+            return lo, hi, d
+    # past the end of the table: fall back to a plain quarter so nothing breaks
+    return today, today + timedelta(days=SEASON_DAYS - 1), None
+
+
 async def start(session, tiers: list[dict], today: date | None = None,
                 days: int = SEASON_DAYS) -> dict:
     """Open a season and freeze what it is asking for."""
     today = today or now().date()
+    lo, hi, dl = bounds(today)
     pend = await prefs.pending_invoices(session)
     s = {
-        "start": today.isoformat(),
-        "end": (today + timedelta(days=days - 1)).isoformat(),
-        "targets": {t["name"]: round(t["bare"], 2) for t in tiers},
+        "start": lo.isoformat(),
+        "end": hi.isoformat(),
+        "refreshed": today.isoformat(),
+        "tax": ({"due": dl["due"], "label": dl["label"]} if dl else None),
+        "months": round(_months(lo, hi), 2),
+        # The tax periods are 2, 3 and 4 months long. A target computed for three months
+        # would ask too little of a four-month season and too much of a two-month one.
+        "targets": {t["name"]: round(t["bare"] * _scale(lo, hi), 2) for t in tiers},
         "opened_with": {                       # her position at kickoff, for honest framing
             "booked_face": round(sum(float(p.get("amount") or 0) for p in pend), 2),
             "booked_weighted": prefs.believable(pend, today),
@@ -84,23 +123,39 @@ async def ensure(session, tiers: list[dict]) -> dict:
     """The season Momo is in, opening one on first sight rather than asking her to."""
     s = await get(session)
     today = now().date()
-    if s is None or str(s.get("end") or "") < today.isoformat():
+    lo, hi, _ = bounds(today)
+    # a new tax period, or a season from before the boundaries were tax-aligned
+    if s is None or str(s.get("end") or "") != hi.isoformat() \
+            or str(s.get("start") or "") != lo.isoformat():
         return await start(session, tiers, today)
     return await _maybe_rebase(session, s, tiers, today)
 
 
 async def _maybe_rebase(session, s: dict, tiers: list[dict], today: date) -> dict:
-    """Move the goalposts only when they have really moved, and say so out loud.
+    """Recompute the target on a weekly beat, and say so out loud when it moves.
 
-    A target that silently tracks her spending would turn a bad fortnight into apparent
-    backsliding. A target that never moves would be lying by the end of the quarter. So:
-    move it when the drift is real, record what it was, and let the page show the change
-    as an event rather than a mystery."""
-    live = {t["name"]: round(t["bare"], 2) for t in tiers}
+    A target that tracked her spending continuously would turn a bad fortnight into
+    apparent backsliding; one that never moved would be lying by the end of the quarter.
+    Weekly is a cadence she can feel, and every move lands on the log as 「目標變了，不是你
+    退步」 rather than as a number that quietly changed while she was not looking."""
+    last = str(s.get("refreshed") or s.get("start") or "")
+    try:
+        due = (today - date.fromisoformat(last)).days >= REFRESH_DAYS
+    except ValueError:
+        due = True
+    if not due:
+        return s
+    try:
+        k = _scale(date.fromisoformat(s["start"]), date.fromisoformat(s["end"]))
+    except (ValueError, KeyError):
+        k = 1.0
+    live = {t["name"]: round(t["bare"] * k, 2) for t in tiers}
     old = s.get("targets") or {}
     moved = {k: (old.get(k), v) for k, v in live.items()
-             if old.get(k) and abs(v - old[k]) / max(1.0, old[k]) > DRIFT_TO_REBASE}
+             if old.get(k) and abs(v - old[k]) >= 1.0}
+    s["refreshed"] = today.isoformat()
     if not moved:
+        await set_kv(session, KEY, json.dumps(s, ensure_ascii=False))
         return s
     s.setdefault("rebases", []).append({
         "at": today.isoformat(),
