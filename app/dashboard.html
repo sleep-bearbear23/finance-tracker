@@ -308,12 +308,28 @@
   .monthsep:first-child{padding-top:0}
 
   #s-plan > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.25fr 1fr .95fr;
-    grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
+    grid-template-columns:1.05fr 1.15fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
     grid-template-areas:
-      "toearn  ssn      standing"
+      "toearn  runway   ssn"
       "cats    cats     trend";}
-  [data-pane=ssn]{grid-area:ssn}
+  [data-pane=ssn]{grid-area:ssn} [data-pane=runway]{grid-area:runway}
+  [data-pane=standing]{display:none}
+
+  /* the runway: one row per half-month, and whether work can still reach it */
+  .rw{display:flex;align-items:baseline;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid)}
+  .rw:last-child{border-bottom:none}
+  .rw .p{flex:0 0 2.8em;font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums}
+  .rw .bar{flex:1;height:4px;border-radius:999px;background:rgba(255,255,255,.05);position:relative;overflow:hidden}
+  .rw .bar i{position:absolute;inset:0 auto 0 0;border-radius:999px;background:var(--accent)}
+  .rw.thin .bar i{background:var(--warn)} .rw.broke .bar i{background:var(--bad)}
+  .rw .v{flex:0 0 auto;font-size:11.5px;font-variant-numeric:tabular-nums;min-width:4.6em;text-align:right}
+  .rw.broke .v{color:var(--bad)} .rw.thin .v{color:var(--warn)}
+  .rw .tagx{flex:0 0 auto;font-size:9.5px;color:var(--muted)}
+  .lever{padding:9px 0;border-bottom:1px solid var(--grid);font-size:11.5px;line-height:1.6;color:var(--ink2)}
+  .lever:last-child{border-bottom:none}
+  .lever b{display:block;font-size:10px;letter-spacing:.1em;margin-bottom:3px}
+  .lever.chase b{color:var(--warn)} .lever.book b{color:var(--accent)} .lever.clear b{color:var(--accent)}
 
   /* 這一季: the target as a track with three milestones on it, not three separate goals */
   .track{position:relative;height:7px;border-radius:999px;background:rgba(255,255,255,.06);
@@ -511,6 +527,7 @@
     #s-cal  > .grid.sel-calpend > [data-pane=calpend],
     #s-plan > .grid.sel-toearn   > [data-pane=toearn],
     #s-plan > .grid.sel-ssn      > [data-pane=ssn],
+    #s-plan > .grid.sel-runway   > [data-pane=runway],
     #s-plan > .grid.sel-standing > [data-pane=standing],
     #s-plan > .grid.sel-cats     > [data-pane=cats],
     #s-plan > .grid.sel-trend    > [data-pane=trend],
@@ -701,8 +718,13 @@
     <div class="grid sel-toearn" id="planGrid">
 
       <section class="card" data-pane="toearn">
-        <h2>要接多少 <span class="more" id="teMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <h2>這一期 <span class="more" id="teMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="teBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="runway">
+        <h2>撐得到什麼時候 <span class="more" id="rwMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="rwBox"><div class="empty">計算中…</div></div>
       </section>
 
       <section class="card" data-pane="ssn">
@@ -857,7 +879,7 @@ function halfMonthScales(points,yFmt){
 /* ── mobile pane switcher ── */
 const SEGS = {
   home:   [['accounts','帳戶'],['flows','半月收支']],
-  plan:   [['toearn','要接多少'],['ssn','這一季'],['standing','水位'],['cats','花在哪'],['trend','趨勢']],
+  plan:   [['toearn','這一期'],['runway','撐多久'],['ssn','這一季'],['cats','花在哪'],['trend','趨勢']],
   acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
@@ -1018,48 +1040,64 @@ async function loadPlan(){
   const d = await getJSON('/api/plan');
   stamp(); showAudit(d.audit||[]);
 
-  /* Two cards, two clocks. Momo: "how I'm doing this season is largely because of last
-     season's earning… realistic action is getting booked for something one or two months
-     from now, which would no longer get accounted for this season."
+  /* Momo's three layers. The fortnight is what she can act on today; the runway is the
+     earning goal as a schedule with deadlines; 這一季 is the settlement. Layer 1 is graded
+     against its LINE and nothing else — her Law: "I should never punish myself for a
+     shortage this month, because it happened a couple weeks ago." */
+  const te=d.to_earn, fn=d.fortnight, rw=d.runway, sm=d.settlement;
 
-     So 這一季 is a SETTLEMENT — cash in, cash out, verdict — with no earning target,
-     because 20 days from the end that question cannot be acted on. And 要接多少 is keyed
-     to the LANDING date, so it asks about the window today's bookings can actually reach,
-     and carries the wrap-by deadline that follows from the payment lag. */
-  const te=d.to_earn, tb=d.to_book, sm=d.settlement;
-
+  const okc = fn.verdict==='under' ? 'var(--accent)' : 'var(--bad)';
   el('teMeta').textContent =
-    `錢會落在 ${md(tb.start)}–${md(tb.end)}　已有 ${F0(tb.covered)}`
-    + (tb.landed>0 ? `（已入帳 ${F0(tb.landed)}＋已排定 ${F0(tb.booked)}）` : '');
-  el('teBox').innerHTML = tb.tiers.map(t=>`
-    <div class="tierrow ${t.gap<=0?'done':''}">
-      <div class="tierhead">
-        <span class="nm2">${esc(t.name)}</span>
-        <span class="amt2">${F0(t.gap)}</span>
-        <span class="pct">已排 ${t.covered_pct.toFixed(0)}%</span>
-      </div>
-      <div class="track"><i class="booked" style="width:${Math.min(100,t.covered_pct)}%"></i></div>
-      <div style="display:flex;gap:10px;align-items:baseline">
-        <span class="left">${t.gap<=0?'✓ 這一段已經接滿了'
-          :`還要接　${t.work_days!=null?`≈ ${t.work_days} 個拍攝日`:F0(t.gap)}`}</span>
-        <span class="sub2" style="margin-left:auto">整段要 ${F0(t.gross)}（稅前）· 每月 ${F0(t.per_month)}</span>
-      </div>
-      <div class="sub2" style="margin-top:3px">${esc(t.why)}</div>
-    </div>`).join('')
-    + `<div class="kv" style="margin-top:10px"><span>最晚殺青日</span>
-         <b class="${tb.days_to_book<30?'neg':''}">${md(tb.wrap_by)}　還有 ${tb.days_to_book} 天可以排</b></div>`
-    + (tb.covered_items||[]).map(c=>`<div class="ev2">
-         <span class="d">${md(c.lands)}</span>
-         <span class="w">${esc((c.note||'').slice(0,30))}
-           <span class="s">${esc(({booked:'已接',wrapped:'已殺青',invoiced:'已開發票',paid:'✓ 已入帳'})[c.stage]||'')}${
-             c.days?`・拍 ${c.days} 天`:''}　面額 ${F0(c.amount)}，只當 ${Math.round(c.confidence*100)}%</span></span>
-         <span class="plus">+${F0(c.weighted)}</span></div>`).join('')
-    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
-        ${esc(tb.note)}
-        ${tb.day_rate&&tb.day_rate.rate>0
-          ? `一天抓 ${F0(tb.day_rate.rate)}（${tb.day_rate.n} 個案子、${tb.day_rate.days} 個工作天算出來的）。`:''}
-        固定 ${F0(te.fixed_monthly)}／月、最省 ${F0(te.lean_flex_monthly)}／月、實際花法 ${F0(te.normal_flex_monthly)}／月，
-        取自${esc(te.lean_basis)}。</p>`;
+    `${esc(fn.label)}　剩 ${fn.days_left} 天　第 ${fn.session_index}／${fn.session_count} 期`;
+  el('teBox').innerHTML =
+    `<div class="tierhead" style="padding:2px 0 6px">
+       <span class="nm2" style="flex:0 0 3.4em">還能花</span>
+       <span class="amt2" style="color:${okc}">${F0(fn.left)}</span>
+       <span class="pct">${fn.per_day_left!=null?`一天 ${F0(fn.per_day_left)}`:''}</span>
+     </div>
+     <div class="track"><i class="landed" style="width:${
+        fn.line>0?Math.min(100,100*Math.max(0,fn.spent)/fn.line):0}%"></i></div>
+     <div class="kv"><span>這一期的線</span><b>${F0(fn.line)}</b></div>
+     <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>
+
+     <div class="lever ${fn.kind}" style="margin-top:8px">
+       <b>這一期為什麼是這條線</b>
+       綁住的是「${esc(fn.binding)}」——${esc(fn.diagnosis)}。<br>${esc(fn.lever)}
+     </div>`
+    + (fn.lenses||[]).map(L=>`<div class="ev2">
+        <span class="d">${esc(L.name)}</span>
+        <span class="w"><span class="s">${esc(L.why||'')}</span></span>
+        <span class="plus" style="color:${L.name===fn.binding?'var(--accent)':'var(--muted)'}">${F0(L.value)}</span>
+      </div>`).join('')
+    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">${esc(fn.law)}</p>`;
+
+  /* 撐得到什麼時候 — the earning goal, as a schedule */
+  const fc = rw.lean, mx = Math.max(1, ...fc.periods.map(p=>Math.max(p.closing,0)));
+  el('rwMeta').textContent = fc.runway_periods!=null
+    ? `照最省過，${fc.runway_periods} 期後見底` : '照最省過，八期都撐得住';
+  el('rwBox').innerHTML =
+    `<div class="kv"><span>現在水位（扣掉卡債跟預留的稅）</span><b>${F0(fc.start_cash)}</b></div>
+     <div class="kv"><span>最省每期要 ${F0(fc.burn)}　平常 ${F0(rw.normal.burn)}</span>
+       <b class="tag">差 ${F0(rw.normal.burn-fc.burn)}／期</b></div>`
+    + fc.periods.map(p=>`<div class="rw ${p.state}">
+        <span class="p">${esc(p.label)}</span>
+        <span class="bar"><i style="width:${Math.min(100,100*Math.max(0,p.closing)/mx)}%"></i></span>
+        <span class="v">${F0(p.closing)}</span>
+        <span class="tagx">${p.arrive>0?`進 ${F0(p.arrive)}`
+          :(p.state!=='ok'&&!p.bookable?'接案子來不及':'')}</span>
+      </div>`).join('')
+    + (rw.levers||[]).map(L=>`<div class="lever ${L.kind}" style="margin-top:4px">
+        <b>${L.kind==='chase'?'接案子救不了這一段':L.kind==='book'?'這一段還來得及接':'目前沒有非接不可的'}</b>
+        ${esc(L.text)}</div>`).join('')
+    + (rw.owed_total>0?`<div class="kv" style="margin-top:8px"><span>別人欠你的</span>
+        <b class="pos">${F0(rw.owed_total)}</b></div>`:'')
+    + (rw.owed||[]).map(o=>`<div class="ev2">
+        <span class="d">${o.lands?md(o.lands):'—'}</span>
+        <span class="w">${esc((o.note||'').slice(0,28))}
+          <span class="s">${esc(({booked:'已接',wrapped:'已殺青',invoiced:'已開發票'})[o.stage]||'')}${
+            o.late_days>0?`・晚了 ${o.late_days} 天`:''}</span></span>
+        <span class="plus">${F0(o.amount)}</span></div>`).join('')
+    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">${esc(fc.note)}</p>`;
 
   /* 這一季：結算 */
   const vcol = sm.verdict==='saved'?'var(--accent)':sm.verdict==='even'?'var(--ink)':'var(--bad)';

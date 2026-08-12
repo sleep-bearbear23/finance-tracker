@@ -347,6 +347,56 @@ async def main():
               if c["stage"] == "paid"),
           str([(c["amount"], c["weighted"]) for c in tb["covered_items"]]))
 
+    print("\n[10] the fortnight is graded against its line, and the runway carries the deadline")
+    fn, rw = plan["fortnight"], plan["runway"]
+
+    # Ten of her last twelve periods had less arrive than she spent, five had nothing at
+    # all. Grading on deposits calls that ten failures, none of them decisions. Momo's Law:
+    # "I should never punish myself for a shortage this month, because it happened a couple
+    # weeks ago."
+    check("the verdict is spent-vs-line, and nothing else",
+          (fn["verdict"] == "under") == (fn["spent"] <= fn["line"]),
+          f'{fn["verdict"]}: spent {fn["spent"]} vs line {fn["line"]}')
+    check("a period where nothing arrived can still pass",
+          fn["verdict"] == "under" or fn["spent"] > fn["line"],
+          f'{fn["verdict"]}')
+    check("the binding lens is named, and it names a lever",
+          bool(fn["binding"]) and bool(fn["lever"]),
+          f'{fn["binding"]} → {fn["diagnosis"]}')
+    check("the diagnosis distinguishes timing from spending",
+          fn["kind"] in ("income", "timing", "spending"), str(fn["kind"]))
+    check("the fortnight knows where it sits in the season",
+          1 <= (fn["session_index"] or 0) <= (fn["session_count"] or 0),
+          f'{fn["session_index"]}/{fn["session_count"]}')
+    check("cushion and runway are reported, not graded",
+          "cushion" in fn and "verdict" not in str(fn.get("cushion")))
+
+    fc = rw["lean"]
+    check("the forecast starts from spendable cash, not net worth",
+          near(fc["start_cash"], plan["standing"]["reserve_total"]),
+          f'{fc["start_cash"]} vs {plan["standing"]["reserve_total"]}')
+    check("each period's closing = opening + arrivals − burn",
+          all(near(p["closing"], p["opening"] + p["arrive"] - p["burn"])
+              for p in fc["periods"]),
+          str([(p["label"], p["closing"]) for p in fc["periods"][:3]]))
+    check("living lean never runs out sooner than living normally",
+          (fc["runway_periods"] is None) or
+          (rw["normal"]["runway_periods"] is not None and
+           fc["runway_periods"] >= rw["normal"]["runway_periods"]),
+          f'lean {fc["runway_periods"]} vs normal {rw["normal"]["runway_periods"]}')
+    check("every period carries the last day a shoot could wrap and still cover it",
+          all(p["wrap_by"] < p["start"] for p in fc["periods"]))
+    check("a period whose wrap date has passed is marked unbookable",
+          all(p["bookable"] == (p["wrap_by"] > datetime.now(TZ).date().isoformat())
+              for p in fc["periods"]))
+    check("a gap the lag cannot reach is never answered with 'go find work'",
+          all("催" in L["text"] for L in rw["levers"] if L["kind"] == "chase"),
+          str([L["kind"] for L in rw["levers"]]))
+    check("gaps do not double-count the same shortfall period after period",
+          sum(g["need_net"] for g in rw["gaps"])
+          <= max([p["short"] for p in fc["periods"]] or [0]) + EPS,
+          str([(g["label"], g["need_net"]) for g in rw["gaps"]]))
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

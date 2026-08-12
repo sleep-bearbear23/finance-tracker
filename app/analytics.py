@@ -354,6 +354,73 @@ def _paid_with_days(f: F.Facts) -> list[dict]:
     return out
 
 
+# ── the fortnight: one line, and what kind of tight it is ────────────
+#: Which lens is binding is the period's diagnosis, and each one points at a different
+#: lever. This is Momo's layer 1 — "every two week should have its own health diagnosis".
+_DIAGNOSIS = {
+    "計畫": ("收入不夠", "接案子——但這是慢的槓桿，今天接的錢要一個半月後才到",
+             "income"),
+    "水位": ("錢在路上，只是還沒到", "催已經欠你的錢，還有撐住。這不是你花太兇",
+             "timing"),
+    "軌跡": ("花得比自己的節奏兇", "少花一點——這是唯一今天就能動的槓桿", "spending"),
+}
+
+
+async def fortnight(session, f: F.Facts | None = None) -> dict:
+    """This half-month: the line, what kind of tight it is, and where it sits in the season.
+
+    Graded against the LINE and nothing else. Momo's Law: "I should never punish myself
+    for a shortage this month, because it happened a couple weeks ago." Ten of her last
+    twelve periods had less money arrive than she spent, and five had literally none — a
+    system that scores her on deposits calls that ten failures, none of which were
+    decisions. Staying under the line in a month where nothing landed is a WIN, and the
+    cushion moving underneath is reported as information, never as a verdict.
+    """
+    from . import runway as RW
+    from . import season as SE
+    f = f or await F.build(session)
+    a = await AL.compute(session)
+    today = now().date()
+
+    binding = a.get("binding") or ""
+    label, lever, kind = _DIAGNOSIS.get(binding, ("", "", ""))
+
+    # where this period sits inside the season, so the jar layer can ask for a share
+    lo, hi, dl = SE.bounds(today)
+    keys = [k for k in P.series(P.key_for(lo), P.key_for(hi))]
+    here = budget.current_key()
+    idx = keys.index(here) + 1 if here in keys else None
+
+    spent, line = a["spent"], a["allowance"]
+    under = line - spent
+    fc = await RW.forecast(session, f, lean=True)
+
+    return {
+        "period": a["period_key"], "label": a["period_label"],
+        "start": a["period_start"], "end": a["period_end"],
+        "days_left": a["days_left"],
+        "line": round(line, 2), "spent": round(spent, 2), "left": round(under, 2),
+        "per_day_left": a.get("per_day_left"),
+        # the verdict, and ONLY against the line
+        "verdict": "under" if under >= 0 else "over",
+        "binding": binding, "diagnosis": label, "lever": lever, "kind": kind,
+        "lenses": a.get("lenses"),
+        "shortfall": a.get("shortfall"),
+        "shortfall_kind": a.get("deficit_kind") or a.get("kind"),
+        "session_index": idx, "session_count": len(keys),
+        "season_start": lo.isoformat(), "season_end": hi.isoformat(),
+        "season_tax": ({"due": dl["due"], "label": dl["label"]} if dl else None),
+        # information, not a grade
+        "cushion": a["reserve_total"],
+        "runway_periods": fc["runway_periods"],
+        "next_money": (fc["periods"][i]["label"]
+                       if (i := next((j for j, r in enumerate(fc["periods"])
+                                      if r["arrive"] > 0), None)) is not None else None),
+        "law": ("這一期緊不緊，跟你花得好不好是兩件事。線是照你的節奏跟水位算出來的，"
+                "沒進帳的那幾期只要沒超過線，就算過關。"),
+    }
+
+
 # ── Module B: the earning question, put where it can be acted on ─────
 async def to_book(session, f: F.Facts | None = None) -> dict:
     """How much work she has to BOOK, for the window her bookings can still reach.

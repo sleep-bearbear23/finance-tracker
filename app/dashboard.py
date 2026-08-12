@@ -22,7 +22,8 @@ from sqlalchemy import select
 from . import (accounts as acct, allowance, analytics as AN, budget, categories,
                changelog as CL,
                export as EX, facts as F, fixed as FX, networth, period as P,
-               prefs, season as SE, stability as STAB, tax as TAX, taxonomy)
+               prefs, runway as RW, season as SE, stability as STAB, tax as TAX,
+               taxonomy)
 from .config import aware, now, settings
 from .db import Session
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
@@ -672,6 +673,11 @@ async def api_plan(request: Request):
                 s, f, burn_monthly=te["fixed_monthly"] + te["normal_flex_monthly"],
                 by_hand_monthly=rec.get("by_hand_monthly", 0.0)),
             "to_book": await AN.to_book(s, f),
+            # Momo's three layers: the fortnight (what I can spend and what kind of tight
+            # this is), the runway (the earning goal, as a schedule with deadlines), and
+            # the season settlement above.
+            "fortnight": await AN.fortnight(s, f),
+            "runway": await RW.plan(s, f),
             "audit": f.audit(),
         }
 
