@@ -56,8 +56,8 @@ def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
 
 
-def near(a, b):
-    return abs((a or 0) - (b or 0)) < EPS
+def near(a, b, eps=EPS):
+    return abs((a or 0) - (b or 0)) < eps
 
 
 async def seed():
@@ -546,6 +546,66 @@ async def main():
           all(_tx.treatment(c) in (_tx.FLEX, _tx.WANT)
               for c in ("food", "snacks", "want", "shopping", "household"))
           and _tx.treatment("work") == _tx.WORK and _tx.treatment("health") == _tx.IRREGULAR)
+
+    print("\n[14] one line per day, and 本期口袋 holds what a day didn't use")
+    # Momo: "if I spend nothing for the first 14 days, I have the whole budget to spend for
+    # the last day." A period-wide figure reads as permission all month and then as a
+    # cliff, and gives her nothing to decide against on a Tuesday.
+    from datetime import date as _d
+    from app import allowance as _al
+    FROM, HI, LINE = _d(2026, 8, 1), _d(2026, 8, 15), 450.0   # 15 days → $30/day
+    GRANT = [{"period": "2026-08A", "amount": 40.0, "from": "2026-08-03", "until": "2026-08-03"}]
+    dv = lambda day, spend, g=GRANT: _al.daily_view(LINE, FROM, HI, day, spend, g)
+
+    check("the daily line is the period line divided by the days it covers",
+          near(dv(_d(2026, 8, 1), {})["daily_base"], 30.0))
+    check("the daily line does not drift as days pass",
+          len({dv(d, {})["daily_base"] for d in
+               (_d(2026, 8, 1), _d(2026, 8, 8), _d(2026, 8, 15))}) == 1)
+    check("day one has an empty pocket — nothing has been saved yet",
+          near(dv(_d(2026, 8, 1), {})["pool"], 0.0))
+    check("two quiet days put two days of line in the pocket",
+          near(dv(_d(2026, 8, 3), {})["pool"], 60.0),
+          str(dv(_d(2026, 8, 3), {})["pool"]))
+    check("today is not in the pocket yet — it is still being spent",
+          near(dv(_d(2026, 8, 3), {_d(2026, 8, 3): 0.0})["pool"], 60.0))
+    # The bug this caught: crediting the pool with (allowed − spent) meant a raise she
+    # asked for and did NOT use paid itself back into the pocket — she could mint money by
+    # requesting raises and skipping them. The pocket counts BASE, never the raised ceiling.
+    check("a raise lifts today's ceiling",
+          near(dv(_d(2026, 8, 3), {})["daily_today"], 70.0))
+    check("a raise she takes comes out of the pocket",
+          near(dv(_d(2026, 8, 4), {_d(2026, 8, 3): 70.0})["pool"], 20.0),
+          str(dv(_d(2026, 8, 4), {_d(2026, 8, 3): 70.0})["pool"]))
+    check("a raise she does NOT take is not a deposit — no minting money",
+          near(dv(_d(2026, 8, 4), {})["pool"], 90.0),
+          str(dv(_d(2026, 8, 4), {})["pool"]))
+    check("spending past the daily line draws the pocket down by itself",
+          near(dv(_d(2026, 8, 4), {_d(2026, 8, 2): 120.0})["pool"], -30.0),
+          str(dv(_d(2026, 8, 4), {_d(2026, 8, 2): 120.0})["pool"]))
+    # The invariant that makes the whole thing safe: however the days are sliced, what she
+    # has been allowed so far can never exceed the period's line.
+    check("pocket plus today's allowance never exceeds the period line",
+          all((lambda v: v["pool"] + v["daily_today"] <= LINE + EPS)(dv(FROM + timedelta(days=i), {}))
+              for i in range(15)))
+    check("after the last day the period is closed and grants no more",
+          dv(_d(2026, 8, 16), {})["days_left"] == 0
+          and dv(_d(2026, 8, 16), {})["daily_today"] == 0)
+    # Run mid-period, the closing review must agree with the card about the pocket.
+    live, fnl = plan["fortnight"].get("daily"), plan["fortnight"]
+    span = (live["days_closed"] + live["days_left"]) if live else 0
+    check("live: the daily line spread over the governed days rebuilds the period line",
+          live is not None and near(live["daily_base"] * span, fnl["line"], 0.02 * span),
+          f'{live and live["daily_base"]} × {span} vs {fnl["line"]}')
+    check("live: the pocket cannot exceed what the closed days could have saved",
+          live is not None
+          and live["pool"] <= live["daily_base"] * live["days_closed"] + EPS,
+          f'{live and live["pool"]} vs {live and live["daily_base"] * live["days_closed"]}')
+    check("live: today's spend and the pocket account for every dollar spent so far",
+          live is not None and near(
+              live["daily_base"] * (live["days_closed"] + 1) - live["pool"] - live["today_left"]
+              + live["daily_bump"], fnl["spent"], 0.05),
+          f'pool {live and live["pool"]} today_left {live and live["today_left"]} spent {fnl["spent"]}')
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

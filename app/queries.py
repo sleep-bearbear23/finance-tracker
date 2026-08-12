@@ -128,6 +128,21 @@ async def build_context(session) -> str:
             f"剩 ${a['remaining']:.0f}，還有 {a['days_left']} 天"
             + (f"，平均每天 ${a['per_day_left']:.0f}。" if a.get("per_day_left") is not None else "。")
         )
+        dy = a.get("daily") or {}
+        if dy:
+            lines.append(
+                f"每天的線：一天 ${dy['daily_base']:.0f}"
+                + (f"（今天加碼 ${dy['daily_bump']:.0f}，可以花 ${dy['daily_today']:.0f}）"
+                   if dy.get("daily_bump") else "")
+                + f"，今天已經花 ${dy['today_spent']:.0f}，還剩 ${dy['today_left']:.0f}。"
+                f"本期口袋 ${dy['pool']:.0f}。"
+            )
+            lines.append(
+                "（口袋是前面幾天沒花完的錢。他問今天能花多少，就講「今天還能花」那個數字，"
+                "不要講整期剩多少——整期的數字會讓他以為最後一天可以一次花完。"
+                "他想多花一點就用 raise_daily，錢只能從口袋出；口袋不夠就照實說不夠，"
+                "那不是小氣，是那筆錢還沒省出來。）"
+            )
         lines.append("這個數字是三個角度一起看、取最緊的那個：")
         for extra in AL.explain(a):        # explain() already walks all three lenses
             lines.append(f"  · {extra}")

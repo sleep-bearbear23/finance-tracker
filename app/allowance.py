@@ -513,6 +513,9 @@ async def compute(session, key: str | None = None) -> dict:
     spent = await _spent(session, key, from_day, hi)
     remaining = round(recommended - spent, 2)
     days_left = max(0, (hi - today).days + 1) if lo <= today <= hi else 0
+    dv = daily_view(recommended, from_day, hi, today,
+                    await _spent_by_day(session, from_day, hi),
+                    await grants(session, key))
 
     deficit = plan_val < 0
     kind = None
@@ -554,6 +557,7 @@ async def compute(session, key: str | None = None) -> dict:
         "spent": spent,
         "remaining": remaining,
         "per_day_left": round(max(0.0, remaining) / days_left, 2) if days_left else None,
+        "daily": dv,
         "pct_used": round(100 * spent / recommended, 1) if recommended > 0 else None,
 
         "reserve_total": reserve_total,
@@ -585,6 +589,164 @@ async def _spent(session, key: str, from_day: date, hi: date) -> float:
     return round(sum(budget.spend_amount(t) for t in rows
                      if budget.is_discretionary(t)
                      and (d := budget.eff_date(t)) and from_day <= d <= hi), 2)
+
+
+async def _spent_by_day(session, from_day: date, hi: date) -> dict[date, float]:
+    """The same spend, split by day — what the daily budget and the pool are built on."""
+    from sqlalchemy import select
+
+    from .models import Transaction
+    rows = (await session.execute(select(Transaction))).scalars().all()
+    out: dict[date, float] = {}
+    for t in rows:
+        if not budget.is_discretionary(t):
+            continue
+        d = budget.eff_date(t)
+        if d and from_day <= d <= hi:
+            out[d] = round(out.get(d, 0.0) + budget.spend_amount(t), 2)
+    return out
+
+
+# ── 每天一條線，省下來的進口袋 ────────────────────────────────────────
+#: Grants Momo has asked for: a raise to the daily figure, funded only out of the pool.
+GRANTS_KEY = "cfg_daily_grants"
+
+
+async def grants(session, key: str | None = None) -> list[dict]:
+    raw = await get_kv(session, GRANTS_KEY)
+    try:
+        rows = json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        rows = []
+    rows = [r for r in rows if isinstance(r, dict)]
+    return [r for r in rows if key is None or r.get("period") == key]
+
+
+async def add_grant(session, key: str, amount: float, start: date, until: date) -> dict:
+    rows = await grants(session)
+    row = {"period": key, "amount": round(float(amount), 2),
+           "from": start.isoformat(), "until": until.isoformat()}
+    rows.append(row)
+    await set_kv(session, GRANTS_KEY, json.dumps(rows, ensure_ascii=False))
+    return row
+
+
+def grant_on(rows: list[dict], day: date) -> float:
+    """How much extra Momo granted herself for this particular day."""
+    total = 0.0
+    for r in rows:
+        try:
+            lo = date.fromisoformat(r["from"])
+            hi = date.fromisoformat(r["until"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if lo <= day <= hi:
+            total += float(r.get("amount") or 0)
+    return round(total, 2)
+
+
+def daily_view(line: float, from_day: date, hi: date, today: date,
+               by_day: dict[date, float], grant_rows: list[dict]) -> dict:
+    """One line per day, and what you didn't spend yesterday kept for later.
+
+    Momo: "if I spend nothing for the first 14 days, I have the whole budget to spend for
+    the last day." A period-wide number is a slow-motion trap — it reads as permission all
+    month and then as a cliff, and it gives her nothing to decide against on a Tuesday.
+
+    So the line is divided by the days it covers and that figure holds steady. What a day
+    does not use is not lost and is not silently available either: it lands in 本期口袋,
+    which is a real balance she can see and spend on purpose rather than by drift.
+
+    The pool is the running sum of (BASE − spent) over closed days — deliberately not
+    (allowed − spent). A grant lifts the ceiling for a day; it is not a deposit. Counting
+    it as one meant a raise Momo asked for and then did not use would ADD to the pocket,
+    which would let her mint money by requesting raises she never spent. Spending above
+    base draws the pocket down by itself, so the grant needs no second ledger — it only
+    has to be affordable at the moment she asks, which is what the tool checks.
+    """
+    days_in = (hi - from_day).days + 1
+    base = round(line / days_in, 2) if days_in > 0 else 0.0
+
+    pool = 0.0
+    d = from_day
+    while d < today and d <= hi:
+        pool += base - by_day.get(d, 0.0)
+        d += timedelta(days=1)
+    pool = round(pool, 2)
+
+    in_span = from_day <= today <= hi
+    bump = grant_on(grant_rows, today) if in_span else 0.0
+    today_allowed = round(base + bump, 2) if in_span else 0.0
+    today_spent = round(by_day.get(today, 0.0), 2) if in_span else 0.0
+    days_left = (hi - today).days + 1 if in_span else 0
+
+    return {
+        "daily_base": base,
+        "daily_today": today_allowed,
+        "daily_bump": round(bump, 2),
+        "today_spent": today_spent,
+        "today_left": round(today_allowed - today_spent, 2),
+        "pool": pool,
+        "days_closed": max(0, (min(today, hi + timedelta(days=1)) - from_day).days),
+        "days_left": days_left,
+        # what a raise of $1/day for the rest of the period would cost the pool
+        "raise_unit_cost": days_left,
+        "note": ("每天一條線，沒花完的留在口袋。想要哪天多花一點，就從口袋拿——"
+                 "口袋是空的就不行，那不是小氣，是那筆錢還沒存出來。"),
+    }
+
+
+async def closure(session, key: str | None = None) -> dict:
+    """The end-of-period review: how the fortnight actually went, day by day.
+
+    Momo asked for a closing meeting rather than a silent rollover — "give me summary of my
+    performance… we will also decide what to do with the remaining money in the pool, which
+    most likely goes to the quarters' goal."
+
+    Graded against the daily line and nothing else, same as the fortnight itself. Her Law
+    still holds here: a period where no money arrived is not a period she failed."""
+    a = await compute(session, key)
+    lo, hi = P.key_bounds(a["period_key"])
+    from_day = date.fromisoformat(a["budget_from"])
+    by_day = await _spent_by_day(session, from_day, hi)
+    gr = await grants(session, a["period_key"])
+    base = a["daily"]["daily_base"]
+    today = now().date()
+
+    # Same closed-days rule the pool uses, or the two disagree: run mid-period, today is
+    # still open and its unspent balance is not in the pocket yet.
+    last = hi if today > hi else today - timedelta(days=1)
+    days, under, over = [], 0, 0
+    for i in range((hi - from_day).days + 1):
+        d = from_day + timedelta(days=i)
+        if d > last:
+            break
+        allowed = round(base + grant_on(gr, d), 2)
+        got = round(by_day.get(d, 0.0), 2)
+        days.append({"date": d.isoformat(), "allowed": allowed, "spent": got,
+                     "left": round(allowed - got, 2), "pool_delta": round(base - got, 2)})
+        if got <= allowed:
+            under += 1
+        else:
+            over += 1
+
+    # against BASE, not against the raised ceiling — see daily_view
+    pool = round(sum(x["pool_delta"] for x in days), 2)
+    return {
+        "period": a["period_key"], "label": a["period_label"],
+        "start": a["budget_from"], "end": hi.isoformat(),
+        "closed": today > hi,
+        "daily_base": base, "days": days,
+        "days_under": under, "days_over": over,
+        "spent": a["spent"], "line": a["allowance"],
+        "pool": pool,
+        "grants": gr,
+        "verdict": "under" if a["spent"] <= a["allowance"] else "over",
+        "binding": a.get("binding"),
+        "ask": ("口袋裡還有 ${:,.0f}。要放到這一季的目標裡，還是留著下一期用？"
+                .format(pool) if pool > 0 else
+                "這一期口袋是空的，沒有東西要分配。"),
+    }
 
 
 def explain(a: dict) -> list[str]:

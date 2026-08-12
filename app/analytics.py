@@ -478,6 +478,8 @@ async def fortnight(session, f: F.Facts | None = None) -> dict:
         "days_left": a["days_left"],
         "line": round(line, 2), "spent": round(spent, 2), "left": round(under, 2),
         "per_day_left": a.get("per_day_left"),
+        # one line per day, and 本期口袋 for what a day didn't use
+        "daily": a.get("daily"),
         # the crisis view, for when the line falls under what living costs
         **{k: dv[k] for k in ("mode", "survival_need", "dip", "survival_per_day")},
         "dip_cause": dv["cause"],

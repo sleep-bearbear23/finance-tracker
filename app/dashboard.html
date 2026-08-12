@@ -317,15 +317,16 @@
     grid-template-columns:1.38fr 1.06fr 1.06fr;
     grid-template-rows:minmax(0,.95fr) minmax(0,.6fr) minmax(0,1.12fr);
     grid-template-areas:
-      "toearn  lever   runway"
-      "toearn  lever   runway"
-      "cats    ssn     ssn";}
+      "toearn  lever   book"
+      "toearn  lever   book"
+      "cats    runway  ssn";}
   [data-pane=ssn]{grid-area:ssn} [data-pane=runway]{grid-area:runway}
-  [data-pane=lever]{grid-area:lever}
-  /* 分類趨勢 is five lines crossing each other twelve times; at card size that is
-     decoration, and 花在哪 says the same thing legibly. Kept for the phone, where it gets
-     the whole screen and can actually be read. */
-  #s-plan > .grid > [data-pane=trend]{display:none}
+  [data-pane=lever]{grid-area:lever} [data-pane=book]{grid-area:book}
+  /* Stacked areas took the 花在哪 slot: the top edge is total spending and each band is a
+     category's share, so "was that fortnight expensive, and because of what" is one look.
+     The list is still a tab on the phone. */
+  #s-plan > .grid > [data-pane=trend]{grid-area:cats}
+  #s-plan > .grid > [data-pane=cats]{display:none}
   [data-pane=standing]{display:none}
 
   /* 這一期 is the whole reason for the page: one number, and permission to believe it. */
@@ -568,6 +569,7 @@
     #s-cal  > .grid.sel-calpend > [data-pane=calpend],
     #s-plan > .grid.sel-toearn   > [data-pane=toearn],
     #s-plan > .grid.sel-lever    > [data-pane=lever],
+    #s-plan > .grid.sel-book     > [data-pane=book],
     #s-plan > .grid.sel-ssn      > [data-pane=ssn],
     #s-plan > .grid.sel-runway   > [data-pane=runway],
     #s-plan > .grid.sel-standing > [data-pane=standing],
@@ -769,6 +771,11 @@
         <div class="body" id="levBox"><div class="empty">計算中…</div></div>
       </section>
 
+      <section class="card" data-pane="book">
+        <h2>接下來要接多少 <span class="more" id="bkMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="bkBox"><div class="empty">計算中…</div></div>
+      </section>
+
       <section class="card" data-pane="runway">
         <h2>撐得到什麼時候 <span class="more" id="rwMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="rwBox"><div class="empty">計算中…</div></div>
@@ -870,6 +877,12 @@ const CATSLOTS = /*CATSLOTS*/{};
 let _cfallback = 0;
 const catColor = c => CATCOLORS[(c in CATSLOTS ? CATSLOTS[c]
                                 : (CATSLOTS[c] = (_cfallback++) % 7)) % CATCOLORS.length];
+/* the same hue at a given opacity, for the filled band under a line */
+const fade = (hex, a) => {
+  const h = String(hex).replace('#','');
+  const n = parseInt(h.length===3 ? h.split('').map(x=>x+x).join('') : h, 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+};
 const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const el = id => document.getElementById(id);
 function toggleWhy(){
@@ -926,7 +939,7 @@ function halfMonthScales(points,yFmt){
 /* ── mobile pane switcher ── */
 const SEGS = {
   home:   [['accounts','帳戶'],['flows','半月收支']],
-  plan:   [['toearn','這一期'],['lever','能做的事'],['runway','撐多久'],['ssn','這一季'],
+  plan:   [['toearn','這一期'],['lever','能做的事'],['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
            ['cats','花在哪'],['trend','趨勢']],
   acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
@@ -1092,7 +1105,8 @@ async function loadPlan(){
      earning goal as a schedule with deadlines; 這一季 is the settlement. Layer 1 is graded
      against its LINE and nothing else — her Law: "I should never punish myself for a
      shortage this month, because it happened a couple weeks ago." */
-  const te=d.to_earn, fn=d.fortnight, rw=d.runway, sm=d.settlement;
+  const te=d.to_earn, fn=d.fortnight, rw=d.runway, sm=d.settlement, tb=d.to_book;
+  const dy = fn.daily || {daily_base:0,daily_today:0,daily_bump:0,today_spent:0,today_left:0,pool:0};
 
   const okc = fn.verdict==='under' ? 'var(--accent)' : 'var(--bad)';
   el('teMeta').textContent =
@@ -1117,14 +1131,21 @@ async function loadPlan(){
          <div class="kv"><span>要從緊急預備金拿</span><b style="color:var(--bad)">${F0(fn.dip)}</b></div>
          <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>
          <p style="font-size:11.5px;line-height:1.7;margin:10px 0 0">${esc(fn.dip_note)}</p>`
+      /* One line per DAY, not one per fortnight. Momo: "if I spend nothing for the first
+         14 days, I have the whole budget to spend for the last day." A period-wide figure
+         reads as permission all month and then as a cliff, and gives her nothing to decide
+         against on a Tuesday. What a day doesn't use lands in 本期口袋 — visible, and hers
+         to spend on purpose rather than by drift. */
       : `<div class="herorow">
-           <span class="k">還能花</span>
-           <span class="heroamt" style="color:${okc}">${F0(fn.left)}</span>
-           <span class="r">${fn.per_day_left!=null?`一天 ${F0(fn.per_day_left)}`:''}</span>
+           <span class="k">今天還能花</span>
+           <span class="heroamt" style="color:${dy.today_left>=0?'var(--accent)':'var(--bad)'}">${F0(dy.today_left)}</span>
+           <span class="r">${dy.daily_bump>0?`含加碼 ${F0(dy.daily_bump)}`:`一天 ${F0(dy.daily_base)}`}</span>
          </div>
          <div class="track"><i class="landed" style="width:${
-            fn.line>0?Math.min(100,100*Math.max(0,fn.spent)/fn.line):0}%"></i></div>
-         <div class="kv"><span>這一期的線</span><b>${F0(fn.line)}</b></div>
+            dy.daily_today>0?Math.min(100,100*Math.max(0,dy.today_spent)/dy.daily_today):0}%"></i></div>
+         <div class="kv"><span>本期口袋　<span class="tag">沒花完的存在這</span></span>
+           <b style="color:${dy.pool>=0?'var(--accent)':'var(--bad)'}">${F0(dy.pool)}</b></div>
+         <div class="kv"><span>這一期的線　<span class="tag">剩 ${fn.days_left} 天</span></span><b>${F0(fn.line)}</b></div>
          <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>`)
     /* Promoted out of 11px grey. This sentence is the answer to "should I feel bad about
        this number", which is the entire point of having built the three-lens model. */
@@ -1261,6 +1282,43 @@ async function loadPlan(){
          <span class="plus">+${F0(r.amount)}</span></div>`).join('')
     + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">${esc(sm.note)}</p>`;
 
+  /* ── 接下來要接多少 ──────────────────────────────────────────────────────
+     to_book was computed on every page load and rendered nowhere from the moment the layer
+     cards replaced the old 需要賺 index — Momo noticed: "I feel like the whole income goal
+     thing kinda disappeared." It is its own card and not a footer under 這一季, because
+     appending it to the bottom of the shortest pane put it below a 626px scroll, which is
+     the same disappearance wearing a scrollbar.
+
+     Tiers are labelled by what the money is FOR, since her question was how to tell
+     necessity from extra: the first days keep 這一期 alive, everything past them fills a
+     pool. 已完成 % is the scoreboard she asked for a long time ago — "what was adviced of
+     me and what progress did securing that gig get me." */
+  if (tb) {
+    el('bkMeta').textContent = `${md(tb.start)}–${md(tb.end)}・最晚 ${tb.wrap_by} 殺青`;
+    el('bkBox').innerHTML =
+      `<div class="herorow">
+         <span class="k">已排定</span>
+         <span class="heroamt" style="font-size:32px;color:var(--accent)">${F0(tb.covered)}</span>
+         <span class="r">還有 ${tb.days_to_book} 天可以排</span>
+       </div>
+       <div class="kv"><span>今天接的案子，錢會落在</span><b>${md(tb.start)}–${md(tb.end)}</b></div>
+       <div class="kv"><span>你的日薪　<span class="tag">近期有記天數的案子</span></span>
+         <b>${tb.day_rate&&tb.day_rate.rate?F0(tb.day_rate.rate):'—'}</b></div>`
+      + (tb.tiers||[]).map((t,i)=>`<div class="tierrow">
+           <div class="tierhead">
+             <span class="nm2" style="flex:0 0 2.6em">${esc(t.name)}</span>
+             <span class="amt2" style="font-size:19px;color:${i===0?'var(--muted)':i===1?'var(--accent)':'var(--ink2)'}">${
+               t.work_days!=null?`還要 ${t.work_days} 天`:F0(t.gap)}</span>
+             <span class="pct">已完成 ${Math.round(t.covered_pct)}%</span>
+           </div>
+           <div class="track"><i class="landed" style="width:${Math.min(100,t.covered_pct)}%"></i></div>
+           <div class="sub2">${esc(t.why)}　<span style="color:var(--muted)">還差 ${F0(t.gap)}（稅前）</span></div>
+         </div>`).join('')
+      + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
+           前面那幾天是房租跟吃飯，越後面的才是在補水位、存錢。今天接的，錢一個半月後才到——
+           所以這張表算的是那個時候的窗口，不是這一季。</p>`;
+  }
+
   /* the three walls */
   const st=d.standing, em=st.emergency, tx=st.tax;
   const pct = em.pct!=null ? Math.min(100,em.pct) : 0;
@@ -1303,20 +1361,32 @@ async function loadPlan(){
         <span class="tag">${esc(r.treatment_label)}・每期 ${F0(r.per_period)}</span></span>
         <span class="r">${F0(r.total)}　<span style="color:var(--muted);font-size:11px">${r.share}%</span></span></div>`).join('');
 
-  /* how each category has moved */
-  const top = c.rows.slice(0,5);
+  /* How each category has moved — stacked areas rather than five loose lines.
+     Five lines crossing each other twelve times told Momo nothing about the shape of a
+     fortnight; stacked, the top edge IS total spending and each band is a category's
+     share of it, so the question "was that month expensive, and because of what" is one
+     glance instead of five traces. Curved on request, and smallest band at the bottom so
+     the volatile categories ride on a stable base instead of shaking everything above. */
+  const top = c.rows.slice(0,6).slice().reverse();
   chart('catTrendChart',{type:'line',
-    data:{labels:c.labels, datasets: top.map(r=>({label:r.label, data:r.series,
-      borderColor:catColor(r.category), backgroundColor:'transparent',
-      borderWidth:2, tension:.18, pointRadius:0, pointHoverRadius:5}))},
-    options:{plugins:{legend:{display:true,position:'bottom',
+    data:{labels:c.labels, datasets: top.map(r=>{
+      const col = catColor(r.category);
+      return {label:r.label, data:r.series, borderColor:col,
+        backgroundColor:fade(col,.55),
+        fill:true, borderWidth:1.5, tension:.4, cubicInterpolationMode:'default',
+        pointRadius:0, pointHoverRadius:4};
+    })},
+    options:{interaction:{intersect:false,mode:'index'},
+      plugins:{legend:{display:true,position:'bottom',reverse:true,
         labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
-                color:css('--ink2'),font:{size:10},padding:12}},
-      tooltip:{intersect:false,mode:'index',callbacks:{label:x=>x.dataset.label+' '+F(x.parsed.y)}}},
-      scales:{x:{grid:{color:(x)=>c.month_start[x.index]?css('--gridstrong'):css('--grid')},
+                color:css('--ink2'),font:{size:10},padding:10}},
+      tooltip:{itemSort:(a,b)=>b.datasetIndex-a.datasetIndex,
+               callbacks:{label:x=>x.dataset.label+' '+F(x.parsed.y)}}},
+      scales:{x:{stacked:true,
+                 grid:{color:(x)=>c.month_start[x.index]?css('--gridstrong'):css('--grid')},
                  ticks:{color:css('--muted'),font:{size:10}}},
-              y:{grid:{color:css('--grid')},ticks:{color:css('--muted'),font:{size:10},
-                 callback:v=>F0(v)}}}}});
+              y:{stacked:true,grid:{color:css('--grid')},
+                 ticks:{color:css('--muted'),font:{size:10},callback:v=>F0(v)}}}}});
 }
 
 /* ── ACCOUNTS (all of them) ── */

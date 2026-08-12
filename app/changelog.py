@@ -33,7 +33,7 @@ WATCHED: tuple[str, ...] = (
     "cfg_savings_amount", "cfg_savings_cadence", "cfg_emergency_target",
     "cfg_monthly_baseline", "cfg_fixed_monthly", "cfg_budget_start",
     "cfg_cash_on_hand", "cfg_total_debt", "cfg_income_sources", "cfg_season",
-    "cfg_defend_months",
+    "cfg_defend_months", "cfg_daily_grants", "cfg_season_pot",
 )
 
 _TABLES = {"transactions": Transaction, "merchant_memory": MerchantMemory}

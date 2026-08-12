@@ -241,6 +241,42 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "raise_daily",
+        "description": (
+            "Momo wants to spend more than today's line allows. The raise is funded ONLY "
+            "from 本期口袋 (what she saved on earlier days) — if the pool cannot cover it "
+            "the tool refuses and tells her the most it can do. Call this when she asks to "
+            "spend a bit more today or for the rest of the period. Do NOT call it just "
+            "because she spent over; overspending already comes out of the pool by itself."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number", "description": "Extra dollars PER DAY."},
+                "days": {"type": "integer",
+                         "description": "How many days it applies to. Omit for the rest of the period; 1 for just today."},
+            },
+            "required": ["amount"],
+        },
+    },
+    {
+        "name": "close_session",
+        "description": (
+            "End-of-period settlement. Run it when the half-month is ending or has just "
+            "ended, or when Momo asks how the period went. It reports how many days she "
+            "held the line and settles 本期口袋: 'quarter' puts it toward the season goal "
+            "(the usual choice), 'carry' leaves it for the next period, 'none' does "
+            "nothing. Ask her which before calling — this is meant to be a conversation, "
+            "not a silent rollover."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "destination": {"type": "string", "enum": ["quarter", "carry", "none"]},
+                "note": {"type": "string", "description": "Anything she wants recorded about the period."},
+            },
+            "required": ["destination"],
+        },
+    },
+    {
         "name": "set_defend_rung",
         "description": (
             "Change how many months of survival money Momo holds back before anything "
@@ -627,6 +663,78 @@ async def set_defend_rung(s, rec, months):
             "floor": a["defended_floor"], "allowance": a["allowance"]}
 
 
+async def raise_daily(s, rec, amount, days=None):
+    """Raise today's line, paid for out of 本期口袋 and nowhere else.
+
+    The constraint is the feature. Momo: "that raise would ONLY come out of that pool."
+    A raise the pool cannot cover is not a refusal to let her live — it means the money has
+    not been saved up yet, and saying so is the honest version of no."""
+    from datetime import date as _date
+    from datetime import timedelta as _td
+    from . import allowance as AL
+    from . import period as P
+
+    a = await AL.compute(s)
+    dv, key = a["daily"], a["period_key"]
+    _, hi = P.key_bounds(key)
+    today = now().date()
+    if dv["days_left"] <= 0:
+        return {"ok": False, "error": "這一期已經結束了，加不了。"}
+
+    amount = round(abs(float(amount)), 2)
+    span = int(days) if days else dv["days_left"]
+    span = max(1, min(span, dv["days_left"]))
+    cost = round(amount * span, 2)
+
+    if cost > dv["pool"] + 0.005:
+        afford = round(dv["pool"] / span, 2) if span else 0.0
+        return {"ok": False, "capped": True, "pool": dv["pool"],
+                "error": (f"口袋只有 {_money(dv['pool'])}，加 {_money(amount)}／天 × {span} 天 "
+                          f"要 {_money(cost)}，不夠。最多能加 {_money(afford)}／天——"
+                          "這不是不給你花，是那筆錢還沒省出來。")}
+
+    until = min(hi, today + _td(days=span - 1))
+    await AL.add_grant(s, key, amount, today, until)
+    after = (await AL.compute(s))["daily"]
+    rec.says(f"{today.isoformat()}–{until.isoformat()} 每天多 {_money(amount)}"
+             f"（共 {_money(cost)}，從口袋出）。今天可以花 {_money(after['daily_today'])}，"
+             f"口袋剩 {_money(dv['pool'] - cost)}。")
+    return {"ok": True, "summary": rec.summary, "granted": amount, "days": span,
+            "cost": cost, "daily_today": after["daily_today"],
+            "pool_after": round(dv["pool"] - cost, 2)}
+
+
+async def close_session(s, rec, destination="quarter", note=None):
+    """End-of-period settlement: what the pool becomes.
+
+    Momo wanted a closing conversation rather than a silent rollover — a summary of how the
+    fortnight went, and a decision about the money she did not spend. 'quarter' sends it to
+    the season goal, 'carry' leaves it for the next fortnight."""
+    from . import allowance as AL
+    c = await AL.closure(s)
+    pool = c["pool"]
+    if destination not in ("quarter", "carry", "none"):
+        return {"ok": False, "error": "destination 只能是 quarter / carry / none"}
+
+    if pool > 0 and destination == "quarter":
+        old = await get_kv(s, "cfg_season_pot")
+        try:
+            pot = float(old or 0)
+        except (TypeError, ValueError):
+            pot = 0.0
+        await set_kv(s, "cfg_season_pot", str(round(pot + pool, 2)))
+        rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
+                 f"口袋 {_money(pool)} 放進這一季的目標，季目標存款累計 {_money(pot + pool)}。")
+    elif pool > 0:
+        rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
+                 f"口袋 {_money(pool)} " + ("留到下一期。" if destination == "carry" else "先不動。"))
+    else:
+        rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，口袋沒有剩。")
+    if note:
+        rec.says(note)
+    return {"ok": True, "summary": rec.summary, "closure": c, "destination": destination}
+
+
 async def set_income_baseline(s, rec, amount):
     old = await get_kv(s, "cfg_monthly_baseline")
     await set_kv(s, "cfg_monthly_baseline", str(float(amount)))
@@ -761,6 +869,8 @@ HANDLERS = {
     "set_savings_plan": set_savings_plan,
     "set_emergency_target": set_emergency_target,
     "set_defend_rung": set_defend_rung,
+    "raise_daily": raise_daily,
+    "close_session": close_session,
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
     "log_income": log_income,
