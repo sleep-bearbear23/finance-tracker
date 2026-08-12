@@ -1369,11 +1369,25 @@ async function loadPlan(){
      the volatile categories ride on a stable base instead of shaking everything above. */
   const top = c.rows.slice(0,6).slice().reverse();
   chart('catTrendChart',{type:'line',
-    data:{labels:c.labels, datasets: top.map(r=>{
+    data:{labels:c.labels, datasets: top.map((r,i)=>{
       const col = catColor(r.category);
-      return {label:r.label, data:r.series, borderColor:col,
-        backgroundColor:fade(col,.55),
-        fill:true, borderWidth:1.5, tension:.4, cubicInterpolationMode:'default',
+      /* fill:'-1' means "down to the band below me", not "down to zero". With fill:true
+         every layer was painted from its stacked height all the way to the axis, so the
+         upper ones covered the lower ones and it read as overlapping ghosts instead of
+         sand piled up. Only the bottom band fills to the origin.
+
+         monotone, not tension. Momo spotted red and blue crossing and guessed it was the
+         curving — it was. Her series are spiky with real zeros (旅行 935 → 0 → 0 → 0 → 506),
+         and ordinary cubic smoothing fits each line independently, overshooting BELOW zero
+         to land smoothly. A band that dips negative leaves the band above it nowhere to
+         sit, so they cross. Monotone interpolation cannot leave the interval between two
+         points, so it cannot overshoot, so it cannot cross.
+
+         Solid, and no stroke: an outline around a translucent band is what made it read as
+         overlapping shapes rather than one pile of sand. */
+      return {label:r.label, data:r.series,
+        backgroundColor:col, fill:(i===0?'origin':'-1'), borderWidth:0,
+        cubicInterpolationMode:'monotone',
         pointRadius:0, pointHoverRadius:4};
     })},
     options:{interaction:{intersect:false,mode:'index'},
