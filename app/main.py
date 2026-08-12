@@ -29,6 +29,7 @@ from . import (
     retag,
     seed_applecard,
     seed_history,
+    seed_invoices,
     simplefin,
 )
 from .config import now, settings
@@ -202,6 +203,10 @@ async def lifespan(app: FastAPI):
             if fp:
                 print(f"[family] {fp}")
                 await opsroom.say(f"👩‍👧 媽媽回款 netting — {fp}")
+            iv = await seed_invoices.backfill(s)  # the day rate's evidence, from her invoices
+            if iv:
+                print(f"[invoices] {iv}")
+                await opsroom.say(f"🧾 發票匯入 — {iv}")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

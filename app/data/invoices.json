@@ -1,0 +1,54 @@
+[
+  {"num": "CKO26ACX01",  "date": "2026-01-19", "client": "Checkout Productions LLC",
+   "project": "Checkout", "rate": 250.0, "days": 2, "day_total": 500.0,
+   "extras": 0.0, "total": 500.0},
+
+  {"num": "LBVA26BEX01", "date": "2026-02-05", "client": "Ever After Production LLC",
+   "project": "Vampire Academy — Poster", "rate": null, "days": null, "day_total": 0.0,
+   "extras": 550.0, "total": 550.0,
+   "kind": "design", "note": "海報設計，不是拍攝日，不算進日薪"},
+
+  {"num": "LRME26BBX03", "date": "2026-02-18", "client": "Bad Larry Productions LLC",
+   "project": null, "rate": 250.0, "days": 7, "day_total": 1750.0,
+   "extras": 406.42, "total": 2156.42, "note": "前製 $250＋加班 $156.42"},
+
+  {"num": "AGC26CJX01",  "date": "2026-03-27", "client": "Jump Deer Media, Inc.",
+   "project": "Avia 02/28–03/10", "rate": 200.0, "days": 4, "day_total": 800.0,
+   "extras": 0.0, "total": 800.0},
+
+  {"num": "EHG26CHX01",  "date": "2026-03-27", "client": "Horizon Vista Production",
+   "project": "The Professor", "rate": 300.0, "days": 3, "day_total": 900.0,
+   "extras": 0.0, "total": 900.0},
+
+  {"num": "HMH26CEX03",  "date": "2026-03-27", "client": "EXACT FILM LLC",
+   "project": null, "rate": 250.0, "days": 4, "day_total": 1000.0,
+   "extras": 400.0, "total": 1400.0, "note": "前製 $400 flat"},
+
+  {"num": "AGC26DJX01",  "date": "2026-04-23", "client": "Jump Deer Media, Inc.",
+   "project": "Avia 3/31–4/5", "rate": 200.0, "days": 5, "day_total": 1000.0,
+   "extras": 0.0, "total": 1000.0},
+
+  {"num": "RMG26ETX01",  "date": "2026-05-18", "client": "Trifecta Film Productions",
+   "project": "Remaking Glory", "rate": 300.0, "days": 6, "day_total": 1800.0,
+   "extras": 745.86, "total": 2545.86, "note": "前製收尾 $500＋加班 $245.86"},
+
+  {"num": "AGC26EJX01",  "date": "2026-05-21", "client": "Jump Deer Media, Inc.",
+   "project": "Avia 5/4–5/5", "rate": 200.0, "days": 2, "day_total": 400.0,
+   "extras": 0.0, "total": 400.0},
+
+  {"num": "PIW26F07",    "date": "2026-06-04", "client": "Trifecta Film Productions",
+   "project": "Prince In Workboots 05/10–05/17", "rate": 300.0, "days": 7, "day_total": 2100.0,
+   "extras": 200.0, "total": 2300.0, "match": "Prince in Workboots"},
+
+  {"num": "LBD26G03",    "date": "2026-07-14", "client": "daríoFILMS",
+   "project": "The Lady in the Blue Dress 07/07–07/11", "rate": 300.0, "days": 5,
+   "day_total": 1500.0, "extras": 600.0, "total": 2100.0, "match": "Woman in Blue Dress"},
+
+  {"num": "AVG26G02",    "date": "2026-07-24", "client": "Jump Deer Media, Inc.",
+   "project": "AviaGame Commercial 06/27–07/08", "rate": 200.0, "days": 7,
+   "day_total": 1400.0, "extras": 0.0, "total": 1400.0},
+
+  {"num": "AVG26H01",    "date": "2026-08-11", "client": "Jump Deer Media, Inc.",
+   "project": "AviaGames — August 2026", "rate": 350.0, "days": 8, "day_total": 2800.0,
+   "extras": 50.0, "total": 2850.0, "match": "AVIA 八月拍攝"}
+]

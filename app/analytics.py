@@ -306,8 +306,10 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     # pend_items already includes work she has SHOT but not been paid for, which is her
     # most recent evidence of what she charges — "day rate i think we could also consider
     # day rates of one's we shot but havent recieve the money yet."
+    from . import seed_invoices as SI
     dr = prefs.day_rate(pend_items, _paid_with_days(f),
-                        pinned=await prefs.pinned_day_rate(session))
+                        pinned=await prefs.pinned_day_rate(session),
+                        invoices=await SI.invoices(session))
     booked_days = sum(int(p.get("days") or 0) for p in pend_items)
     if dr["rate"] > 0:
         for t in tiers:

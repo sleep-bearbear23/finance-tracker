@@ -312,8 +312,32 @@ def _rate_when(r: dict) -> str:
     return ""
 
 
+def _from_invoices(rows: list[dict]) -> list[dict]:
+    """Her invoice archive, as jobs the rate can be measured from.
+
+    Uses the CONTRACTED day figure — rate × days — not the invoice total. Prep fees and
+    overtime are real income but they are not per-day, so dividing a total by shoot days
+    inflates the answer: 「Woman in Blue Dress」 is $300/day contracted and $420/day if you
+    divide $2,100 by five. The goal converts a dollar gap into days to book, so it needs
+    the price of a day. Non-shoot work (a poster design) carries no days and drops out."""
+    out = []
+    for r in rows or []:
+        try:
+            d = int(r.get("days") or 0)
+            rate = float(r.get("rate") or 0)
+        except (TypeError, ValueError):
+            continue
+        if d <= 0 or rate <= 0:
+            continue
+        amt = round(float(r.get("day_total") or rate * d), 2)
+        out.append({"amount": amt, "days": d, "rate": round(amt / d, 2),
+                    "when": (r.get("date") or "")[:10],
+                    "note": r.get("project") or r.get("client") or r.get("num") or ""})
+    return out
+
+
 def day_rate(items: list[dict], received: list[dict] | None = None,
-             pinned: float | None = None) -> dict:
+             pinned: float | None = None, invoices: list[dict] | None = None) -> dict:
     """Her dollars-per-shoot-day, from jobs where the day count is known.
 
     Momo: "instead of estimating gig amount, have a algorithm to calculate my average day
@@ -333,8 +357,12 @@ def day_rate(items: list[dict], received: list[dict] | None = None,
     still in the average. So the pinned figure wins when she has stated one, the most recent
     jobs win when she has not, and the long average is reported beside it rather than used.
     """
-    rows = [*(items or []), *(received or [])]
-    jobs = []
+    # The archive is the authoritative record of what she charged and for how many days, so
+    # when it is present it replaces the note-scraping entirely — otherwise a job appears
+    # twice, once from its invoice and once from its pending row.
+    inv_jobs = _from_invoices(invoices or [])
+    rows = [] if inv_jobs else [*(items or []), *(received or [])]
+    jobs = list(inv_jobs)
     for r in rows:
         try:
             d = int(r.get("days") or 0)
