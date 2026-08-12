@@ -56,11 +56,12 @@ async def record_screenshot(session, date_str, merchant, amount):
         if key == kb or (len(key) >= 4 and len(kb) >= 4 and (key.startswith(kb) or kb.startswith(key))):
             return None  # duplicate — already have it (SimpleFIN or an earlier screenshot)
 
-    status, category, note = await classify.classify(session, merchant, amount, backfill=False)
+    status, category, note, inflow = await classify.classify(
+        session, merchant, amount, backfill=False)
     t = Transaction(
         id=f"screenshot:{uuid4().hex[:16]}", account_id="screenshot", amount=amount,
         merchant_desc=merchant, posted_at=d0, category=category, note=note,
-        status=status, source="screenshot",
+        status=status, source="screenshot", inflow_kind=inflow,
     )
     session.add(t)
     await session.commit()

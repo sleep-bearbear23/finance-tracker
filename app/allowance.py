@@ -201,9 +201,56 @@ def ladder(survival_monthly: float, target: float) -> list[dict]:
 
 
 def rung_below(rungs: list[dict], amount: float) -> dict | None:
-    """The highest rung the pile currently clears — the floor we defend this period."""
+    """The highest rung the pile currently clears. This is where Momo is STANDING — a
+    scoreboard, not an instruction. It used to also be the floor the cushion lens
+    defended, which is the bug :func:`defended_floor` exists to undo."""
     cleared = [r for r in rungs if amount >= r["amount"]]
     return cleared[-1] if cleared else None
+
+
+#: How many months of survival the cushion lens defends by default. One — a real bottom,
+#: reachable, and the rest of the pile is hers to spread across the periods until money
+#: lands. Climbing to two is a decision she makes, not a thing a deposit does to her.
+DEFEND_KEY = "cfg_defend_months"
+DEFEND_DEFAULT = 1.0
+
+
+async def defend_months(session) -> float:
+    raw = await get_kv(session, DEFEND_KEY)
+    try:
+        return max(0.0, float(raw)) if raw else DEFEND_DEFAULT
+    except (TypeError, ValueError):
+        return DEFEND_DEFAULT
+
+
+async def set_defend_months(session, months: float) -> float:
+    months = max(0.0, min(12.0, float(months)))
+    await set_kv(session, DEFEND_KEY, str(months))
+    return months
+
+
+def defended_floor(survival_monthly: float, months: float, cash: float) -> float:
+    """The water level the cushion lens holds back — chosen, not tripped over.
+
+    The old rule defended whichever rung the pile happened to clear, and that made the
+    allowance a sawtooth. Every crossing reclassified everything above the previous rung
+    as untouchable in one step, so getting richer cratered the line: at $4,000 Momo could
+    spend $147 a period and at $4,500 she could spend $3. Three cliffs across the range
+    she actually lives in, plus an inversion at the bottom where having less than one
+    month of survival defended nothing at all and therefore read as the most comfortable
+    state of all.
+
+    It surfaced in the worst possible way. Netting her mother's paybacks and dropping
+    reimbursable work costs out of the survival floor made the model strictly more
+    accurate — and cut her allowance 62%, from $221 to $85, because the corrected floor
+    slid her across the second rung. Nothing about her life changed. The rung moved.
+
+    So the floor is a standing decision now, defaulting to one month. Above it the pile is
+    hers to spread. Below it there is nothing spare and the answer is zero — which is not
+    an instruction to starve but a handoff: :func:`analytics.dip_view` takes over and says
+    what surviving the rest of the period costs and which layer it comes out of.
+    """
+    return min(max(0.0, survival_monthly * months), max(0.0, cash))
 
 
 # ── the lenses ───────────────────────────────────────────────────────
@@ -244,14 +291,16 @@ def _plan(income_after_tax: float, fixed_p: float, savings_p: float) -> dict:
                     f"− 存錢 ${savings_p:,.0f}")}
 
 
-def _cushion(free: float, floor: float, periods_to_money: int) -> dict:
+def _cushion(free: float, floor: float, periods_to_money: int,
+             rung: str | None = None) -> dict:
     """Expected income enters here and ONLY here — as `periods_to_money`, the number of
     half-months the pile has to stretch. A bigger booked gig makes the wait shorter; it
     never makes the pile bigger."""
     n = max(1, periods_to_money)
     val = (free - floor) / n
+    held = f"守住的水位 ${floor:,.0f}" + (f"（{rung}）" if rung else "")
     return {"name": "水位", "value": round(val, 2),
-            "why": (f"（可動用 ${free:,.0f} − 守住的水位 ${floor:,.0f}）÷ 撐 {n} 期")}
+            "why": f"（可動用 ${free:,.0f} − {held}）÷ 撐 {n} 期"}
 
 
 def _trajectory(recent_median: float, drift_per_period: float) -> dict:
@@ -274,6 +323,7 @@ async def _recent_discretionary(session, key: str, n: int = 6) -> tuple[float, l
     _, hi = P.key_bounds(keys[-1])
     rows = (await session.execute(select(Transaction))).scalars().all()
     per = {k: 0.0 for k in keys}
+    spread = 0.0
     for t in rows:
         if not budget.is_discretionary(t):
             continue
@@ -281,8 +331,17 @@ async def _recent_discretionary(session, key: str, n: int = 6) -> tuple[float, l
         if not d or d < lo or d > hi:
             continue
         k = P.key_for(d)
-        if k in per:
+        if k not in per:
+            continue
+        # 媽媽的回款 belong to the whole window, not the fortnight the transfer cleared in
+        if budget.spreads_over_window(t):
+            spread += budget.spend_amount(t)
+        else:
             per[k] += budget.spend_amount(t)
+    if keys:
+        share = spread / len(keys)
+        for k in keys:
+            per[k] += share
     begin = await start_date(session)
     vals = []
     for k in keys:
@@ -389,8 +448,13 @@ async def compute(session, key: str | None = None) -> dict:
     # Cash Momo could actually deploy: liquid, minus the card she owes, minus tax that
     # isn't hers. The emergency fund stays IN — the ladder is what protects it.
     reserve_total = round(nw["spendable"] - nw["debts"] - tax_st["outstanding"], 2)
+    # WHERE SHE IS versus WHAT SHE DEFENDS. These used to be the same value, which is what
+    # made the allowance a sawtooth — see defended_floor(). Standing is the scoreboard now
+    # and has no effect on the number.
     standing = rung_below(rungs, reserve_total)
-    floor = standing["amount"] if standing else 0.0
+    dm = await defend_months(session)
+    floor = defended_floor(survival_monthly, dm, reserve_total)
+    defended = next((r for r in rungs if abs(r["months"] - dm) < 0.05), None)
 
     periods_out, next_money = await _periods_to_money(session, today)
 
@@ -411,7 +475,7 @@ async def compute(session, key: str | None = None) -> dict:
     # 15-day period, so she gets a third of the period's number — not all of it.
     lenses = [_scale(L, frac) for L in (
         _plan(income_after_tax, fixed_p, savings_p),
-        _cushion(reserve_total, floor, periods_out),
+        _cushion(reserve_total, floor, periods_out, defended["name"] if defended else None),
         _trajectory(recent_med, drift),
     )]
     plan_l, cush_l, traj_l = lenses
@@ -494,6 +558,9 @@ async def compute(session, key: str | None = None) -> dict:
 
         "reserve_total": reserve_total,
         "standing_rung": standing,
+        "defend_months": dm,
+        "defended_rung": defended,
+        "defended_floor": round(floor, 2),
         "ladder": rungs,
         "emergency_target": emerg_target,
         "periods_to_money": periods_out,

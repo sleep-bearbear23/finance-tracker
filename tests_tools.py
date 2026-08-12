@@ -63,7 +63,8 @@ async def main():
               any(near(p["amount"], 2800) for p in pend), str(pend))
         check("the summary says what it did, with the number and the stage",
               "2,800" in out["summary"] and "已接" in out["summary"]
-              and "70%" in out["summary"], out["summary"])
+              and f'{prefs.STAGE_CONFIDENCE["booked"]:.0%}' in out["summary"],
+              out["summary"])
         check("it logged exactly one change", await n_changes(s) == before + 1)
 
         print("\n[2] a tool that cannot find its target fails loudly and writes nothing")

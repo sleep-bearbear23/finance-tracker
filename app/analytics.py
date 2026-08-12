@@ -366,6 +366,73 @@ _DIAGNOSIS = {
 }
 
 
+def dip_view(line: float, spent: float, days_left: int, days_in: int,
+             lean_flex_monthly: float, binding: str = "", coverage: float = 1.0) -> dict:
+    """Is this still a budget, or is it an alarm?
+
+    Momo's screen said 「還能花 $4 · 一天 $1」 for five remaining days, and she said "wow".
+    The arithmetic was right and the vocabulary was wrong. The cushion lens divides
+    (可動用 − 守住的水位) across the periods it has to cover; when her spendable cash sits
+    almost exactly on her emergency floor the numerator collapses to nearly nothing, and a
+    correct calculation comes out the other end dressed as pocket money.
+
+    $1 a day is not an instruction. It is the same failure as the negative allowance from
+    months ago wearing a new coat: a number that cannot be obeyed reads as a verdict on
+    her, which is precisely what her Law forbids.
+
+    So below the point where the line stops covering food, the card stops quoting the line
+    and says the true thing instead — this is what the rest of the period costs at the
+    most frugal she has ever actually lived, this much of it comes out of the emergency
+    fund, and that is a fact about timing, not about her.
+
+    Two different things can put her here and they must not be told the same way. Either
+    the line was never big enough — she is at her floor and no decision of hers produced
+    that, which is the case her Law protects — or the line was enough and she spent it
+    down, which is a real fact about the last two weeks and hiding it would make the card
+    a liar. ``cause`` carries the difference; only the first one gets 「這不是你花太兇」.
+
+    ``binding`` is taken so the note cannot contradict the lever printed beneath it. A
+    line can be below survival *and* 軌跡 can be the tightest lens — her recent pace really
+    is the constraint — and in that one combination the absolution is dropped rather than
+    printed directly above 「花得比自己的節奏兇」.
+
+    Pure on purpose: the whole crisis branch is exercisable without a low-cash database.
+    """
+    per_day = (lean_flex_monthly / 2 / days_in) if days_in else 0.0
+    survival = round(per_day * max(0, days_left), 2)
+    left = max(0.0, line - spent)
+    dip = round(max(0.0, survival - left), 2)
+    if dip <= 0:
+        return {"mode": "normal", "cause": None, "survival_need": survival, "dip": 0.0,
+                "survival_full": round(per_day * days_in
+                                       * max(0.0, min(1.0, coverage)), 2),
+                "survival_per_day": round(per_day, 2), "line_left": round(left, 2),
+                "dip_note": ""}
+
+    # Which cause it is has to be judged over the SAME span, and the span is the one the
+    # LINE buys — not the calendar period. ``survival`` covers only the days that are left,
+    # so comparing them directly called her $221 line "enough" merely because it exceeds
+    # five days of food. Correcting that to a full period then over-corrected: with 起算日
+    # landing on 8/11 the budget governs 5 of 15 days, so the line was never meant to buy
+    # fifteen days of anything, and measuring it against them blamed the water level for a
+    # line that was, barely, adequate. Same error twice, once in each direction.
+    full = round(per_day * days_in * max(0.0, min(1.0, coverage)), 2)
+    cause = "spent" if line >= full else "line"
+    head = (f"剩 {days_left} 天，最省也要 ${survival:,.0f}（一天 ${per_day:,.0f}），"
+            f"線上只剩 ${left:,.0f}，差 ${dip:,.0f}。")
+    tail = (("這條線本來就低於吃飯的錢"
+             + ("——不是你花太兇，是水位卡在緊急預備金的邊上，"
+                if binding != "軌跡" else "，是水位卡在緊急預備金的邊上；")
+             + f"剩下這幾天的 ${dip:,.0f} 會直接從那一層拿。")
+            if cause == "line" else
+            f"這一期的線 ${line:,.0f} 本來夠用，是已經花掉了；"
+            f"剩下這幾天的 ${dip:,.0f} 會從緊急預備金拿。下一期會重新算，不用把它背過去。")
+    return {"mode": "dip", "cause": cause, "survival_need": survival, "dip": dip,
+            "survival_full": full,
+            "survival_per_day": round(per_day, 2), "line_left": round(left, 2),
+            "dip_note": head + tail}
+
+
 async def fortnight(session, f: F.Facts | None = None) -> dict:
     """This half-month: the line, what kind of tight it is, and where it sits in the season.
 
@@ -395,12 +462,26 @@ async def fortnight(session, f: F.Facts | None = None) -> dict:
     under = line - spent
     fc = await RW.forecast(session, f, lean=True)
 
+    # What eating actually costs for the days that are left. Below this a "line" stops
+    # being a budget: Momo's screen showed $4 for five days — $1 a day — which is not an
+    # instruction anyone can follow. It is the same failure as the negative allowance from
+    # months ago, arriving through a different door: the cushion lens is correct that she
+    # is at her floor, and then reports it in the vocabulary of pocket money.
+    te2 = await to_earn(session, HORIZON_MONTHS, f)
+    days_in = P.days_in(a["period_key"])
+    dv = dip_view(line, spent, a["days_left"], days_in, te2["lean_flex_monthly"], binding,
+                  coverage=a.get("coverage", 1.0))
+
     return {
         "period": a["period_key"], "label": a["period_label"],
         "start": a["period_start"], "end": a["period_end"],
         "days_left": a["days_left"],
         "line": round(line, 2), "spent": round(spent, 2), "left": round(under, 2),
         "per_day_left": a.get("per_day_left"),
+        # the crisis view, for when the line falls under what living costs
+        **{k: dv[k] for k in ("mode", "survival_need", "dip", "survival_per_day")},
+        "dip_cause": dv["cause"],
+        "floor": round(te2["fixed_monthly"] + te2["lean_flex_monthly"], 2),
         # the verdict, and ONLY against the line
         "verdict": "under" if under >= 0 else "over",
         "binding": binding, "diagnosis": label, "lever": lever, "kind": kind,
@@ -418,6 +499,7 @@ async def fortnight(session, f: F.Facts | None = None) -> dict:
                                       if r["arrive"] > 0), None)) is not None else None),
         "law": ("這一期緊不緊，跟你花得好不好是兩件事。線是照你的節奏跟水位算出來的，"
                 "沒進帳的那幾期只要沒超過線，就算過關。"),
+        "dip_note": dv["dip_note"],
     }
 
 

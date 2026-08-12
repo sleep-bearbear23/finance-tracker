@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import cleanup, dashboard, migrate, prefs, retag  # noqa: E402
 from app import facts as F  # noqa: E402
+from app import period as P  # noqa: E402
 from app.config import TZ  # noqa: E402
 from app.db import Session, engine, init_db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -35,6 +36,19 @@ from app.models import Account, Transaction  # noqa: E402
 
 PASS, FAIL = [], []
 EPS = 0.011
+
+
+class _Row:
+    """A stand-in for a Transaction, for predicates that only read a couple of fields."""
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def _old_line(cash: float, surv: float, n: int) -> float:
+    """The floor rule as it was: defend whichever rung the pile happens to clear. Kept so
+    the monotonicity test can prove it is fixing something that was really broken."""
+    floor = max([surv * m for m in (1, 2, 3) if cash >= surv * m] or [0.0])
+    return max(0.0, (cash - floor) / n)
 
 
 def check(name, cond, detail=""):
@@ -246,16 +260,26 @@ async def main():
     booked = {"when": "2026-09"}
     wrapped = {"when": "2026-09", "stage": "wrapped", "wrapped_on": "2026-09-14"}
     invoiced = {"when": "2026-09", "stage": "invoiced", "wrapped_on": "2026-09-14"}
+    # Assert the ORDER, not the numbers — Momo moved the levels once already ("wrapped
+    # should be almost 100%, booked still on the high end") and a test that pins literals
+    # only reports that she changed her mind.
+    SC = _prefs.STAGE_CONFIDENCE
     check("a shoot that has not happened is the riskiest kind of money",
-          near(_prefs.confidence(booked, today), 0.70),
-          str(_prefs.confidence(booked, today)))
+          near(_prefs.confidence(booked, today), SC["booked"])
+          and SC["booked"] < SC["wrapped"] < SC["invoiced"] <= 1.0,
+          str(SC))
     check("wrapping retires the production risk",
-          near(_prefs.confidence(wrapped, today), 0.90))
+          near(_prefs.confidence(wrapped, today), SC["wrapped"]))
     check("invoicing retires a little more",
-          near(_prefs.confidence(invoiced, today), 0.95))
+          near(_prefs.confidence(invoiced, today), SC["invoiced"]))
+    # Her own read: a booked vertical rarely evaporates. Pricing one as a coin flip made
+    # the forecast gloomier than her actual track record.
+    check("a booked shoot is discounted, but not treated as a coin flip",
+          0.75 <= SC["booked"] < SC["wrapped"], str(SC["booked"]))
     check("stage and lateness compound — a booked job that is also overdue is worse than either",
           _prefs.confidence({"when": "2026-04"}, today)
-          < min(0.70, _prefs.confidence({"when": "2026-04", "stage": "invoiced"}, today)),
+          < min(SC["booked"],
+                _prefs.confidence({"when": "2026-04", "stage": "invoiced"}, today)),
           str(_prefs.confidence({"when": "2026-04"}, today)))
     check("nothing owed is ever worth literally zero",
           _prefs.confidence({"when": "2020-01"}, today) >= _prefs.CONFIDENCE_FLOOR)
@@ -396,6 +420,132 @@ async def main():
           sum(g["need_net"] for g in rw["gaps"])
           <= max([p["short"] for p in fc["periods"]] or [0]) + EPS,
           str([(g["label"], g["need_net"]) for g in rw["gaps"]]))
+
+    print("\n[11] when the line stops covering food it stops calling itself a budget")
+    # Momo's screen: 「還能花 $4 · 一天 $1」 with five days left, and she said "wow". Working
+    # backwards, her 可動用 was sitting almost exactly on her $2,834 emergency floor, so the
+    # cushion lens numerator collapsed and a correct calculation came out as pocket money.
+    # Pure function on purpose — the crisis branch must be exercisable without waiting for
+    # her cash to actually hit the floor.
+    from app.analytics import dip_view
+    LEAN = 2834.0                       # her lean flex, monthly
+    hers = dip_view(line=225.0, spent=221.0, days_left=5, days_in=15,
+                    lean_flex_monthly=LEAN)
+    check("her actual $4/five-days screen is recognised as a dip, not a budget",
+          hers["mode"] == "dip",
+          f'線剩 {hers["line_left"]} vs 最省要 {hers["survival_need"]}')
+    check("the dip is exactly what the line cannot cover",
+          near(hers["dip"], hers["survival_need"] - hers["line_left"]),
+          f'{hers["dip"]} = {hers["survival_need"]} − {hers["line_left"]}')
+    check("the dip is named as a draw on the emergency fund",
+          "緊急預備金" in hers["dip_note"] and f'{hers["dip"]:,.0f}' in hers["dip_note"],
+          hers["dip_note"])
+    check("a comfortable period is left alone",
+          dip_view(1200.0, 300.0, 7, 15, LEAN)["mode"] == "normal")
+    check("a line that was never big enough is blamed on the water level, not on her",
+          hers["cause"] == "line" and "不是你花太兇" in hers["dip_note"])
+    # The other way into a dip is a line that WAS enough, spent down. Telling her that one
+    # with 「這不是你花太兇」 would make the card a liar, so the two causes are worded apart.
+    over = dip_view(line=1600.0, spent=1550.0, days_left=1, days_in=15, lean_flex_monthly=LEAN)
+    check("a line that was enough and got spent is named as spending, not as timing",
+          over["mode"] == "dip" and over["cause"] == "spent"
+          and "不是你花太兇" not in over["dip_note"],
+          over["dip_note"])
+    check("even then it does not follow her into the next period",
+          "下一期會重新算" in over["dip_note"])
+    # The note sits directly above the lever. Absolving her of overspending one line above
+    # 「花得比自己的節奏兇」 would read as the card arguing with itself.
+    check("the note never contradicts the lever printed under it",
+          "不是你花太兇" not in dip_view(221.0, 217.0, 5, 15, LEAN, "軌跡")["dip_note"]
+          and "不是你花太兇" in dip_view(221.0, 217.0, 5, 15, LEAN, "水位")["dip_note"],
+          dip_view(221.0, 217.0, 5, 15, LEAN, "軌跡")["dip_note"])
+    check("the last day of a period can never be a dip on its own",
+          dip_view(0.0, 0.0, 0, 15, LEAN)["mode"] == "normal")
+    check("survival scales with the days that are left, not the days that are gone",
+          near(dip_view(0, 0, 10, 15, LEAN)["survival_need"],
+               2 * dip_view(0, 0, 5, 15, LEAN)["survival_need"]))
+    # A 15-day line was being compared against 5 days of food, which called her $221 line
+    # "enough" and blamed her for spending it. Same span, or the blame lands on the wrong
+    # person — and that is exactly the failure her Law names.
+    check("the cause is judged over the whole period, not just the days that remain",
+          dip_view(221.0, 217.0, 5, 15, LEAN)["cause"] == "line",
+          str(dip_view(221.0, 217.0, 5, 15, LEAN)))
+    check("the dip never exceeds what surviving costs",
+          all(dip_view(L, 0, 5, 15, LEAN)["dip"]
+              <= dip_view(L, 0, 5, 15, LEAN)["survival_need"] + EPS
+              for L in (0, 50, 200, 500)))
+    check("live data agrees with the pure function",
+          fn["mode"] == dip_view(fn["line"], fn["spent"], fn["days_left"],
+                                 P.days_in(fn["period"]),
+                                 2 * fn["survival_per_day"] * P.days_in(fn["period"])
+                                 )["mode"],
+          f'{fn["mode"]} 線 {fn["line"]} 花 {fn["spent"]}')
+
+    print("\n[12] having more money never buys less")
+    # The sawtooth. The floor was whichever rung the pile happened to clear, so crossing
+    # one reclassified everything above the last rung as untouchable in a single step:
+    # $147 a period at $4,000, $3 a period at $4,500. Three cliffs across the range Momo
+    # actually lives in, and an inversion below the first rung where nothing was defended
+    # at all and being broke therefore read as the most comfortable state of all.
+    #
+    # It surfaced by breaking a good change. Netting her mother's paybacks and dropping
+    # reimbursable work costs from the survival floor made the model strictly more
+    # accurate, and cut her allowance from $221 to $85 — the corrected floor slid her over
+    # the second rung. Nothing about her life changed. So: a monotonicity test, because
+    # the property that was violated was never "is this number right", it was "can this
+    # number move the wrong way".
+    from app import allowance as _al
+    SURV, N, FR = 2233.08, 4, 1.0
+    def line_at(cash, months=1.0):
+        f = _al.defended_floor(SURV, months, cash)
+        return max(0.0, (cash - f) / N) * FR
+    sweep = [(c, line_at(c)) for c in range(500, 12001, 250)]
+    bad = [(a[0], b[0]) for a, b in zip(sweep, sweep[1:]) if b[1] < a[1] - EPS]
+    check("the line never falls as the pile grows",
+          not bad, f'drops at {bad[:4]}')
+    check("no cliff: $250 more can never cost more than $250 of line",
+          all(abs(b[1] - a[1]) <= 250 / N + EPS for a, b in zip(sweep, sweep[1:])),
+          str(max(abs(b[1] - a[1]) for a, b in zip(sweep, sweep[1:]))))
+    check("the old rule really did have the cliffs — the fix is not solving a non-problem",
+          any(_old_line(c, SURV, N) > _old_line(c + 250, SURV, N) + 1
+              for c in range(500, 9000, 250)))
+    # Standing and defending are different things now, and only one of them is a decision.
+    check("the defended floor does not move when the balance moves",
+          len({_al.defended_floor(SURV, 1.0, c) for c in (5000, 6000, 7000, 12000)}) == 1,
+          str([_al.defended_floor(SURV, 1.0, c) for c in (5000, 6000, 7000, 12000)]))
+    check("climbing a rung costs allowance, visibly and on purpose",
+          line_at(6000, 2.0) < line_at(6000, 1.0),
+          f'{line_at(6000, 2.0):.0f} vs {line_at(6000, 1.0):.0f}')
+    check("below the floor there is nothing spare, and it says zero rather than a fiction",
+          line_at(1500) == 0 and line_at(SURV - 1) == 0)
+    # …and zero is a handoff, not an instruction. dip_view has to pick it up.
+    check("a zero line hands off to the dip view instead of being taken literally",
+          dip_view(0.0, 0.0, 5, 15, 1400.0)["mode"] == "dip")
+    check("live: standing on a rung is a scoreboard, not the floor",
+          plan["standing"].get("defended_floor") is None
+          or plan["standing"]["defended_floor"] <= plan["standing"]["reserve_total"])
+
+    print("\n[13] 媽媽的回款 come off the bucket they inflated")
+    from app import budget as _bg
+    from app import taxonomy as _tx
+    check("an inbound transfer from her mother's account is a payback",
+          _tx.family_payback("Online Transfer From Chk ...7567 transaction#: 299", 525.46))
+    # Direction is the whole test — money the other way is Momo paying her mother.
+    check("money going the other way to the same account is not",
+          not _tx.family_payback("Online Transfer To Chk ...7567", -525.46))
+    check("an ordinary transfer is untouched",
+          not _tx.family_payback("APPLECARD GSBANK PAYMENT", 2990.0))
+    check("a payback with no matching charge is spread across the window, not dumped in one",
+          _bg.spreads_over_window(_Row(inflow_kind=_tx.REIMBURSE_FAMILY, nets_txn_id=None)))
+    check("a refund that found its charge stays on that charge's fortnight",
+          not _bg.spreads_over_window(_Row(inflow_kind=_tx.REFUND, nets_txn_id="abc")))
+    # The floor is "the least she can live on", so it cannot include gaff tape she got paid
+    # back for, and it cannot include shocks — those are already carried separately, so
+    # counting them here charged her twice.
+    check("the survival floor is built from 彈性+想要 only",
+          all(_tx.treatment(c) in (_tx.FLEX, _tx.WANT)
+              for c in ("food", "snacks", "want", "shopping", "household"))
+          and _tx.treatment("work") == _tx.WORK and _tx.treatment("health") == _tx.IRREGULAR)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

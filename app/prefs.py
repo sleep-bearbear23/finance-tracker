@@ -171,7 +171,13 @@ PAY_LAG_DAYS = 45
 #:   invoiced  the paperwork is in and the clock has formally started
 #:
 #: Lateness decays these further; the two multiply, because they are separate risks.
-STAGE_CONFIDENCE = {"booked": 0.70, "wrapped": 0.90, "invoiced": 0.95}
+#:
+#: Momo corrected the levels from her own experience: wrapped work should be trusted
+#: "almost 100%", and booked "still on the high end, cuz it's rare that a booked show would
+#: end up not happening." The first pass had 70/90, which priced a vertical shoot on her
+#: calendar as a coin-flip-and-a-half and made the whole forecast read gloomier than her
+#: actual track record.
+STAGE_CONFIDENCE = {"booked": 0.85, "wrapped": 0.95, "invoiced": 0.97}
 STAGES = tuple(STAGE_CONFIDENCE)
 DEFAULT_STAGE = "booked"
 

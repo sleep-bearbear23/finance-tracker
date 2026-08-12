@@ -350,3 +350,29 @@ CANCELS_SPEND = (REIMBURSE_WORK, REIMBURSE_FAMILY, REFUND)
 def is_income_kind(kind: str | None) -> bool:
     """Only real pay counts as income — and only real pay gets taxed."""
     return kind == PAY
+
+
+# ── 媽媽的回款 ────────────────────────────────────────────────────────────────
+# Momo fronts household purchases on her own card and her mother pays her back by
+# internal transfer. Both halves were being mishandled in opposite directions: the
+# purchase counted as Momo's discretionary spending, and the payback matched
+# 「online transfer」 so it was filed as money moving between her own accounts and
+# vanished. Her flexible spend read about a third higher than she actually spends —
+# and an inflated line is the one error that costs money rather than morale, because
+# it tells her she may spend what was never hers.
+#
+# She was clear she is not going to sit and identify a year of individual purchases:
+# "it's just regular reimbursement and I can't tell you every single one." She does
+# not have to. Only the ACCOUNT has to be recognised — one rule, and the netting that
+# already exists for production reimbursements and Amazon returns does the rest.
+#
+# Adding another of her mother's accounts later is one more alternative here.
+FAMILY_PAYBACK_RE = re.compile(r"7567", re.I)
+
+
+def family_payback(desc: str, amount: float) -> bool:
+    """Is this money arriving from a family account to cover something already bought?
+
+    Direction is part of the test. Money going the other way to the same account is
+    Momo paying her mother, which is a real expense and must not be netted away."""
+    return amount > 0 and bool(FAMILY_PAYBACK_RE.search(desc or ""))

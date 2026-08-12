@@ -1049,19 +1049,37 @@ async function loadPlan(){
   const okc = fn.verdict==='under' ? 'var(--accent)' : 'var(--bad)';
   el('teMeta').textContent =
     `${esc(fn.label)}　剩 ${fn.days_left} 天　第 ${fn.session_index}／${fn.session_count} 期`;
-  el('teBox').innerHTML =
-    `<div class="tierhead" style="padding:2px 0 6px">
-       <span class="nm2" style="flex:0 0 3.4em">還能花</span>
-       <span class="amt2" style="color:${okc}">${F0(fn.left)}</span>
-       <span class="pct">${fn.per_day_left!=null?`一天 ${F0(fn.per_day_left)}`:''}</span>
-     </div>
-     <div class="track"><i class="landed" style="width:${
-        fn.line>0?Math.min(100,100*Math.max(0,fn.spent)/fn.line):0}%"></i></div>
-     <div class="kv"><span>這一期的線</span><b>${F0(fn.line)}</b></div>
-     <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>
 
-     <div class="lever ${fn.kind}" style="margin-top:8px">
-       <b>這一期為什麼是這條線</b>
+  /* When the line no longer covers eating, quoting it is worse than useless — 「還能花 $4，
+     一天 $1」 is arithmetically correct and impossible to obey, and a number you cannot obey
+     reads as a verdict on yourself. So the headline becomes what the rest of the period
+     actually costs, and the shortfall is named as a draw on the emergency fund. */
+  const dip = fn.mode === 'dip';
+  el('teBox').innerHTML =
+    (dip
+      ? `<div class="tierhead" style="padding:2px 0 6px">
+           <span class="nm2" style="flex:0 0 auto;white-space:nowrap">撐完這期要</span>
+           <span class="amt2" style="color:var(--bad)">${F0(fn.survival_need)}</span>
+           <span class="pct">一天 ${F0(fn.survival_per_day)}</span>
+         </div>
+         <div class="track"><i class="landed" style="width:${
+            fn.survival_need>0?Math.min(100,100*fn.dip/fn.survival_need):0
+           }%;background:var(--bad)"></i></div>
+         <div class="kv"><span>${fn.dip_cause==='spent'?'線上還剩（本來夠用）':'線上還剩'}</span><b>${F0(Math.max(0,fn.left))}</b></div>
+         <div class="kv"><span>要從緊急預備金拿</span><b style="color:var(--bad)">${F0(fn.dip)}</b></div>
+         <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>
+         <p style="font-size:11px;line-height:1.7;margin:8px 0 0">${esc(fn.dip_note)}</p>`
+      : `<div class="tierhead" style="padding:2px 0 6px">
+           <span class="nm2" style="flex:0 0 3.4em">還能花</span>
+           <span class="amt2" style="color:${okc}">${F0(fn.left)}</span>
+           <span class="pct">${fn.per_day_left!=null?`一天 ${F0(fn.per_day_left)}`:''}</span>
+         </div>
+         <div class="track"><i class="landed" style="width:${
+            fn.line>0?Math.min(100,100*Math.max(0,fn.spent)/fn.line):0}%"></i></div>
+         <div class="kv"><span>這一期的線</span><b>${F0(fn.line)}</b></div>
+         <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>`)
+    + `<div class="lever ${fn.kind}" style="margin-top:8px">
+       <b>${dip?'這一期為什麼這麼緊':'這一期為什麼是這條線'}</b>
        綁住的是「${esc(fn.binding)}」——${esc(fn.diagnosis)}。<br>${esc(fn.lever)}
      </div>`
     + (fn.lenses||[]).map(L=>`<div class="ev2">

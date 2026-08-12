@@ -85,13 +85,15 @@ async def ingest(session) -> int:
             if tx.get("posted"):
                 posted = datetime.fromtimestamp(int(tx["posted"]), tz=timezone.utc).astimezone(TZ)
             desc = tx.get("description", "") or tx.get("payee", "") or ""
-            status, category, note = await classify.classify(session, desc, amount, backfill=not initialized)
+            status, category, note, inflow = await classify.classify(
+                session, desc, amount, backfill=not initialized)
             if status == "needs_context":
                 new_needs += 1
 
             session.add(Transaction(
                 id=tx["id"], account_id=acct["id"], amount=amount,
-                merchant_desc=desc, posted_at=posted, category=category, note=note, status=status,
+                merchant_desc=desc, posted_at=posted, category=category, note=note,
+                status=status, inflow_kind=inflow,
             ))
 
     await session.commit()

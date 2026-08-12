@@ -198,6 +198,10 @@ async def lifespan(app: FastAPI):
             if rf:
                 print(f"[netting] {rf}")
                 await opsroom.say(f"↩️ refund netting — {rf}")
+            fp = await retag.net_family_paybacks(s)  # 媽媽的回款 come off the flex bucket
+            if fp:
+                print(f"[family] {fp}")
+                await opsroom.say(f"👩‍👧 媽媽回款 netting — {fp}")
     except Exception as e:
         print(f"[seed] error: {e!r}")
     try:

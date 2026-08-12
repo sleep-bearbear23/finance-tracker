@@ -241,6 +241,24 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "set_defend_rung",
+        "description": (
+            "Change how many months of survival money Momo holds back before anything "
+            "counts as spendable — 第一階 is 1 month, 第二階 is 2, 第三階 is 3. Default 1. "
+            "Raising it is how she deliberately climbs; it makes this period's allowance "
+            "SMALLER, so only call it when she has actually said she wants to build the "
+            "cushion up. Never call it because a payment landed or because her balance "
+            "went up — the whole point is that the level only moves when she decides."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "months": {"type": "number",
+                           "description": "1 = 第一階, 2 = 第二階, 3 = 第三階."},
+            },
+            "required": ["months"],
+        },
+    },
+    {
         "name": "set_emergency_target",
         "description": (
             "Pin the emergency fund goal to a number she chose. Pass 0 to unpin it and go "
@@ -589,6 +607,26 @@ async def set_emergency_target(s, rec, amount):
     return {"ok": True, "summary": rec.summary}
 
 
+async def set_defend_rung(s, rec, months):
+    """Climb, or step back down. The whole point of the rung being a decision."""
+    from . import allowance as AL
+    old = await AL.defend_months(s)
+    new = await AL.set_defend_months(s, months)
+    a = await AL.compute(s)
+    where = f"＝ {_money(a['defended_floor'])}"
+    if new > old:
+        rec.says(f"守住的水位從 {old:g} 個月升到 {new:g} 個月 {where}。"
+                 f"這一期能花的會變少（{_money(a['allowance'])}），"
+                 "因為你決定把更多錢留在底下那一層。")
+    elif new < old:
+        rec.says(f"守住的水位從 {old:g} 個月降到 {new:g} 個月 {where}，"
+                 f"這一期能花的變成 {_money(a['allowance'])}。")
+    else:
+        rec.says(f"守住的水位本來就是 {new:g} 個月 {where}，沒有變。")
+    return {"ok": True, "summary": rec.summary, "months": new,
+            "floor": a["defended_floor"], "allowance": a["allowance"]}
+
+
 async def set_income_baseline(s, rec, amount):
     old = await get_kv(s, "cfg_monthly_baseline")
     await set_kv(s, "cfg_monthly_baseline", str(float(amount)))
@@ -722,6 +760,7 @@ HANDLERS = {
     "remove_fixed_cost": remove_fixed_cost,
     "set_savings_plan": set_savings_plan,
     "set_emergency_target": set_emergency_target,
+    "set_defend_rung": set_defend_rung,
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
     "log_income": log_income,

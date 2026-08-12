@@ -257,6 +257,7 @@ async def _by_period(session, treatments: set[str], periods: int,
         first = P.key_for(min(bank))
         keys = [k for k in keys if k > first]      # strictly after the first partial period
     per = dict.fromkeys(keys, 0.0)
+    spread = 0.0
     for t in f.txns:
         if not budget.is_spend(t):
             continue
@@ -266,9 +267,14 @@ async def _by_period(session, treatments: set[str], periods: int,
         k = P.key_for(d)
         if k not in per:
             continue
-        if (T.treatment(t.category) or "") in treatments:
+        if (T.treatment(t.category) or "") not in treatments:
+            continue
+        if budget.spreads_over_window(t):
+            spread += budget.spend_amount(t)      # negative; see budget.spreads_over_window
+        else:
             per[k] += budget.spend_amount(t)
-    return [round(per[k], 2) for k in keys]
+    share = spread / len(keys) if keys else 0.0
+    return [round(per[k] + share, 2) for k in keys]
 
 
 async def observed_fixed_monthly(session, periods: int = OBSERVED_PERIODS) -> dict:
@@ -323,10 +329,23 @@ async def observed_flex(session, periods: int = OBSERVED_PERIODS) -> dict:
     LEAN_FLEX_MONTHLY was a constant I typed ($550), with a comment claiming it came from
     her cheapest months. It did not — nothing recomputed it. This does: the 25th percentile
     of her real half-month flexible spend is a floor she has actually lived on, and it
-    moves as she does."""
+    moves as she does.
+
+    Only 彈性 and 想要. This used to sweep in every treatment except 固定 and 不算支出,
+    which meant 「the most frugal Momo has ever lived」 included gaff tape she bought for a
+    shoot and got paid back for, and one-off shocks — and shocks are already carried by
+    their own amortised load, so they were counted twice. The floor came out about 14% too
+    high, and since every ladder rung and the emergency target are multiples of it, so did
+    they. Momo, on 工作 and 不規則: "I agree just cuz I think the past month and moving
+    forward, these two is probably not gonna have much" — true today, and the structural
+    reason holds in a busy season too."""
     from . import taxonomy as T
-    groups = {t for t in T.TREATMENT_LABEL if t not in (T.FIXED, T.SKIP)}
-    vals = sorted(v for v in await _by_period(session, groups, periods))
+    groups = {T.FLEX, T.WANT}
+    # Clamp at zero. Now that 媽媽的回款 nets off this bucket, a fortnight where the payback
+    # lands after the purchases can total negative — and a negative first quartile would
+    # drag the survival floor, and therefore the whole ladder, below zero. Spending less
+    # than nothing is not a floor anyone can live on.
+    vals = sorted(max(0.0, v) for v in await _by_period(session, groups, periods))
     if len(vals) < 3:
         return {"lean": 0.0, "median": 0.0, "periods": len(vals), "enough": False}
     import statistics

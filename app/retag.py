@@ -21,6 +21,7 @@ from .models import MerchantMemory, Transaction
 
 RETAG_FLAG = "taxonomy_v1"
 NETTING_FLAG = "refund_netting_v2"
+FAMILY_FLAG = "family_payback_v1"
 
 #: how far back a refund may reach to find its charge. Momo's Amazon returns land
 #: one to two months after the order; 120 days covers the long tail without
@@ -100,6 +101,39 @@ def _match(refund, charges: list) -> object | None:
         # smallest charge that still covers the refund, tie-broken by recency
         return min(partial, key=lambda p: (-p[1].amount - amt, -p[0].timestamp()))[1]
     return None
+
+
+async def net_family_paybacks(session, force: bool = False) -> dict[str, int]:
+    """Reclaim the paybacks already in the ledger from 不算支出.
+
+    Everything ingested from here on is classified correctly at the door, but the rows
+    already stored matched 「online transfer」 and were filed as Momo shuffling her own
+    money. The purchases they reimburse are still counted against her, so until these
+    are reclaimed her flexible spending reads about a third too high.
+
+    Idempotent by flag, and re-runnable with force= after the statement backfill lands,
+    since that import brings in months of paybacks this pass has never seen."""
+    if not force and await get_kv(session, FAMILY_FLAG) == "1":
+        return {}
+
+    rows = (await session.execute(select(Transaction))).scalars().all()
+    fixed = 0
+    for t in rows:
+        if not T.family_payback(t.merchant_desc or "", t.amount):
+            continue
+        if t.inflow_kind == T.REIMBURSE_FAMILY and t.category == "household":
+            continue                      # already reclaimed on an earlier pass
+        if t.status == "reconciled":
+            continue                      # Momo has ruled on this one; leave it alone
+        t.category = "household"
+        t.inflow_kind = T.REIMBURSE_FAMILY
+        t.status = "auto"
+        t.note = t.note or "媽媽回款"
+        fixed += 1
+
+    await set_kv(session, FAMILY_FLAG, "1")
+    await session.commit()
+    return {"reclaimed": fixed} if fixed else {}
 
 
 async def net_refunds(session, force: bool = False) -> dict[str, int]:

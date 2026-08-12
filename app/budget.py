@@ -48,6 +48,26 @@ def spend_amount(t) -> float:
     return -t.amount
 
 
+def spreads_over_window(t) -> bool:
+    """A credit that cancels spending but has no single charge to sit on top of.
+
+    A refund knows exactly which purchase it reverses — :func:`retag.net_refunds` dates it
+    back to that charge, so it lands in the right fortnight and nothing else is needed.
+    Her mother's paybacks have no such partner: Momo buys household things across two
+    weeks and her mother settles up in one transfer, often after the fortnight has closed.
+
+    Charging the whole payback to the fortnight it arrived in produced a $0 half-month in
+    her record — not a fortnight she lived cheaply, an artefact of when the transfer
+    cleared. The lean floor is the first quartile of that series, so the artefact went
+    straight into the definition of "the least Momo can live on" and pulled it down. Same
+    error as charging it to nobody, wearing the opposite sign.
+
+    So these get spread evenly across the window instead: the total is right, and no single
+    fortnight is invented."""
+    return (getattr(t, "inflow_kind", None) == T.REIMBURSE_FAMILY
+            and not getattr(t, "nets_txn_id", None))
+
+
 def is_discretionary(t) -> bool:
     """Does it eat the half-month allowance? Only the decisions Momo actually makes —
     固定 doesn't, 工作 doesn't (that's a business cost), 不規則 doesn't (that's a shock)."""
