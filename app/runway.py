@@ -62,6 +62,16 @@ async def forecast(session, f: F.Facts | None = None, periods: int = HORIZON_PER
     bal = a["reserve_total"]
     pend = await prefs.pending_invoices(session)
 
+    # Reserve tax on money that has not arrived yet. `reserve_total` already nets out the
+    # tax Momo currently owes, but every arrival below was being added at FACE value — so
+    # the forecast handed her the government's share to spend and read $2,563 richer across
+    # eight periods than she will be. She caught it by noticing this panel says she is fine
+    # for eight periods while the earning goal says she is $3,000 short; once the tax comes
+    # off and the windows are lined up, the two agree to within rounding.
+    from . import tax as TAX
+    rate = (await TAX.status(session, today))["rate"]
+    keep = max(0.0, 1.0 - float(rate or 0))
+
     rows, key = [], budget.current_key()
     for i in range(periods):
         if i:
@@ -72,9 +82,11 @@ async def forecast(session, f: F.Facts | None = None, periods: int = HORIZON_PER
             land = prefs.landing(p)
             if land is None or not (lo <= land <= hi):
                 continue
-            amt = float(p.get("amount") or 0) * prefs.confidence(p, today)
+            gross = float(p.get("amount") or 0) * prefs.confidence(p, today)
+            amt = gross * keep                       # what is actually hers to spend
             arrive += amt
             items.append({"note": p.get("note"), "amount": round(amt, 2),
+                          "gross": round(gross, 2),
                           "face": round(float(p.get("amount") or 0), 2),
                           "lands": land.isoformat(), "stage": prefs.stage_of(p)})
         opening = bal
@@ -103,8 +115,10 @@ async def forecast(session, f: F.Facts | None = None, periods: int = HORIZON_PER
         "periods": rows,
         "first_broke": first, "first_thin": thin,
         "runway_periods": (rows.index(first) if first else None),
-        "note": ("水位＝現金扣掉卡債、再扣掉已經預留的稅。跌破零不是身無分文，"
-                 "是開始吃到繳稅的錢——那是另一種急。"),
+        "tax_rate": round(float(rate or 0), 4),
+        "note": ("這張表問的是「會不會歸零」，不是「會不會變窮」——撐得住的意思是錢沒用完，"
+                 "不代表沒有愈來愈少。水位＝現金扣掉卡債、再扣掉已經預留的稅；"
+                 f"還沒進來的錢也先扣掉 {int(round(float(rate or 0) * 100))}% 的稅才算進來。"),
     }
 
 

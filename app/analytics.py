@@ -303,7 +303,11 @@ async def to_earn(session, months: int = HORIZON_MONTHS,
     # A target in dollars is a target she cannot hold against a calendar. Momo: "have an
     # algorithm to calculate my average day rate the past three months and use that number
     # to calculate how many more work days I need."
-    dr = prefs.day_rate(pend_items, _paid_with_days(f))
+    # pend_items already includes work she has SHOT but not been paid for, which is her
+    # most recent evidence of what she charges — "day rate i think we could also consider
+    # day rates of one's we shot but havent recieve the money yet."
+    dr = prefs.day_rate(pend_items, _paid_with_days(f),
+                        pinned=await prefs.pinned_day_rate(session))
     booked_days = sum(int(p.get("days") or 0) for p in pend_items)
     if dr["rate"] > 0:
         for t in tiers:
@@ -350,7 +354,10 @@ def _paid_with_days(f: F.Facts) -> list[dict]:
         d = getattr(t, "note", None) or ""
         m = re.search(r"(\d+)\s*(?:天|days?)", d)
         if m and budget.is_income(t):
-            out.append({"amount": t.amount, "days": int(m.group(1))})
+            when = budget.eff_date(t)
+            out.append({"amount": t.amount, "days": int(m.group(1)),
+                        "date": when.isoformat() if when else None,
+                        "note": (t.merchant_desc or "")[:40]})
     return out
 
 

@@ -241,6 +241,20 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "set_day_rate",
+        "description": (
+            "Pin what Momo charges per shoot day, which is what the earning goal divides "
+            "by to turn a dollar gap into a number of days. Call it when she states her "
+            "rate. Pass 0 to go back to computing it from her recorded jobs. Her own "
+            "figure beats the average on purpose — the average still carries older, "
+            "cheaper gigs and so asks for days she would not actually need."),
+        "input_schema": {
+            "type": "object",
+            "properties": {"amount": {"type": "number", "description": "Dollars per shoot day. 0 = automatic."}},
+            "required": ["amount"],
+        },
+    },
+    {
         "name": "raise_daily",
         "description": (
             "Momo wants to spend more than today's line allows. The raise is funded ONLY "
@@ -735,6 +749,23 @@ async def close_session(s, rec, destination="quarter", note=None):
     return {"ok": True, "summary": rec.summary, "closure": c, "destination": destination}
 
 
+async def set_day_rate(s, rec, amount):
+    """Pin what she charges per shoot day. 0 hands it back to the observed figure."""
+    from . import analytics as AN
+    old = await prefs.pinned_day_rate(s)
+    new = await prefs.set_pinned_day_rate(s, amount)
+    dr = (await AN.to_book(s))["day_rate"]
+    if new <= 0:
+        rec.says(f"日薪改回自動算：帳上 {dr['n']} 個案子、{dr['days']} 天，"
+                 f"最近幾個 {_money(dr['recent'])}／天，全部平均 {_money(dr['observed'])}／天。")
+    else:
+        rec.says(f"日薪定 {_money(new)}／天"
+                 + (f"（本來 {_money(old)}）" if old else "")
+                 + f"。帳上實際平均是 {_money(dr['observed'])}／天，最近幾個 {_money(dr['recent'])}／天——"
+                 "定價用你說的，記錄放旁邊當參考。")
+    return {"ok": True, "summary": rec.summary, "day_rate": dr}
+
+
 async def set_income_baseline(s, rec, amount):
     old = await get_kv(s, "cfg_monthly_baseline")
     await set_kv(s, "cfg_monthly_baseline", str(float(amount)))
@@ -870,6 +901,7 @@ HANDLERS = {
     "set_emergency_target": set_emergency_target,
     "set_defend_rung": set_defend_rung,
     "raise_daily": raise_daily,
+    "set_day_rate": set_day_rate,
     "close_session": close_session,
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,

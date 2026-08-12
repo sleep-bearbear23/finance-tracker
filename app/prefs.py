@@ -294,16 +294,47 @@ def _days_in_text(text: str) -> int:
     return _CN_NUM.get(m.group(1), 0) if m else 0
 
 
-def day_rate(items: list[dict], received: list[dict] | None = None) -> dict:
+#: What Momo says she charges now. A pinned rate beats every inference, for the same reason
+#: `expect_on` beats the 45-day model: she knows her own price, and averaging an old $200 gig
+#: into it just makes the goal ask for days she will not actually need.
+DAY_RATE_KEY = "cfg_day_rate"
+
+#: How many recent jobs the observed figure is drawn from when nothing is pinned.
+RATE_WINDOW = 3
+
+
+def _rate_when(r: dict) -> str:
+    """Best available date for ordering jobs newest-first."""
+    for k in ("wrapped_on", "expect_on", "date", "when"):
+        v = r.get(k)
+        if v:
+            return str(v)[:10]
+    return ""
+
+
+def day_rate(items: list[dict], received: list[dict] | None = None,
+             pinned: float | None = None) -> dict:
     """Her dollars-per-shoot-day, from jobs where the day count is known.
 
     Momo: "instead of estimating gig amount, have a algorithm to calculate my average day
     rate the past three months and use that number to calculate how many more work days I
     need." She has always said the days out loud — 「9/6-9/15，拍八天」 — and the system
     threw them away. A target in days is a target she can hold against a calendar.
+
+    Work she has SHOT but not been paid for counts, on her instruction — "day rate i think
+    we could also consider day rates of one's we shot but havent recieve the money yet."
+    That work is the most recent evidence of what she charges; waiting 45 days for the
+    cheque before believing it would keep the estimate permanently out of date.
+
+    Three figures, because they answer different questions. ``rate`` is what the earning
+    goal divides by — what a day she books TODAY will pay. ``observed`` is the day-weighted
+    average across everything on record, which runs low whenever her price has been rising:
+    hers reads about $327 against a going rate of $350, because a $200 job from June is
+    still in the average. So the pinned figure wins when she has stated one, the most recent
+    jobs win when she has not, and the long average is reported beside it rather than used.
     """
     rows = [*(items or []), *(received or [])]
-    pairs = []
+    jobs = []
     for r in rows:
         try:
             d = int(r.get("days") or 0)
@@ -315,13 +346,45 @@ def day_rate(items: list[dict], received: list[dict] | None = None) -> dict:
             # it rather than wait for every old booking to be re-entered
             d = _days_in_text(f"{r.get('note') or ''} {r.get('merchant_desc') or ''}")
         if d > 0 and a > 0:
-            pairs.append((a, d))
-    if not pairs:
-        return {"rate": 0.0, "n": 0, "days": 0, "total": 0.0}
-    total = sum(a for a, _ in pairs)
-    days = sum(d for _, d in pairs)
-    return {"rate": round(total / days, 2), "n": len(pairs), "days": days,
-            "total": round(total, 2)}
+            jobs.append({"amount": round(a, 2), "days": d, "rate": round(a / d, 2),
+                         "when": _rate_when(r),
+                         "note": (r.get("note") or r.get("merchant_desc") or "")[:40]})
+
+    if not jobs:
+        return {"rate": round(float(pinned), 2) if pinned else 0.0,
+                "n": 0, "days": 0, "total": 0.0, "observed": 0.0, "recent": 0.0,
+                "source": "pinned" if pinned else "none", "jobs": []}
+
+    jobs.sort(key=lambda j: j["when"] or "", reverse=True)
+    total = sum(j["amount"] for j in jobs)
+    days = sum(j["days"] for j in jobs)
+    observed = round(total / days, 2)
+
+    win = jobs[:RATE_WINDOW]
+    recent = round(sum(j["amount"] for j in win) / sum(j["days"] for j in win), 2)
+
+    if pinned:
+        rate, source = round(float(pinned), 2), "pinned"
+    else:
+        rate, source = recent, "recent"
+    return {"rate": rate, "source": source, "n": len(jobs), "days": days,
+            "total": round(total, 2), "observed": observed, "recent": recent,
+            "window": len(win), "jobs": jobs[:8]}
+
+
+async def pinned_day_rate(session) -> float | None:
+    raw = await get_kv(session, DAY_RATE_KEY)
+    try:
+        v = float(raw) if raw else 0.0
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+async def set_pinned_day_rate(session, amount: float) -> float:
+    v = max(0.0, float(amount))
+    await set_kv(session, DAY_RATE_KEY, str(round(v, 2)))
+    return v
 
 
 async def pending_invoices(session) -> list:
