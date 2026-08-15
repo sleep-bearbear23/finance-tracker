@@ -208,6 +208,110 @@ async def main():
               undone["ok"] and fare.claim == "sent" and back.nets_txn_id is None,
               f"{fare.claim}/{back.nets_txn_id}")
 
+        print("\n[9] C-1 — 陳會計 quotes real spending, not card payments")
+        s.add(Transaction(id="tx-cardpay", account_id="chase", amount=-2313.30,
+                          merchant_desc="APPLECARD GSBANK PAYMENT", category="transfer",
+                          status="ignored", posted_at=now()))
+        s.add(Transaction(id="tx-lunch", account_id="apple", amount=-18.50,
+                          merchant_desc="片場午餐", category="food", status="auto",
+                          posted_at=now()))
+        await s.commit()
+        from app import queries
+        ctx = await queries.build_context(s)
+        line = next(l for l in ctx.splitlines() if l.startswith("本月支出合計"))
+        total = float(line.split("$")[1].replace(",", ""))
+        check("the LINE context total excludes the card payment",
+              total < 2000, line)
+
+        print("\n[10] G-2 — the report counts pay, not every deposit")
+        from app import reports
+        from datetime import timedelta as _td2
+        s.add(Transaction(id="tx-momback", account_id="chase", amount=350.0,
+                          merchant_desc="Online Transfer From CHK ...7567",
+                          inflow_kind=T.REIMBURSE_FAMILY, status="auto", posted_at=now()))
+        await s.commit()
+        data = await reports.gather(s, now() - _td2(days=30), now() + _td2(days=1))
+        check("媽媽回款 is not income in the report",
+              data["income"] < 3500, str(data["income"]))  # only the real deposits
+
+        print("\n[11] F-2 — a lens that has seen nothing abstains")
+        L = allowance._trajectory(0.0, -109.0, observations=0)
+        check("zero observations → no vote, not a −$109 vote",
+              L["value"] is None and L.get("abstain"), str(L))
+        check("…and scaling leaves an abstention alone",
+              allowance._scale(L, 0.33)["value"] is None)
+        L2 = allowance._trajectory(478.0, -50.0, observations=6)
+        check("with data it still votes, drift and all", near(L2["value"], 428.0),
+              str(L2["value"]))
+
+        print("\n[12] B-5 — being vague is no longer free")
+        check("an uncategorised spend eats the allowance", T.in_allowance(None))
+        t_unc = Transaction(id="x", account_id="a", amount=-116.62,
+                            merchant_desc="大华超级市场", category=None, status="prompted")
+        check("…through the discretionary predicate too", budget.is_discretionary(t_unc))
+
+        print("\n[13] F-2 — a brokerage dip is not a grocery problem")
+        from app.models import Snapshot
+        for day, netv, cashv in [("2026-07-01", 12000, 9000), ("2026-08-10", 9000, 9000)]:
+            s.add(Snapshot(day=day, net_worth=netv, assets=netv, debts=0, cash=cashv))
+        await s.commit()
+        drift = await allowance._net_drift(s)
+        check("net worth fell $3,000 but cash held — drift reads ~0", near(drift, 0.0),
+              str(drift))
+
+        print("\n[14] D-3 — mark_payment_received can no longer lose money")
+        # (a) the deposit is already in the ledger: link, don't double-count
+        await tools.run(s, "add_expected_payment",
+                        {"amount": 1400, "note": "Jump Deer 八月", "when": "2026-08"})
+        n_before = len([t for t in (await s.execute(select(Transaction))).scalars()])
+        out = await tools.run(s, "mark_payment_received", {"which": "Jump Deer 八月"})
+        n_after = len([t for t in (await s.execute(select(Transaction))).scalars()])
+        check("with the $1,400 already in the ledger it LINKS instead of creating",
+              out["ok"] and out.get("matched_txn") and n_after == n_before,
+              str(out.get("matched_txn")))
+        check("…and the receipt names the deposit it matched",
+              "1,400" in out["summary"] and "進來的" in out["summary"], out["summary"][:60])
+
+        # (b) no deposit anywhere: refuse and ask, never guess
+        await tools.run(s, "add_expected_payment",
+                        {"amount": 777, "note": "神祕案", "when": "2026-08"})
+        out = await tools.run(s, "mark_payment_received", {"which": "神祕案"})
+        pend2 = await __import__("app.prefs", fromlist=["prefs"]).pending_invoices(s)
+        check("no matching deposit → refuses with a question, invoice stays",
+              not out["ok"] and out.get("needs_confirm")
+              and any("神祕案" in (p.get("note") or "") for p in pend2), str(out)[:70])
+
+        # (c) she names a non-synced account: record once, then clear
+        out = await tools.run(s, "mark_payment_received",
+                              {"which": "神祕案", "account": "現金"})
+        cash_rows = [t for t in (await s.execute(select(Transaction))).scalars()
+                     if near(t.amount, 777)]
+        pend3 = await __import__("app.prefs", fromlist=["prefs"]).pending_invoices(s)
+        check("cash income is recorded exactly once and the invoice clears",
+              out["ok"] and len(cash_rows) == 1
+              and not any("神祕案" in (p.get("note") or "") for p in pend3),
+              f"{len(cash_rows)} rows")
+
+        print("\n[15] G-1 — a lean period speaks instead of dying on line 13")
+        from app import alerts
+        sent = []
+        real_push = alerts.line_client.push
+        async def fake_push(owner, msg): sent.append(msg)
+        alerts.line_client.push = fake_push
+        await set_kv(s, "owner_user_id", "U-momo")
+        await allowance.set_start_date(s, now().date().isoformat())
+        b0 = await budget.status(s)
+        await alerts.check(s)
+        await alerts.check(s)   # second call must not repeat it
+        alerts.line_client.push = real_push
+        if b0["pct_used"] is None:
+            check("allowance ≤ 0 sends ONE lean-period heads-up, not silence",
+                  len(sent) == 1 and "不是你花掉的" in sent[0],
+                  sent[0][:40] if sent else "nothing sent")
+        else:
+            check("allowance positive on this data — lean path not exercised (ok)",
+                  len(sent) <= 1, f"pct={b0['pct_used']}")
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)

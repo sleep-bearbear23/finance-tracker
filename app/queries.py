@@ -15,21 +15,25 @@ async def build_context(session) -> str:
     month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     biweek_start = today - timedelta(days=14)
 
+    # Through the shared predicates, not a raw amount<0 scan. The raw scan counted the
+    # Apple Card payment and every transfer as spending, so 陳會計 quoted 本月支出
+    # $4,266 in a month the real figure was $926 — and she quotes this out loud, on the
+    # write channel, where being wrong costs trust fastest.
+    from . import budget
     spend = (await session.execute(
         select(Transaction).where(Transaction.amount < 0)
     )).scalars().all()
 
-    def eff_date(t):
-        return aware(t.posted_at or t.created_at)
-
     month_by_cat: dict[str, float] = {}
     biweek_total = 0.0
     for t in spend:
-        d = eff_date(t)
-        if d and d >= month_start:
+        if not budget.is_spend(t):
+            continue
+        d = budget.eff_date(t)
+        if d and d >= month_start.date():
             ck = taxonomy.label(t.category) if t.category else "未分類"
             month_by_cat[ck] = month_by_cat.get(ck, 0.0) + abs(t.amount)
-        if d and d >= biweek_start:
+        if d and d >= biweek_start.date():
             biweek_total += abs(t.amount)
 
     lines = ["本月各分類花費："]
@@ -182,11 +186,11 @@ async def build_context(session) -> str:
     except Exception:
         pass
 
-    recent = sorted(spend, key=eff_date, reverse=True)[:40]
+    recent = sorted(spend, key=lambda t: budget.eff_date(t) or now().date(), reverse=True)[:40]
     if recent:
         lines.append("最近的交易：")
         for t in recent:
-            d = eff_date(t)
+            d = budget.eff_date(t)
             ds = d.strftime("%m/%d") if d else "??"
             note = f"（{t.note}）" if t.note else ""
             lines.append(f"  {ds} ${abs(t.amount):.2f} {t.merchant_desc} [{taxonomy.label(t.category) if t.category else '未分類'}]{note}")

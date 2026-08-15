@@ -277,8 +277,8 @@ def plan_income(expected: float, actual: float) -> tuple[float, str]:
 
 def _scale(lens: dict, frac: float) -> dict:
     """Give back only the share of a full period's number that the budget governs."""
-    if frac >= 1.0:
-        return lens
+    if frac >= 1.0 or lens.get("value") is None:
+        return lens                          # an abstaining lens stays abstained
     out = {**lens, "value": round(lens["value"] * frac, 2), "full_value": lens["value"]}
     out["why"] = f"{lens['why']}，再乘上這期實際管到的 {int(frac * 100)}%"
     return out
@@ -303,12 +303,21 @@ def _cushion(free: float, floor: float, periods_to_money: int,
             "why": f"（可動用 ${free:,.0f} − {held}）÷ 撐 {n} 期"}
 
 
-def _trajectory(recent_median: float, drift_per_period: float) -> dict:
-    """What she's really been spending, pulled down when net worth is sliding."""
+def _trajectory(recent_median: float, drift_per_period: float,
+                observations: int = 1) -> dict:
+    """What she's really been spending, pulled down when spendable cash is sliding.
+
+    With zero observations it ABSTAINS instead of voting. It used to vote −$109 from
+    drift alone on an empty window — a lens that has seen nothing has no opinion about
+    her habits, and Momo's rule for missing data is 「say she doesn't know」, not
+    "guess in whichever direction the slope points"."""
+    if observations <= 0:
+        return {"name": "軌跡", "value": None, "abstain": True,
+                "why": "這段時間沒有可看的支出紀錄——沒資料就不投票"}
     val = recent_median + min(0.0, drift_per_period)
     why = f"最近半個月中位數 ${recent_median:,.0f}"
     if drift_per_period < 0:
-        why += f"，但淨值每期掉 ${abs(drift_per_period):,.0f}，往下修"
+        why += f"，但可動用的錢每期掉 ${abs(drift_per_period):,.0f}，往下修"
     return {"name": "軌跡", "value": round(val, 2), "why": why}
 
 
@@ -381,7 +390,11 @@ async def _net_drift(session, window_days: int = 120) -> float:
     days = (d1 - d0).days
     if days < 7:
         return 0.0
-    per_day = (last.net_worth - first.net_worth) / days
+    # Spendable cash, not net worth: a brokerage dip is not a reason to shrink the
+    # grocery line. Falls back to net worth only for old snapshots that never stored cash.
+    v0 = first.cash if first.cash is not None else first.net_worth
+    v1 = last.cash if last.cash is not None else last.net_worth
+    per_day = (v1 - v0) / days
     return round(per_day * 15.2, 2)   # one half-month
 
 
@@ -476,7 +489,7 @@ async def compute(session, key: str | None = None) -> dict:
     lenses = [_scale(L, frac) for L in (
         _plan(income_after_tax, fixed_p, savings_p),
         _cushion(reserve_total, floor, periods_out, defended["name"] if defended else None),
-        _trajectory(recent_med, drift),
+        _trajectory(recent_med, drift, observations=len(recent_rows)),
     )]
     plan_l, cush_l, traj_l = lenses
     plan_val, cush_val, traj_val = (L["value"] for L in lenses)
@@ -488,10 +501,10 @@ async def compute(session, key: str | None = None) -> dict:
     # costs, which is a fact about the month and says nothing about groceries. Rendering
     # that diagnosis inside the box labelled 可以花 read as "starve", which is not what
     # any of this is for. Negative lenses now report a shortfall instead of setting it.
-    capacity = max(0.0, cush_val)
+    capacity = max(0.0, cush_val or 0.0)
     binding = cush_l
     for L in (plan_l, traj_l):
-        if L["value"] > 0 and L["value"] < capacity:
+        if L["value"] is not None and L["value"] > 0 and L["value"] < capacity:
             capacity, binding = L["value"], L
 
     # a lean period should still be livable — only meaningful when the plan is positive

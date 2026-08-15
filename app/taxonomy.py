@@ -121,7 +121,13 @@ def of_treatment(tag: str) -> list[str]:
 
 
 def in_allowance(cat: str | None) -> bool:
-    """Does this eat the half-month allowance? Only the decisions Momo actually makes."""
+    """Does this eat the half-month allowance? Only the decisions Momo actually makes.
+
+    An UNCATEGORISED spend counts. 51 rows ($893) were silently exempt because
+    treatment(None) matched nothing — being vague about a charge made it free, which is
+    exactly backwards: the incentive should run toward answering 陳會計, not away."""
+    if cat is None:
+        return True
     return treatment(cat) in (FLEX, WANT)
 
 

@@ -1297,7 +1297,7 @@ const INFO={
       return (fn.lenses||[]).map(L=>
           `<div class="cl2${L.name===fn.binding?' on':''}"><span class="k">${esc(L.name)}　`
           + `<span style="color:var(--muted)">${esc(L.why||'')}</span></span>`
-          + `<b>${F0(L.value)}</b></div>`).join('')
+          + `<b>${L.value==null?'棄權':F0(L.value)}</b></div>`).join('')
         + _r('綁住的是', esc(fn.binding), true); },
     do(c){ return c.fn ? esc(c.fn.law||'') : ''; }},
 
@@ -1557,7 +1557,7 @@ async function loadHome(){
       const on=L.name===b.binding;
       return `<div class="lens ${on?'on':''}"><span>${on?'▸ ':''}${esc(L.name)}
         <span class="sub">${esc(L.why||'')}</span></span>
-        <b style="color:${on?'var(--accent)':L.value<0?'var(--bad)':'var(--muted)'}">${F0(L.value)}</b></div>`;
+        <b style="color:${on?'var(--accent)':(L.value!=null&&L.value<0)?'var(--bad)':'var(--muted)'}">${L.value==null?'棄權':F0(L.value)}</b></div>`;
     }).join('');
     const notes=[];
     if(gap<0) notes.push('缺口＝進來的錢不夠付固定開銷，不管花不花都會少這麼多，從水位補。這不是叫你別花。');
@@ -1581,7 +1581,11 @@ async function loadHome(){
     const cut=new Date(new Date(last.day).getTime()-30*86400000).toISOString().slice(0,10);
     let base=ns[0]; for(const p of ns){ if(p.day<=cut) base=p; }
     const d=last.net-base.net, pct=base.net?100*d/base.net:0;
-    el('nwDelta').textContent=(d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) 30天`;
+    // The label is the REAL span, not a wish. With 18 static seed points and a live
+    // tail, the nearest snapshot ≤30 days back can be 40+ days old — calling that gap
+    // 「30天」 is a small lie on a headline number.
+    const span=Math.round((new Date(last.day)-new Date(base.day))/86400000);
+    el('nwDelta').textContent=(d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) ${span}天`;
     el('nwDelta').style.color=d>=0?'var(--accent)':'var(--bad)';
     chart('sparkChart',{type:'line',
       data:{labels:ns.map(p=>p.day),datasets:[{data:ns.map(p=>p.net),borderColor:'#9CC9F5',

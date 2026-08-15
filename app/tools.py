@@ -206,10 +206,21 @@ SCHEMAS: list[dict] = [
     },
     {
         "name": "mark_payment_received",
-        "description": "The money finally landed. Takes it off the waiting list.",
+        "description": (
+            "The money finally landed. Finds the matching deposit in the ledger and takes "
+            "the invoice off the waiting list. If no deposit is found it will ask WHERE "
+            "the money landed rather than guessing — relay that question to her. If she "
+            "says it went somewhere the bank cannot see (現金, Venmo), call again with "
+            "account set and the income is recorded once."),
         "input_schema": {
             "type": "object",
-            "properties": {"which": {"type": "string"}},
+            "properties": {
+                "which": {"type": "string"},
+                "account": {"type": "string",
+                            "description": "Only when she says the money landed somewhere "
+                                           "the bank does not sync — 現金, Venmo, Apple. "
+                                           "Never guess this; it creates a transaction."},
+            },
             "required": ["which"],
         },
     },
@@ -710,14 +721,74 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
     return {"ok": True, "summary": rec.summary, "item": hit}
 
 
-async def mark_payment_received(s, rec, which):
+async def mark_payment_received(s, rec, which, account=None):
+    """Clear a pending invoice — but never let the money vanish.
+
+    The old version flipped a flag and stopped. For a Zelle into Chase that was CORRECT:
+    the bank feed records the deposit, and writing a second transaction would double-count
+    the job (seed_invoices exists precisely to avoid that). But for cash or Venmo the feed
+    never sees it, so 「入帳了」 removed the invoice and recorded the money nowhere —
+    $250 of real income once evaporated exactly this way.
+
+    So: look for the deposit in the ledger first. Found → link it and clear the invoice.
+    Not found and she named a non-synced account → record the income (once). Not found and
+    no account → REFUSE and ask where it landed, because both guesses are expensive:
+    assuming the bank saw it loses the money, assuming it didn't counts it twice."""
+    from sqlalchemy import select as _sel
     items = prefs._load_list(await get_kv(s, "cfg_upcoming"))
     old, amb = _resolve(items, which, "note")
     if old is None:
         return _miss(which, items, "note", amb, "待收款")
-    hit = await prefs.mark_invoice(s, which, "received")
-    rec.says(f"「{old.get('note')}」{_money(old.get('amount'))} 入帳了，從待收款劃掉")
-    return {"ok": True, "summary": rec.summary, "item": hit}
+    amt = float(old.get("amount") or 0)
+
+    # the deposit, if the feed already caught it: a positive row near the amount,
+    # recent, not already spoken for by another invoice
+    from .config import aware as _aware
+    rows = (await s.execute(_sel(Transaction).where(Transaction.amount > 0))).scalars().all()
+    cutoff = now() - __import__("datetime").timedelta(days=60)
+    dep = None
+    for t in sorted(rows, key=lambda t: _aware(t.posted_at or t.created_at) or now(),
+                    reverse=True):
+        d = _aware(t.posted_at or t.created_at)
+        if d is None or d < cutoff:
+            continue
+        if abs(t.amount - amt) > max(1.0, amt * 0.02):
+            continue
+        if (t.note or "").startswith("對上待收款"):
+            continue
+        dep = t
+        break
+
+    if dep is not None:
+        before = changelog.snapshot_row(dep, ["status", "inflow_kind", "note"])
+        if dep.status != "enriched":
+            dep.status = "income"
+        dep.inflow_kind = dep.inflow_kind or "pay"
+        dep.note = (dep.note or "") or f"對上待收款「{old.get('note')}」"
+        await s.commit()
+        rec.row("transactions", dep.id, before,
+                changelog.snapshot_row(dep, ["status", "inflow_kind", "note"]))
+        hit = await prefs.mark_invoice(s, which, "received")
+        dd = _aware(dep.posted_at or dep.created_at)
+        rec.says(f"「{old.get('note')}」{_money(amt)} 入帳了——就是 {dd.date()} 進來的 "
+                 f"{_money(dep.amount)}（{(dep.merchant_desc or '')[:24]}），從待收款劃掉")
+        return {"ok": True, "summary": rec.summary, "item": hit, "matched_txn": dep.id}
+
+    if account:
+        # a place the bank can't see — record the income exactly once, then clear
+        out = await log_income(s, rec, amount=amt, source=old.get("note") or which,
+                               account=account, note=f"待收款入帳（{account}）")
+        if not out.get("ok"):
+            return out
+        hit = await prefs.mark_invoice(s, which, "received")
+        rec.says(f"「{old.get('note')}」{_money(amt)} 收進{account}了，記了收入、從待收款劃掉")
+        return {"ok": True, "summary": rec.summary, "item": hit}
+
+    return {"ok": False, "needs_confirm": True,
+            "error": (f"帳上最近 60 天找不到 {_money(amt)} 上下的入帳。先問他錢進到哪裡："
+                      "銀行（Chase）的話等下一次同步就會看到，先不要劃掉；"
+                      "現金／Venmo 那種銀行看不到的，跟我說帳戶名稱再呼叫一次（account=...），"
+                      "我會把收入記起來。不確定就先不要動——劃掉又沒記到，錢就不見了。")}
 
 
 async def remove_expected_payment(s, rec, which):
