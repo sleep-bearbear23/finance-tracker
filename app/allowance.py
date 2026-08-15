@@ -784,20 +784,16 @@ def explain(a: dict) -> list[str]:
     if a["gentle_floor_applied"]:
         out.append(f"不過我沒有壓到那麼低——再省也要能過日子，拉回計畫的一半 ${a['allowance']:,.0f}。")
     if a.get("savings_skipped"):
-        out.append(f"這期錢不夠，我先不扣存錢的 ${a['savings_skipped']:,.0f}——記成存錢欠帳，"
-                   "之後有多的先補回去。先砍存錢，不是先砍你吃飯。")
-    if a["shock_load"]["per_period"] > 0:
-        out.append(f"另外扣掉這期要還自己的 ${a['shock_load']['per_period']:,.0f}"
-                   f"（之前自己造成的支出，分期還）。")
-        if a["shock_load"]["over_cap"]:
-            out.append("老實說這些「分期」已經超過收入的 15%，不是在攤平、是在拖，該面對了。")
+        # No IOU promise: the 存錢欠帳 ledger was never wired, so 「之後補回去」 was a
+        # cheque the code couldn't cash. Say only what actually happens.
+        out.append(f"這期錢不夠，我先不扣存錢的 ${a['savings_skipped']:,.0f}——"
+                   "先砍存錢，不是先砍你吃飯。")
     if a["deficit"]:
         if a["deficit_kind"] == "timing":
             out.append("這期本來就不夠，但錢在路上——缺口先從水位墊，等款進來補回去。")
         else:
             out.append("這期不夠，而且沒有款要進來。這不是省一點能解決的，是收入的問題。")
-    if a["savings_debt"] > 0:
-        out.append(f"存錢欠帳目前 ${a['savings_debt']:,.0f}，有多的先補這裡。")
+
     em = a.get("emergency") or {}
     if em.get("why") and not em.get("pinned"):
         out.append(f"緊急預備金目標 ${em['target']:,.0f}"

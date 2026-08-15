@@ -267,8 +267,11 @@ async def main():
                   soft["savings_skipped"] > 0, str(soft["savings_skipped"]))
             check("…and the skipped amount is not still charged",
                   soft["savings_period"] < 500.0)
-            check("she says it out loud as 存錢欠帳",
-                  any("存錢欠帳" in x for x in AL.explain(soft)))
+            # the IOU promise was deleted with the review — the ledger it promised was
+            # never wired, so the honest sentence stops at what actually happens
+            check("she says the skip out loud, without promising an IOU she can't keep",
+                  any("先砍存錢" in x for x in AL.explain(soft))
+                  and not any("存錢欠帳" in x for x in AL.explain(soft)))
             check("cutting savings never digs a deeper hole",
                   soft["lenses"][0]["value"] >= -soft["fixed_period"] - 0.01)
 

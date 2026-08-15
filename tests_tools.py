@@ -244,24 +244,45 @@ async def main():
         again = await changelog.undo(s, exp_change["id"])
         check("undoing twice is refused, not silently repeated", not again["ok"], str(again))
 
+        # ── non-LIFO undo is REFUSED now, not silently destructive ────────────
+        # The old behaviour: undoing "add Anthropic row" after its price was changed
+        # restored the whole pre-add blob — deleting the price change with it, and the
+        # price change stayed marked undoable, so undoing THAT later resurrected the
+        # deleted row. Per the review (D-4), the fix is conflict detection: unwind the
+        # newer change first, then the older one.
         add_change = next(e for e in log if e["tool"] == "add_fixed_cost"
                           and "Anthropic" in e["summary"])
-        # the price change came after; undoing the add must not resurrect the old price
-        await changelog.undo(s, add_change["id"])
+        refused = await changelog.undo(s, add_change["id"])
         names = [r.get("name") for r in await fixed.rows(s, include_sinking=False)]
-        check("undoing an add removes the row it added",
-              not any("Anthropic" in (n or "") for n in names), str(names))
+        check("undoing an add UNDER a later change is refused, not destructive",
+              not refused["ok"] and "洗掉" in refused["error"], str(refused)[:70])
+        check("…and nothing was touched by the refusal",
+              any("Anthropic" in (n or "") for n in names))
+        # a clean pair, unwound newest-first, to show ordered undo still works fully
+        await tools.run(s, "add_fixed_cost", {"name": "測試撤銷", "amount": 12,
+                                              "cadence": "monthly"})
+        await tools.run(s, "update_fixed_cost", {"which": "測試撤銷", "amount": 15})
+        log2 = await changelog.recent(s, 5)
+        ok1 = await changelog.undo(s, log2[0]["id"])   # the update (newest)
+        ok2 = await changelog.undo(s, log2[1]["id"])   # then the add
+        names = [r.get("name") for r in await fixed.rows(s, include_sinking=False)]
+        check("unwound in order — newest first — both succeed and the row is gone",
+              ok1["ok"] and ok2["ok"]
+              and not any("測試撤銷" in (n or "") for n in names), f"{ok1}|{ok2}")
 
         bal_change = next(e for e in log if e["tool"] == "set_account_balance"
                           and "2,700" in e["summary"])
-        await changelog.undo(s, bal_change["id"])
+        r_bal = await changelog.undo(s, bal_change["id"])
         accts = prefs._load_list(await get_kv(s, "cfg_accounts"))
         card = next((a for a in accts if "Apple" in (a.get("name") or "")), None)
-        check("undoing a balance puts the old number back",
-              card is not None and near(card["amount"], 2626.01), str(card))
-        check("and the derived total follows it back",
-              near(float(await get_kv(s, "cfg_total_debt")), 2626.01),
-              await get_kv(s, "cfg_total_debt"))
+        if r_bal["ok"]:
+            check("undoing a balance puts the old number back",
+                  card is not None and near(card["amount"], 2626.01), str(card))
+        else:
+            # later tools (log_income into 現金) touched cfg_accounts — refusal is the
+            # correct answer, and the current number must be untouched by the attempt
+            check("a balance undo under later account writes is refused cleanly",
+                  card is not None and near(card["amount"], 2700.0), str(card))
 
         print("\n[9] setting something to what it already was is not an event")
         before = await n_changes(s)

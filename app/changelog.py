@@ -138,6 +138,20 @@ async def prior_value(session, table: str, ident, column: str, *, limit: int = 3
     return {"found": False, "value": None}
 
 
+def _same(a, b) -> bool:
+    """Value equality that survives the tz round-trip. SQLite hands back naive datetimes
+    that were stored aware, so a byte-compare would flag every row with a timestamp as
+    conflicted and refuse undos that are perfectly safe."""
+    if a == b:
+        return True
+    try:
+        da = datetime.fromisoformat(str(a).replace(" ", "T"))
+        db = datetime.fromisoformat(str(b).replace(" ", "T"))
+        return da.replace(tzinfo=None) == db.replace(tzinfo=None)
+    except (TypeError, ValueError):
+        return False
+
+
 async def undo(session, change_id: int) -> dict:
     """Put back exactly what was there before, and say so. Idempotent by the undone_at flag."""
     c = await session.get(Change, change_id)
@@ -149,6 +163,39 @@ async def undo(session, change_id: int) -> dict:
         patch = json.loads(c.patch or "{}")
     except ValueError:
         return {"ok": False, "error": "紀錄壞掉了，沒辦法還原"}
+
+    # ── conflict detection, BEFORE anything is written ──────────────────────
+    # KV patches restore whole blobs: cfg_upcoming is ONE key holding the whole invoice
+    # list, so undoing "add job A" after "add job B" used to write back the pre-A blob
+    # and delete B with it — and B's change stayed marked undoable, so undoing it later
+    # resurrected A. The rule: if anything this change touched has been touched again
+    # since, refuse and say to unwind the newer ones first. The dashboard has a 還原
+    # button on sixty changes; non-LIFO undo is one tap away and has to be safe.
+    conflicts = []
+    for key, side in (patch.get("kv") or {}).items():
+        current = await get_kv(session, key)
+        if current != side.get("after"):
+            conflicts.append(key)
+    for r in (patch.get("rows") or []):
+        model = _TABLES.get(r.get("table"))
+        after = r.get("after")
+        if model is None:
+            continue
+        obj = await session.get(model, r.get("id"))
+        if after is None:
+            if obj is not None:            # deleted then, exists now — someone remade it
+                conflicts.append(f"{r['table']}:{r['id']}")
+            continue
+        if obj is None:
+            conflicts.append(f"{r['table']}:{r['id']}")
+            continue
+        snap = snapshot_row(obj, list(after.keys()))
+        if any(not _same(snap.get(k), after.get(k)) for k in after):
+            conflicts.append(f"{r['table']}:{r['id']}")
+    if conflicts:
+        return {"ok": False, "error":
+                f"這筆之後還有別的變更動過同一份資料（{len(conflicts)} 處）——"
+                "直接還原會把後來的變更一起洗掉。先從最新的開始還原。"}
 
     for key, side in (patch.get("kv") or {}).items():
         prior = side.get("before")

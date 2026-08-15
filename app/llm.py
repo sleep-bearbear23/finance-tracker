@@ -96,53 +96,6 @@ async def parse_reply(txns, reply: str) -> dict[int, dict]:
     return out
 
 
-async def classify_intent(text: str, has_pending: bool) -> str:
-    """Route an incoming LINE message to: answer / log / question."""
-    answer_line = (
-        "'answer' if they are explaining charges you already asked about, or\n"
-        if has_pending else ""
-    )
-    system = (
-        "Classify the user's LINE message about their finances. Reply with ONE word only:\n"
-        f"{answer_line}"
-        "'log' if they are telling you about a NEW expense they just made "
-        "(e.g. 'spent $12 at blue bottle', '剛剛在全聯花了 500'), or\n"
-        "'question' if they are asking something or anything else."
-    )
-    out = (await _say(text, system=system, max_tokens=10)).lower()
-    if has_pending and "answer" in out:
-        return "answer"
-    if "log" in out:
-        return "log"
-    return "question"
-
-
-async def answer_question(question: str, data_context: str, convo: str = "") -> str:
-    convo_block = f"你們最近的對話（最舊到最新，你就是阿姨）：\n{convo}\n\n" if convo else ""
-    instr = (
-        f"{convo_block}"
-        f"默默現在說：「{question}」\n\n"
-        f"這是系統給你的資料（金額都是真的，要用這個，不要自己算）：\n{data_context}\n\n"
-        "先把他問的那個數字直接答出來（像在傳 LINE，一兩句）。他問待收款／還沒收到的薪水／入帳後會有多少，"
-        "就照資料裡那份待收款清單跟合計講給他，不要說你不清楚、也不要拿預算的收入基準去搪塞。"
-        "不要把整包預算重講一遍、不要自己一直加減，也不要每次都碎念叫他別規劃——答完正事再順一句就好。"
-        "如果他是在回你剛剛的話，接得上就好。"
-    )
-    return await _say(instr, max_tokens=500)
-
-
-async def deploy_note(commit_message: str) -> str:
-    instr = (
-        "你（默默的理財阿姨）剛更新上線。工程師寫的更新內容是英文技術描述："
-        f"「{commit_message}」。用你的口氣、台灣繁體中文，一句話跟默默說你更新好、又上工了，"
-        "順便用他聽得懂的白話超短講一下這次大概弄了什麼，不要照抄英文、不要念技術名詞。就一句。"
-    )
-    try:
-        return await _say(instr, max_tokens=120)
-    except Exception:
-        return "默默，阿姨更新好、又上工了。"
-
-
 async def profile_ack(s: dict) -> str:
     cad = "每月" if s.get("savings_cadence") == "monthly" else "每兩週"
     gig_line = f"，接下來有 {s['n_gigs']} 筆預期進帳約 ${s['gig_sum']:.0f}" if s.get("n_gigs") else ""

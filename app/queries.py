@@ -196,9 +196,3 @@ async def build_context(session) -> str:
             lines.append(f"  {ds} ${abs(t.amount):.2f} {t.merchant_desc} [{taxonomy.label(t.category) if t.category else '未分類'}]{note}")
 
     return "\n".join(lines)
-
-
-async def answer(session, question: str) -> str:
-    ctx = await build_context(session)
-    convo = await memory.recent(session, 8)
-    return await llm.answer_question(question, ctx, convo)

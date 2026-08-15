@@ -184,6 +184,61 @@ async def announce_deploy():
 
 
 @asynccontextmanager
+async def run_maintenance() -> list[str]:
+    """The eleven data-rewriting passes, run ON PURPOSE instead of on every deploy.
+
+    They used to live in lifespan, sharing the database with a scheduler that was already
+    running — 陳會計 could be asking about a charge while a pass rewrote it — and a failed
+    pass printed to stdout and told nobody. Boot now reads; rewriting history is a button
+    on 訓練輪 (or POST /api/maintenance), pressed by a person who wants it, with the
+    results reported back instead of scrolled away. Each pass keeps its own KV flag, so
+    pressing it twice still does nothing twice.
+    """
+    log: list[str] = []
+    say = log.append
+    async with Session() as s:
+        n = await seed_history.backfill(s)
+        if n:
+            say(f"[seed] imported {n} historical row(s) from Notion")
+        m = await seed_history.reclassify_income(s)  # pull non-work money back out of income
+        if m:
+            say(f"[seed] reclassified {m} non-work deposit(s) out of income")
+        a = await seed_applecard.backfill(s)  # Apple Card statements 2025-01 → 2026-07
+        if a:
+            say(f"[seed] imported {a} Apple Card transaction(s)")
+        lb = await seed_applecard.apply_labels(s)  # Momo's labeling-session answers, if present
+        if lb:
+            say(f"[seed] applied labels to {lb} Apple Card row(s)")
+        nc, nx = await cleanup.run(s)  # wider auto-labels + sweep missed card payments
+        if nc or nx:
+            say(f"[cleanup] categorized {nc}, swept {nx} transfer(s) out of spending")
+        ne = await cleanup.ensure_accounts(s)  # Apple Card / GS Savings / Venmo always in ledger
+        if ne:
+            say(f"[cleanup] added {ne} known manual account(s) to the ledger")
+        nd = await cleanup.dedupe_ledger(s)  # drop manual copies of bank-synced accounts
+        if nd:
+            say(f"[cleanup] removed {nd} duplicate ledger account(s)")
+        rt = await retag.retag(s)  # old English category names -> taxonomy ids
+        if rt:
+            say(f"[taxonomy] {rt}")
+            await opsroom.say(f"🏷️ taxonomy migration — {rt}")
+        rf = await retag.net_refunds(s)  # refunds inherit the category they reverse
+        if rf:
+            say(f"[netting] {rf}")
+            await opsroom.say(f"↩️ refund netting — {rf}")
+        fp = await retag.net_family_paybacks(s)  # 媽媽的回款 come off the flex bucket
+        if fp:
+            say(f"[family] {fp}")
+            await opsroom.say(f"👩‍👧 媽媽回款 netting — {fp}")
+        iv = await seed_invoices.backfill(s)  # the day rate's evidence, from her invoices
+        if iv:
+            say(f"[invoices] {iv}")
+            await opsroom.say(f"🧾 發票匯入 — {iv}")
+
+    return log
+
+
+
 async def lifespan(app: FastAPI):
     await init_db()
     try:  # add columns to tables create_all() already built (inflow_kind, …)
@@ -203,52 +258,15 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_snapshot_job, "cron", hour=23, minute=45, id="snapshot")  # daily net-worth point
     scheduler.start()
     try:
-        async with Session() as s:  # one-time Notion history import (idempotent)
-            n = await seed_history.backfill(s)
-            if n:
-                print(f"[seed] imported {n} historical row(s) from Notion")
-            m = await seed_history.reclassify_income(s)  # pull non-work money back out of income
-            if m:
-                print(f"[seed] reclassified {m} non-work deposit(s) out of income")
-            a = await seed_applecard.backfill(s)  # Apple Card statements 2025-01 → 2026-07
-            if a:
-                print(f"[seed] imported {a} Apple Card transaction(s)")
-            lb = await seed_applecard.apply_labels(s)  # Momo's labeling-session answers, if present
-            if lb:
-                print(f"[seed] applied labels to {lb} Apple Card row(s)")
-            nc, nx = await cleanup.run(s)  # wider auto-labels + sweep missed card payments
-            if nc or nx:
-                print(f"[cleanup] categorized {nc}, swept {nx} transfer(s) out of spending")
-            ne = await cleanup.ensure_accounts(s)  # Apple Card / GS Savings / Venmo always in ledger
-            if ne:
-                print(f"[cleanup] added {ne} known manual account(s) to the ledger")
-            nd = await cleanup.dedupe_ledger(s)  # drop manual copies of bank-synced accounts
-            if nd:
-                print(f"[cleanup] removed {nd} duplicate ledger account(s)")
-            rt = await retag.retag(s)  # old English category names -> taxonomy ids
-            if rt:
-                print(f"[taxonomy] {rt}")
-                await opsroom.say(f"🏷️ taxonomy migration — {rt}")
-            # The budget can't start on the 1st of a period, and shouldn't pretend it did.
-            # First boot stamps 起算日 = today; everything before it is recorded, not judged.
+        async with Session() as s:
+            # The budget can't start on the 1st of a period, and shouldn't pretend it
+            # did. First boot stamps 起算日 = today — a config default, not a rewrite,
+            # so it is the one line of the old seed chain that stays at boot.
             if not await allowance.start_date(s):
                 d = await allowance.set_start_date(s, now().date())
                 print(f"[allowance] 起算日 set to {d}")
-                await opsroom.say(f"📐 budget start date set to {d} (first cadence pro-rates)")
-            rf = await retag.net_refunds(s)  # refunds inherit the category they reverse
-            if rf:
-                print(f"[netting] {rf}")
-                await opsroom.say(f"↩️ refund netting — {rf}")
-            fp = await retag.net_family_paybacks(s)  # 媽媽的回款 come off the flex bucket
-            if fp:
-                print(f"[family] {fp}")
-                await opsroom.say(f"👩‍👧 媽媽回款 netting — {fp}")
-            iv = await seed_invoices.backfill(s)  # the day rate's evidence, from her invoices
-            if iv:
-                print(f"[invoices] {iv}")
-                await opsroom.say(f"🧾 發票匯入 — {iv}")
     except Exception as e:
-        print(f"[seed] error: {e!r}")
+        print(f"[boot] error: {e!r}")
     try:
         async with Session() as s:  # seed today's trend point on boot so the chart isn't empty
             await dashboard.write_snapshot(s)
@@ -296,22 +314,8 @@ async def health_detail():
     return out
 
 
-@app.post("/ingest/tap")
-async def ingest_tap(request: Request):
-    """Called by the iOS Shortcut on every Apple Pay tap (Apple Card real-time)."""
-    if not settings.INGEST_TOKEN:
-        return Response(status_code=503)  # endpoint disabled until a token is set
-    data = await request.json()
-    if record.get_ci(data, "token") != settings.INGEST_TOKEN:
-        return Response(status_code=403)
-    amount = record.get_ci(data, "amount")
-    if record.coerce_amount(amount) is None:
-        return Response(status_code=400)
-    async with Session() as s:
-        await record.record_charge(
-            s, amount, record.get_ci(data, "merchant"), "shortcut", record.get_ci(data, "card")
-        )
-    return {"ok": True}
+# The tap Shortcut is retired (decided 2026-08-15): zero rows in the entire history.
+# The nightly screenshot is the documented Apple Card pipeline.
 
 
 async def _route_text(session, text: str) -> str:
@@ -405,12 +409,6 @@ async def webhook(request: Request):
                 await line_client.reply(reply_token, await llm.greet())
                 await onboarding.start(s, user_id)
                 continue
-
-            # Auto-tap from the iOS Shortcut: a specially-marked LINE message (not conversation).
-            tap = record.parse_tap_message(text)
-            if tap and record.coerce_amount(tap["amount"]) is not None:
-                await record.record_charge(s, tap["amount"], tap["merchant"], "shortcut", tap["card"])
-                continue  # no reply — she folds it into the grouped "what did you buy?" prompt
 
             # Starter-pack block pasted in from the survey: store it as budgeting inputs.
             prof = profile.parse(text)

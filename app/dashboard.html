@@ -1104,7 +1104,9 @@
            once. The explanations were never the problem; being unable to turn them off
            was. This is the off switch's other side. -->
       <section class="card" data-pane="bmath">
-        <h2>她怎麼算的 <span class="more" onclick="go('#/')">← 回今天</span></h2>
+        <h2>她怎麼算的
+          <span class="more" onclick="runMaintenance(this)" title="重跑資料整理（改分類規則之後才需要）">重掃歷史</span>
+          <span class="more" onclick="go('#/')">← 回今天</span></h2>
         <div class="body" id="budgetMath"></div></section>
 
       <section class="card" data-pane="binfo">
@@ -1861,12 +1863,10 @@ async function loadPlan(){
       <div class="note">${st.standing_rung?`站在${esc(st.standing_rung.name)}・`:''}
         ${(st.ladder||[]).map(r=>esc(r.name)+' '+F0(r.amount)).join('　')}</div>
     </div>
-    ${st.savings_debt>0?`<div class="wall"><div class="top"><span>存錢欠帳</span>
-      <b style="color:var(--warn)">${F0(st.savings_debt)}</b></div>
-      <div class="note">之前跳過的存錢，有多的先補這裡。</div></div>`:''}
-    ${st.shocks&&st.shocks.per_period>0?`<div class="wall"><div class="top"><span>這期要還自己</span>
-      <b style="color:var(--warn)">${F0(st.shocks.per_period)}</b></div>
-      <div class="note">自己造成的支出分期還${st.shocks.over_cap?'・已超過收入 15%，該面對了':''}。</div></div>`:''}`;
+`;
+    /* 存錢欠帳 and the shock absorber used to render here as live systems — both had
+       zero write paths, so the walls could never hold anything. Deleted with the
+       promises; if the ledgers ever get built, build the display then. */
 
   /* where it goes */
   const c=d.categories;
@@ -2364,6 +2364,15 @@ async function loadChanges(){
       ${c.source_text?`<div class="src">你說：「${esc(c.source_text)}」</div>`:''}
     </div>`;
   }).join('') : '<div class="empty">她還沒改過任何東西。</div>';
+}
+async function runMaintenance(btn){
+  btn.textContent='掃描中…';
+  try{
+    const r=await fetch('/api/maintenance',{method:'POST',credentials:'same-origin'});
+    const d=await r.json();
+    alert((d.log||[]).join('\n'));
+  }catch(e){ alert('失敗：'+e.message); }
+  btn.textContent='重掃歷史';
 }
 async function undoChange(id, btn){
   btn.disabled=true; btn.textContent='還原中…';

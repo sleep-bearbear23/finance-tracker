@@ -1,7 +1,3 @@
 __pycache__/
+.DS_Store
 *.pyc
-.env
-*.numbers
-venv/
-*.zip
-_sync.zip

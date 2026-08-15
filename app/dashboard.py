@@ -203,39 +203,53 @@ async def api_label(request: Request):
         return JSONResponse({"error": "bad payload"}, status_code=400)
     valid = set(categories.CATEGORIES)
     async with Session() as s:
-        rows = (await s.execute(select(Transaction).where(
-            Transaction.category.is_(None),
-            Transaction.status.not_in(("ignored", "reconciled")),
-        ))).scalars().all()
-        touched = 0
-        for t in rows:
-            k = categories.merchant_key(t.merchant_desc)
-            lab = labels.get(k)
-            if not lab or lab.get("cat") not in valid:
-                continue
-            if lab["cat"] == categories.TRANSFER:
-                t.status = "ignored"
-            t.category = lab["cat"]
-            if lab.get("note"):
-                t.note = lab["note"]
-            touched += 1
-        taught = 0
-        for k, lab in labels.items():
-            if lab.get("cat") not in valid:
-                continue
-            mem = await s.get(MerchantMemory, k)
-            if mem is None:
-                s.add(MerchantMemory(
-                    key=k, category=lab["cat"], note=lab.get("note"),
-                    is_income=(False if lab["cat"] == categories.TRANSFER else None),
-                    necessary=bool(lab.get("nec")),
-                ))
-                taught += 1
-            else:
-                mem.category = lab["cat"]
+        # The bulk labeler can rewrite hundreds of rows in one submit — it was the one
+        # writer with no undo at all. Same contract as every tool now: one Change row,
+        # actor=dash, every touched transaction and memory snapshotted.
+        async with CL.watching(s, tool="label", actor="dash",
+                               args={"n_labels": len(labels)}) as rec:
+            rows = (await s.execute(select(Transaction).where(
+                Transaction.category.is_(None),
+                Transaction.status.not_in(("ignored", "reconciled")),
+            ))).scalars().all()
+            touched = 0
+            for t in rows:
+                k = categories.merchant_key(t.merchant_desc)
+                lab = labels.get(k)
+                if not lab or lab.get("cat") not in valid:
+                    continue
+                before = CL.snapshot_row(t, ["category", "note", "status"])
+                if lab["cat"] == categories.TRANSFER:
+                    t.status = "ignored"
+                t.category = lab["cat"]
                 if lab.get("note"):
-                    mem.note = lab["note"]
-        await s.commit()
+                    t.note = lab["note"]
+                rec.row("transactions", t.id, before,
+                        CL.snapshot_row(t, ["category", "note", "status"]))
+                touched += 1
+            taught = 0
+            cols = ["category", "note", "is_income", "necessary"]
+            for k, lab in labels.items():
+                if lab.get("cat") not in valid:
+                    continue
+                mem = await s.get(MerchantMemory, k)
+                if mem is None:
+                    mem = MerchantMemory(
+                        key=k, category=lab["cat"], note=lab.get("note"),
+                        is_income=(False if lab["cat"] == categories.TRANSFER else None),
+                        necessary=bool(lab.get("nec")),
+                    )
+                    s.add(mem)
+                    rec.row("merchant_memory", k, None, CL.snapshot_row(mem, cols))
+                    taught += 1
+                else:
+                    before = CL.snapshot_row(mem, cols)
+                    mem.category = lab["cat"]
+                    if lab.get("note"):
+                        mem.note = lab["note"]
+                    rec.row("merchant_memory", k, before, CL.snapshot_row(mem, cols))
+            await s.commit()
+            rec.says(f"批次標籤：{touched} 筆交易、{taught} 個新商家")
         return {"ok": True, "labeled_txns": touched, "merchants_taught": taught}
 
 
@@ -757,6 +771,16 @@ async def api_changes(request: Request):
     limit = min(300, max(10, int(request.query_params.get("limit") or 80)))
     async with Session() as s:
         return {"changes": await CL.recent(s, limit)}
+
+
+@router.post("/api/maintenance")
+async def api_maintenance(request: Request):
+    """The old boot-time seed chain, now run on purpose. See main.run_maintenance."""
+    if not _authorized(request):
+        return _deny()
+    from . import main as M
+    log = await M.run_maintenance()
+    return {"ok": True, "log": log or ["每個 pass 都跑過了，沒有東西要重掃。"]}
 
 
 @router.post("/api/undo")
