@@ -379,7 +379,11 @@ def is_income_kind(kind: str | None) -> bool:
 # already exists for production reimbursements and Amazon returns does the rest.
 #
 # Adding another of her mother's accounts later is one more alternative here.
+#: Momo's mother's account. Scoped to transfer-shaped descriptions — a bare 7567 used
+#: to match ANY positive row containing those digits (an order number, a merchant id),
+#: and misfiling a stranger's credit as 媽媽回款 nets away real income.
 FAMILY_PAYBACK_RE = re.compile(r"7567", re.I)
+_TRANSFERISH_RE = re.compile(r"transfer|zelle|轉帳", re.I)
 
 
 def family_payback(desc: str, amount: float) -> bool:
@@ -387,4 +391,6 @@ def family_payback(desc: str, amount: float) -> bool:
 
     Direction is part of the test. Money going the other way to the same account is
     Momo paying her mother, which is a real expense and must not be netted away."""
-    return amount > 0 and bool(FAMILY_PAYBACK_RE.search(desc or ""))
+    d = desc or ""
+    return (amount > 0 and bool(FAMILY_PAYBACK_RE.search(d))
+            and bool(_TRANSFERISH_RE.search(d)))

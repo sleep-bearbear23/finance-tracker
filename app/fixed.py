@@ -78,7 +78,9 @@ def _load(raw: str | None, fallback: list[dict]) -> list[dict]:
         got = json.loads(raw) if raw else None
     except (TypeError, ValueError):
         got = None
-    return got if isinstance(got, list) and got else [dict(r) for r in fallback]
+    # None = never saved → the defaults. An EMPTY list is a decision — deleting your
+    # last fixed cost used to resurrect all nine defaults, because [] is falsy.
+    return got if isinstance(got, list) else [dict(r) for r in fallback]
 
 
 async def rows(session, include_sinking: bool | None = None) -> list[dict]:

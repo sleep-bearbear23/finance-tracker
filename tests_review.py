@@ -312,6 +312,63 @@ async def main():
             check("allowance positive on this data — lean path not exercised (ok)",
                   len(sent) <= 1, f"pct={b0['pct_used']}")
 
+        print("\n[16] Phase 4 — the small knives")
+        out = await tools.run(s, "raise_daily", {"amount": -20})
+        check("a negative raise is refused, not abs()'d into a bigger grant",
+              not out["ok"] and "正數" in out["error"], str(out)[:60])
+
+        out = await tools.run(s, "log_expense", {"amount": 5, "merchant": "x",
+                                                 "category": "nonsense-id"})
+        check("an invented category id is rejected, not silently exempted",
+              not out["ok"] and "分類" in out["error"], str(out)[:60])
+
+        a1 = await tools.run(s, "log_income", {"amount": 250, "source": "小案", "date": "2026-06-25"})
+        a2 = await tools.run(s, "log_income", {"amount": 250, "source": "小案", "date": "2026-06-25"})
+        check("two identical cash jobs no longer collide on a deterministic key",
+              a1["ok"] and a2["ok"] and a1["id"] != a2["id"], f'{a1.get("id")} vs {a2.get("id")}')
+
+        from app import prefs as PR2
+        await PR2.update_account(s, "AppleCard", -500.0, "debt")
+        out = await tools.run(s, "log_income", {"amount": 100, "source": "y", "account": "AppleCard"})
+        accts = PR2._load_list(await get_kv(s, "cfg_accounts"))
+        ac = next(a0 for a0 in accts if a0.get("name") == "AppleCard")
+        check("income 'into' a credit card does not increase the debt",
+              out["ok"] and near(float(ac["amount"]), -500.0), str(ac["amount"]))
+
+        await fixed.save(s, [])
+        check("deleting the last fixed cost leaves ZERO rows, not nine resurrected defaults",
+              (await fixed.rows(s, include_sinking=False)) == [],
+              str(len(await fixed.rows(s, include_sinking=False))))
+        await fixed.save(s, fixed.DEFAULTS)   # put them back for anything downstream
+
+        check("a bare 7567 in a merchant string is no longer 媽媽回款",
+              not T.family_payback("SQ *SHOP 7567 LOS ANGELES", 45.0))
+        check("…but her mother's actual transfer still is",
+              T.family_payback("Online Transfer From CHK ...7567", 200.0))
+
+        from app import projects as PJ2
+        r = await PJ2.resolve(s, "")
+        check("resolve('') returns a dict, not a TypeError for four callers",
+              isinstance(r, dict) and r["id"] is None, str(r))
+
+        s.add(Transaction(id="tx-onjob", account_id="apple", amount=-33.0,
+                          merchant_desc="HOME DEPOT", project="awct", category="work",
+                          posted_at=now()))
+        await s.commit()
+        hits, _ = tools._find_charges([await s.get(Transaction, "tx-onjob")], "awct",
+                                      now().date() - timedelta(days=9))
+        check("`which` no longer matches the project field itself", hits == [], str(len(hits)))
+
+        print("\n[17] Phase 5 — the diagnostics are on")
+        from app import dashboard as DASH
+        diags = await DASH._diagnostics(s)
+        check("_diagnostics runs clean and returns a list", isinstance(diags, list),
+              str(diags)[:70])
+        await set_kv(s, "last_run:alerts", (now() - timedelta(days=3)).isoformat())
+        diags = await DASH._diagnostics(s)
+        check("a dead alert loop becomes a visible warning within a day",
+              any("超支提醒" in d for d in diags), str(diags)[:70])
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)

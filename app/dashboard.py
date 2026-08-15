@@ -12,7 +12,7 @@ from __future__ import annotations
 import hmac
 import json
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Response
@@ -26,7 +26,7 @@ from . import (accounts as acct, allowance, analytics as AN, budget, categories,
                tax as TAX,
                taxonomy)
 from .config import aware, now, settings
-from .db import Session
+from .db import Session, get_kv
 from .models import Account, MerchantMemory, Message, Snapshot, Transaction
 
 router = APIRouter()
@@ -653,6 +653,45 @@ async def api_export(request: Request):
 
 
 # ── the detail pages ─────────────────────────────────────────────────
+
+async def _diagnostics(s) -> list[str]:
+    """The detectors that were already computing the right answer into nothing.
+
+    Every one of these would have caught a bug the external review had to find by hand:
+    fixed.reconcile's 10% alarm would have caught the $3,778-vs-$1,521 divergence, the
+    unlabeled count would have caught $893 of spending that was both nagging her and
+    invisible to the budget, and job-run tracking makes a silently dead alert loop —
+    the thing that already happened once — visible within a day."""
+    out = []
+    try:
+        rc = await FX.reconcile(s)
+        if rc.get("diverged"):
+            out.append(f"固定成本表說 {rc['stated']:.0f}／月，最近實刷 {rc['observed']:.0f}"
+                       "——差超過一成，可能有一筆沒記到或漲價了")
+    except Exception:
+        pass
+    try:
+        rows = (await s.execute(select(Transaction))).scalars().all()
+        unl = [t for t in rows if t.amount < 0 and t.category is None
+               and t.status not in ("ignored", "reconciled")]
+        if len(unl) >= 5:
+            total = sum(-t.amount for t in unl)
+            out.append(f"有 {len(unl)} 筆共 ${total:,.0f} 還沒分類（現在照樣吃額度）"
+                       f"——去 /label 清一清")
+    except Exception:
+        pass
+    try:
+        for job, days, name in (("alerts", 1.5, "超支提醒"), ("weekly_report", 9, "週報")):
+            raw = await get_kv(s, f"last_run:{job}")
+            if raw:
+                ago = (now() - datetime.fromisoformat(raw)).total_seconds() / 86400
+                if ago > days:
+                    out.append(f"{name}已經 {ago:.0f} 天沒跑了——排程可能死了")
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/api/plan")
 async def api_plan(request: Request):
     """計畫: where the money goes, how that has trended, where the walls are, and how
@@ -680,7 +719,7 @@ async def api_plan(request: Request):
             # the season settlement above.
             "fortnight": await AN.fortnight(s, f),
             "runway": await RW.plan(s, f),
-            "audit": f.audit(),
+            "audit": f.audit() + await _diagnostics(s),
         }
 
 

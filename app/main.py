@@ -75,7 +75,21 @@ async def _claims_job():
                 print(f"[claims] settled {out['n_settled']}")
                 await opsroom.say(f"↩️ 退款／報帳對上 {out['n_settled']} 筆")
             if out["n_ask"]:
-                await opsroom.say(f"❓ {out['n_ask']} 筆退款金額對得上不只一筆，要問默默")
+                # This question is FOR Momo, not for the machine room — only she knows
+                # which of two identical fares a credit repays. Ask once per credit.
+                owner = await get_kv(s, "owner_user_id")
+                for q in out["ask"]:
+                    flag = f"asked_claim:{q['credit']}"
+                    if owner and not await get_kv(s, flag):
+                        opts = "；".join(
+                            f"{o['date'] or ''} {o['merchant']}"
+                            + (f"（{o['project']}）" if o.get("project") else "")
+                            for o in q["options"][:3])
+                        await line_client.push(owner,
+                            f"進來一筆 ${q['amount']:,.2f}（{q['desc']}），"
+                            f"金額對得上不只一筆：{opts}。是還哪一筆的？跟我說商家或日期。")
+                        await set_kv(s, flag, "1")
+                await opsroom.say(f"❓ {out['n_ask']} 筆退款有歧義，已經去問默默了")
         except Exception as e:
             print(f"[claims] error: {e!r}")
 
@@ -92,6 +106,10 @@ async def _alert_job():
     async with Session() as s:
         try:
             await alerts.check(s)
+            # heartbeat, not success-of-content: the alert loop once died silently for
+            # weeks because a guard returned early — a stale last_run is now a visible
+            # warning on the dashboard's audit strip
+            await set_kv(s, "last_run:alerts", now().isoformat())
         except Exception as e:
             print(f"[alerts] error: {e!r}")
 
@@ -100,6 +118,7 @@ async def _weekly_job():
     async with Session() as s:
         try:
             await reports.run_report(s, "weekly")
+            await set_kv(s, "last_run:weekly_report", now().isoformat())
         except Exception as e:
             print(f"[weekly] error: {e!r}")
 

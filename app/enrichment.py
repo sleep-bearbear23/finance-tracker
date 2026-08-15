@@ -75,21 +75,36 @@ async def file_reply(session, reply_text: str) -> bool:
     mapping = await llm.parse_reply(batch, reply_text)
     if not mapping:
         return False
+    from . import taxonomy as T
     for r in batch:
         m = mapping.get(r.batch_seq)
+        inflow = None
         if m:
             if m.get("note"):
                 r.note = m["note"]
             if m.get("category"):
                 r.category = m["category"]
             is_income = m.get("is_income")
+            inflow = m.get("inflow") or None
         else:
             is_income = None
 
         # Set the transaction's fate, and remember this merchant/sender so she never re-asks.
-        if r.amount > 0:  # money in — was it real income or just a payback/transfer?
+        # The parser was already extracting the inflow kind and this function was dropping
+        # it on the floor: 「那是劇組還我錢」 came back inflow=reimburse_work, then the
+        # is_income collapse filed it as ignored/transfer — so the credit never offset the
+        # work purchase she fronted. This is the LINE write path; per the channel contract
+        # it is the one thing that has to file exactly what she said.
+        if r.amount > 0:
+            if inflow:
+                r.inflow_kind = inflow
             if is_income is True:
                 r.status, r.category = "income", "Income"
+            elif inflow in (T.REIMBURSE_WORK, T.REFUND):
+                r.status = "enriched"      # a credit that cancels a charge — keep it visible
+            elif inflow == T.REIMBURSE_FAMILY:
+                r.status = "enriched"
+                r.category = r.category or "household"
             elif is_income is False:
                 r.status, r.category = "ignored", categories.TRANSFER
             else:

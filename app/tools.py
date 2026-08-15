@@ -69,7 +69,7 @@ def _find_charges(rows, which, cutoff, *, only=None, project=None):
             continue
         if project is not None and (t.project or "") != project:
             continue
-        hay = f"{t.merchant_desc or ''} {t.note or ''} {t.project or ''}".lower()
+        hay = f"{t.merchant_desc or ''} {t.note or ''}".lower()
         amt = abs(t.amount)
         if not ((key and key in hay) or (want is not None and abs(amt - want) < 0.02)):
             continue
@@ -423,7 +423,8 @@ SCHEMAS: list[dict] = [
             "properties": {
                 "amount": {"type": "number", "description": "Positive; it is recorded as a spend."},
                 "merchant": {"type": "string"},
-                "category": {"type": "string"},
+                "category": {"type": "string", "enum": "__CATS__",
+                             "description": "One of the taxonomy ids only."},
                 "note": {"type": "string"},
                 "date": {"type": "string", "description": "YYYY-MM-DD. Defaults to today."},
                 "project": {"type": "string",
@@ -593,7 +594,8 @@ SCHEMAS: list[dict] = [
             "type": "object",
             "properties": {
                 "merchant": {"type": "string"},
-                "category": {"type": "string"},
+                "category": {"type": "string", "enum": "__CATS__",
+                             "description": "One of the taxonomy ids only."},
                 "kind": {"type": "string", "enum": ["spend", "income", "transfer"]},
                 "note": {"type": "string"},
             },
@@ -698,6 +700,11 @@ async def update_expected_payment(s, rec, which, amount=None, when=None, note=No
             row.update(extra)
             await set_kv(s, "cfg_upcoming", json.dumps(items, ensure_ascii=False))
             hit = dict(row)
+    if extra and hit is None:
+        # the extras were NOT written (no row matched by then) — saying 「拍 8 天」 while
+        # writing nothing is the exact lie the tools exist to make impossible
+        return {"ok": False, "error": f"找到「{before.get('note')}」但補充欄位沒寫進去，"
+                                      "再試一次或跟我說原話。"}
     bits = []
     if amount is not None and float(before.get("amount") or 0) != float(amount):
         bits.append(f"{_money(before.get('amount'))} → {_money(amount)}")
@@ -949,7 +956,12 @@ async def raise_daily(s, rec, amount, days=None):
     if dv["days_left"] <= 0:
         return {"ok": False, "error": "這一期已經結束了，加不了。"}
 
-    amount = round(abs(float(amount)), 2)
+    amount = round(float(amount), 2)
+    if amount <= 0:
+        # abs() used to turn 「幫我降 $20」 into +$20/day. Lowering the daily is not a
+        # grant — she just spends less and the pool grows by itself.
+        return {"ok": False, "error": "加碼要是正數。想過得省一點不用叫我，"
+                                      "少花的自己會進本期口袋。"}
     span = int(days) if days else dv["days_left"]
     span = max(1, min(span, dv["days_left"]))
     cost = round(amount * span, 2)
@@ -1212,6 +1224,8 @@ async def untag_project(s, rec, which, project=None, days=60, only=None, confirm
 
 async def log_expense(s, rec, amount, merchant, category=None, note=None, date=None,  # noqa: A002
                       project=None, reimbursable=None):
+    if not _valid_category(category):
+        return {"ok": False, "error": f"沒有「{category}」這個分類。留空讓我猜，或用正式的分類 id。"}
     t = await record.record_charge(s, -abs(float(amount)), merchant, "manual")
     # Spending FOR a job is 工作 whatever it bought. Momo told her about a taxi and a meal a
     # production would pay back and they were filed as 交通雜支 and 食, so they ate her daily
@@ -1259,7 +1273,8 @@ async def log_income(s, rec, amount, source, date=None, account=None, note=None)
             when = datetime.fromisoformat(str(date)[:10]).replace(tzinfo=TZ)
         except ValueError:
             pass
-    t = _T(id=f"manual:{abs(hash((source, amt, str(date), when.isoformat()))):016x}",
+    import uuid as _uuid
+    t = _T(id=f"manual:{_uuid.uuid4().hex[:16]}",
            account_id=(account or "現金"), amount=amt, merchant_desc=source,
            posted_at=when, status="income", inflow_kind="pay", source="manual",
            note=note or "現金收入，銀行看不到")
@@ -1274,10 +1289,15 @@ async def log_income(s, rec, amount, source, date=None, account=None, note=None)
     if account:
         accts = prefs._load_list(await get_kv(s, "cfg_accounts"))
         old = next((a for a in accts if prefs._norm(a.get("name")) == prefs._norm(account)), None)
-        base = float(old.get("amount") or 0) if old else 0.0
-        res = await prefs.update_account(s, account, base + amt,
-                                         (old or {}).get("type") or "cash")
-        line += f"，{res['name']} {_money(base)} → {_money(base + amt)}"
+        kind = (old or {}).get("type") or "cash"
+        if kind in ("debt", "card", "credit"):
+            # 「錢進了 Apple Card」 is a payment toward the card, not a deposit — ADDING it
+            # to a debt balance would record getting paid as owing more
+            line += f"，{account} 是卡債帳戶，餘額我沒動——那要用還卡費的方式記"
+        else:
+            base = float(old.get("amount") or 0) if old else 0.0
+            res = await prefs.update_account(s, account, base + amt, kind)
+            line += f"，{res['name']} {_money(base)} → {_money(base + amt)}"
     else:
         line += "（沒說收在哪個帳戶，餘額沒動）"
     rec.says(line)
@@ -1285,6 +1305,8 @@ async def log_income(s, rec, amount, source, date=None, account=None, note=None)
 
 
 async def remember_merchant(s, rec, merchant, category=None, kind=None, note=None):
+    if not _valid_category(category):
+        return {"ok": False, "error": f"沒有「{category}」這個分類。"}
     key = categories.merchant_key(merchant)
     mem = await s.get(MerchantMemory, key)
     before = (changelog.snapshot_row(mem, ["category", "note", "is_income", "necessary"])
@@ -1334,6 +1356,27 @@ async def start_new_season(s, rec):
              f"持平目標 {_money(hold)}"
              + (f"（上一季是 {old['start']} 開始的）" if old else ""))
     return {"ok": True, "summary": rec.summary, "season": new}
+
+
+# An invalid category id makes treatment() return None — before B-5 that meant the
+# spend silently stopped counting against the allowance, with a cheerful receipt. The
+# enum stops the model inventing ids; _valid_category stops everything else.
+def _valid_category(cat):
+    from . import taxonomy as _T
+    return cat is None or cat in _T.ALL
+
+
+def _install_category_enums():
+    from . import taxonomy as _T
+    cats = sorted(_T.ALL)
+    for sch in SCHEMAS:
+        props = sch.get("input_schema", {}).get("properties", {})
+        c = props.get("category")
+        if c and c.get("enum") == "__CATS__":
+            c["enum"] = cats
+
+
+_install_category_enums()
 
 
 HANDLERS = {

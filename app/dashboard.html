@@ -373,8 +373,8 @@
     grid-template-columns:1.2fr 1fr 1fr;
     grid-template-rows:minmax(0,1fr) minmax(0,.92fr);
     grid-template-areas:
-      "book  runway  ssn"
-      "book  iperf   ipay";}
+      "book   runway  ssn"
+      "iexp   iperf   ipay";}
   [data-pane=iperf]{grid-area:iperf} [data-pane=ipay]{grid-area:ipay}
   [data-pane=callist]{grid-area:callist} [data-pane=arecent]{grid-area:arecent}
   [data-pane=alist]{grid-area:alist}
@@ -772,6 +772,7 @@
     #s-plan > .grid.sel-runway > [data-pane=runway],
     #s-plan > .grid.sel-ssn > [data-pane=ssn],
     #s-plan > .grid.sel-iperf > [data-pane=iperf],
+    #s-plan > .grid.sel-iexp > [data-pane=iexp],
     #s-plan > .grid.sel-ipay > [data-pane=ipay],
     #s-acct > .grid.sel-nw > [data-pane=nw],
     #s-acct > .grid.sel-alist > [data-pane=alist],
@@ -827,6 +828,8 @@
       <a id="tab-plan" href="#/work">接案</a>
       <a id="tab-proj" href="#/projects">案子</a>
     </div>
+    <a class="asof" href="/api/export" download title="下載完整備份（JSON）"
+       style="text-decoration:underline;text-underline-offset:3px">匯出</a>
     <div class="asof" id="asof">載入中…</div>
   </div>
 
@@ -1035,6 +1038,11 @@
         <div class="body" id="incPayers"><div class="empty">載入中…</div></div>
       </section>
 
+      <section class="card" data-pane="iexp">
+        <h2>接下來三個月 <span class="more" id="iexpMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="incExpected"><div class="empty">載入中…</div></div>
+      </section>
+
       <section class="card" data-pane="standing">
         <h2>現在的水位 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="floor"></i></h2>
         <div class="body" id="standBox"><div class="empty">計算中…</div></div>
@@ -1079,10 +1087,6 @@
         <div class="body" id="incReceived"><div class="empty">載入中…</div></div>
       </section>
 
-      <section class="card" data-pane="iexp">
-        <h2>接下來三個月 <span class="more" id="iexpMeta" style="cursor:default;color:var(--muted)"></span></h2>
-        <div class="body" id="incExpected"><div class="empty">載入中…</div></div>
-      </section>
 
       <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
 
@@ -1231,7 +1235,7 @@ function halfMonthScales(points,yFmt){
 const SEGS = {
   home:   [['toearn','這一期'],['lever','能做的事'],['cats','花在哪']],
   plan:   [['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
-           ['iperf','收入節奏'],['ipay','誰付錢']],
+           ['iexp','接下來三個月'],['iperf','收入節奏'],['ipay','誰付錢']],
   acct:   [['nw','淨資產'],['alist','帳戶'],['callist','接下來'],
            ['flows','半月收支'],['arecent','最近的帳']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],

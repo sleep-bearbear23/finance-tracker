@@ -147,7 +147,9 @@ async def resolve(session, text: str, f: F.Facts | None = None) -> str:
     is worse than one more question."""
     want = (text or "").strip()
     if not want:
-        return ""
+        # every caller unpacks a dict; returning "" here was a TypeError that surfaced to
+        # the model as 「參數不對」 and sent it retrying with invented arguments
+        return {"id": None, "new": False, "score": 0, "options": []}
     rows = await build(session, f)
     scored = []
     for p in rows:                      # newest first, so ties keep the current job
