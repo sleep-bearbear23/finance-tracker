@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>財務總覽 · 陳會計</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="webfont" rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&family=Noto+Sans+TC:wght@300..600&display=swap">
 <style>
   :root{
     /* Near-black plane. Glass only reads as glass when there is real darkness behind
@@ -14,7 +18,19 @@
     --inset:rgba(0,0,0,.35);
     --ink:#f2f3fa; --ink2:#a6abce; --muted:#7b81a8;
     --grid:rgba(255,255,255,.035); --gridstrong:rgba(255,255,255,.14); --border:rgba(255,255,255,.06);
-    --accent:#2ee5a9; --bad:#ff5c93; --warn:#ffb02e;
+
+    /* Momo's palette, dark variant. Three accents, each with ONE meaning, and never two
+       competing on the same element:
+         pink   — over the line, late, the thing that is wrong
+         blue   — good news: money in, refunds, on track
+         yellow — not yours yet: held for tax, awaiting payment, upcoming
+       This replaces a single mint green that used to colour the hero number, every
+       positive figure, every progress bar and half the chart — so nothing it touched
+       carried any meaning beyond "this is a number". */
+    --accent:#9CC9F5;      /* good news — was the all-purpose mint */
+    --bad:#FF3D8F;         /* over / late */
+    --warn:#F5D547;        /* held / upcoming */
+    --accent-ink:#0b0b0c;  /* text on a filled accent */
     --s1:#15ad81; --s2:#5b8df5; --s3:#e2477e; --s4:#c98500; --s5:#9085e9; --s6:#d95926; --s7:#17a2b8;
     --r:26px; --gap:16px;
     /* the liquid-glass shell: rim highlights + inner bloom, all inset so nothing bleeds */
@@ -29,12 +45,22 @@
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%;margin:0;overflow:hidden}
+  /* Instrument Sans has no CJK, so it is the numeral and eyebrow face and Noto Sans TC
+     carries the Chinese. Listing Instrument first means Latin digits and letters resolve
+     to it and every 漢字 falls through — which is the point: the money is what needs the
+     tabular figures and the tight tracking. PingFang stays ahead of Noto for Momo's own
+     Mac, where it is the better-hinted face. */
   body{background:var(--plane);
     color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",
+    font-family:"Instrument Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text",
       Inter,system-ui,"PingFang TC","Noto Sans TC",sans-serif;
     font-size:13.5px;line-height:1.6;font-weight:300;letter-spacing:.012em;
     -webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  /* Every money value, everywhere. Columns of figures that do not line up read as sloppy
+     even when nobody can say why. */
+  .heroamt,.ring .hole .big,.nwtop .big,.lvhead .n,.tierhead .amt2,.tier .amt,
+  .kv b,.row .r,.arow .av,.ev .amt,.owe .a,.rw .v,.cl b,td.num,.big,.num{
+    font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
 
   /* Frosted glass has nothing to do unless something is behind it. These are the soft
      blobs the reference mockups put behind the panel — diffused to almost nothing, so
@@ -42,15 +68,17 @@
   .orbs{position:fixed;inset:-20%;z-index:-2;pointer-events:none;overflow:hidden;
     filter:blur(110px);opacity:.30}
   .orb{position:absolute;border-radius:50%;mix-blend-mode:screen}
-  /* Near-neutral on purpose. The reference mockups are almost monochrome — the light in
-     the glass is silver, and colour is reserved for data. Saturated blobs read as
-     decoration and start competing with the series hues for attention. */
+  /* Momo's three, in her positions: pink top-right, blue mid-left, yellow bottom-right.
+     Held at low alpha under a 110px blur on purpose — her spec sizes them for a 390px
+     phone, and the same alphas across 1440px of dashboard would put a coloured wash
+     behind a seven-series chart and start arguing with it. Here they read as light in
+     the material, which is the job; colour that MEANS something stays on the data. */
   .orb.a{width:52vw;height:52vw;left:54%;top:-20%;
-    background:radial-gradient(circle,rgba(214,224,255,.85),transparent 62%)}
+    background:radial-gradient(circle,rgba(255,61,143,.55),transparent 62%)}
   .orb.b{width:44vw;height:44vw;left:-12%;top:22%;
-    background:radial-gradient(circle,rgba(198,240,226,.55),transparent 64%)}
+    background:radial-gradient(circle,rgba(156,201,245,.50),transparent 64%)}
   .orb.c{width:40vw;height:40vw;left:30%;top:78%;
-    background:radial-gradient(circle,rgba(210,205,240,.5),transparent 66%)}
+    background:radial-gradient(circle,rgba(245,213,71,.34),transparent 66%)}
   @media (prefers-reduced-motion: no-preference){
     .orb{animation:drift 60s ease-in-out infinite alternate;will-change:transform}
     .orb.b{animation-duration:78s;animation-delay:-14s}
@@ -63,11 +91,13 @@
   /* ── app frame: header + content + (mobile) nav, never scrolls ── */
   .app{height:100dvh;display:flex;flex-direction:column;padding:18px 20px 18px;gap:16px}
   .topbar{display:flex;align-items:center;gap:12px;flex:0 0 auto}
-  .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,rgba(46,229,169,.9),rgba(91,141,245,.85));
+  /* Pink is the one accent allowed to be decorative rather than semantic — her face is
+     the only place in the app that gets to be pretty for its own sake. */
+  .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,rgba(255,61,143,.9),rgba(156,201,245,.85));
     display:grid;place-items:center;font-size:15px;flex:0 0 32px;cursor:pointer;
     transition:box-shadow .2s;
     box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 2px 10px rgba(0,0,0,.45)}
-  .avatar:hover{box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 0 0 3px rgba(46,229,169,.22),
+  .avatar:hover{box-shadow:inset 1px 1px 1px -.5px rgba(255,255,255,.55), 0 0 0 3px rgba(156,201,245,.22),
     0 2px 10px rgba(0,0,0,.45)}
   .brandtxt h1{font-size:14px;margin:0;font-weight:400;letter-spacing:.06em;white-space:nowrap}
   .brandtxt .quip{font-size:10.5px;font-weight:300;letter-spacing:.03em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -79,7 +109,7 @@
   .tabs a{font-size:11.5px;color:var(--ink2);padding:7px 16px;border-radius:999px;font-weight:300;
     letter-spacing:.02em;cursor:pointer;white-space:nowrap;transition:color .2s}
   .tabs a.on{color:var(--accent);background:rgba(255,255,255,.05);
-    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28),
+    box-shadow:inset 0 0 0 1px rgba(156,201,245,.28),
                inset 1px 1px 1px -.5px rgba(255,255,255,.4)}
   .tabs::-webkit-scrollbar{display:none}
   .asof{font-size:10px;font-weight:300;letter-spacing:.05em;color:var(--muted);white-space:nowrap}
@@ -96,7 +126,9 @@
   /* the top rim — a single hairline of light, the thing that sells the material */
   .card::before{content:"";position:absolute;inset:0 0 auto;height:1px;border-radius:var(--r) var(--r) 0 0;
     background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);pointer-events:none}
-  .card > h2{font-size:9.5px;font-weight:400;color:var(--muted);margin:0 0 16px;letter-spacing:2.2px;
+  /* Eyebrow, to her spec: 11px / weight 500 / .14em. The old 9.5px at weight 300 was
+     below the size where letter-spacing that wide still reads as a word. */
+  .card > h2{font-size:11px;font-weight:500;color:var(--muted);margin:0 0 16px;letter-spacing:.14em;
     text-transform:uppercase;flex:0 0 auto;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   .card > h2 .more{font-weight:300;font-size:11px;letter-spacing:.04em;color:var(--accent);cursor:pointer;text-transform:none}
   .body{flex:1;min-height:0;overflow:auto}
@@ -111,12 +143,29 @@
   /* 帳戶 used to span both rows, which left it 40% empty — six accounts do not fill 800px.
      One row each, and 每半月收支 gets the full width it wanted: twelve periods × two bars
      was cramped into two thirds of the page. */
+  /* ── 今天 ── "can I spend this."
+     Momo: "I feel like the interface is kinda messy now." Six tabs, and 總覽 and 計畫
+     were both headlined by the same number. They are one page now, and the page is
+     defined by its question rather than by a data type: what can I spend, what should I
+     do about it, where has it been going. Everything that answers a DIFFERENT question
+     moved to the tab that asks it. */
   #s-home > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.22fr 1.25fr .96fr;
-    grid-template-rows:minmax(0,1.28fr) minmax(0,1fr);
+    grid-template-columns:1.5fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,1fr);
     grid-template-areas:
-      "budget   nw       accounts"
-      "flows    flows    flows";}
+      "toearn  lever"
+      "toearn  cats";}
+  /* retired rather than deleted: the loaders still write to them, so they stay in the
+     DOM and simply stop taking space. budget was a second copy of the fortnight number;
+     accounts was a second copy of 所有帳戶; trend is now the drill-down's chart. */
+  #s-home > .grid > [data-pane=budget],
+  #s-home > .grid > [data-pane=accounts],
+  #s-home > .grid > [data-pane=trend],
+  #s-home > .grid > [data-pane=recent],
+  #s-home > .grid > [data-pane=pending],
+  #s-acct > .grid > [data-pane=acomp],
+  #s-income > .grid > [data-pane],
+  #s-cal > .grid > [data-pane]{display:none}
   [data-pane=budget]{grid-area:budget} [data-pane=nw]{grid-area:nw}
   [data-pane=accounts]{grid-area:accounts} [data-pane=flows]{grid-area:flows}
   [data-pane=cats]{grid-area:cats} [data-pane=recent]{grid-area:recent}
@@ -135,7 +184,7 @@
     position:relative;flex:0 0 auto;align-self:center;
     width:var(--rs);height:var(--rs);min-height:var(--rs);aspect-ratio:1}
   .ring .track{position:absolute;inset:0;border-radius:50%;
-    background:conic-gradient(var(--rc,#2ee5a9) calc(var(--pct,0)*1%), rgba(255,255,255,.06) 0);
+    background:conic-gradient(var(--rc,#9CC9F5) calc(var(--pct,0)*1%), rgba(255,255,255,.06) 0);
     -webkit-mask:radial-gradient(circle, transparent 60%, #000 61%);
             mask:radial-gradient(circle, transparent 60%, #000 61%)}
   .ring .hole{position:absolute;inset:0;border-radius:50%;background:transparent;
@@ -200,9 +249,9 @@
   }
   .glass:hover{transform:scale(1.03);filter:brightness(1.08)}
   .glass:active{transform:scale(.98) translateY(1px);filter:brightness(.94)}
-  .glass.on{color:var(--accent);box-shadow:inset 0 0 0 1px rgba(46,229,169,.35),
+  .glass.on{color:var(--accent);box-shadow:inset 0 0 0 1px rgba(156,201,245,.35),
                inset 1px 1px 1px -.5px rgba(255,255,255,.4),
-               inset 0 0 10px 6px rgba(46,229,169,.07), 0 3px 12px rgba(0,0,0,.45)}
+               inset 0 0 10px 6px rgba(156,201,245,.07), 0 3px 12px rgba(0,0,0,.45)}
   @media (prefers-reduced-motion: reduce){ .glass{transition:none} .glass:hover{transform:none} }
   .pill b{color:var(--ink);font-variant-numeric:tabular-nums}
   .pill.mint b{color:var(--accent)} .pill.pink b{color:var(--bad)} .pill.warnp b{color:var(--warn)}
@@ -225,7 +274,7 @@
   .row .r{font-variant-numeric:tabular-nums;font-weight:450;color:var(--ink);white-space:nowrap;flex:0 0 auto}
   .tag{font-size:10.5px;color:var(--muted)}
   .chip{display:inline-block;font-size:10px;padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.07);color:var(--ink2);margin-left:5px}
-  .chip.warn{background:rgba(255,176,46,.15);color:var(--warn)}
+  .chip.warn{background:rgba(245,213,71,.15);color:var(--warn)}
   .pos{color:var(--accent)} .neg{color:var(--bad)}
   .empty{color:var(--muted);font-size:12.5px;padding:6px 0}
 
@@ -273,15 +322,18 @@
     color:var(--ink2);border:1px solid var(--border)}
   .cover{margin-top:9px;padding:7px 11px;border-radius:10px;background:var(--inset);
     border:1px solid var(--border);font-size:11.5px;color:var(--ink2)}
-  .cover.warn{border-color:rgba(255,176,46,.35);background:rgba(255,176,46,.08);color:var(--warn)}
+  .cover.warn{border-color:rgba(245,213,71,.35);background:rgba(245,213,71,.08);color:var(--warn)}
 
   /* ── INCOME screen ── */
+  /* ── 錢 ── "where is it, and when does the next lot land."
+     帳戶 + 行事曆 + 收入 were three tabs that each held a slice of one answer, with the
+     same pending payments listed on two of them. */
   #s-acct > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.25fr 1fr;
-    grid-template-rows:minmax(0,1.1fr) minmax(0,1fr);
+    grid-template-columns:1.05fr 1.15fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,1.05fr);
     grid-template-areas:
-      "alist  acomp"
-      "alist  arecent";}
+      "nw     alist   callist"
+      "flows  flows   arecent";}
   [data-pane=alist]{grid-area:alist} [data-pane=acomp]{grid-area:acomp}
   [data-pane=arecent]{grid-area:arecent}
 
@@ -313,24 +365,31 @@
      weight, so half the screen went to 花在哪 and 分類趨勢, which she never acts on, while
      the diagnosis that tells her whether to feel bad sat in 11px grey at the bottom of a
      clipped card. */
+  /* ── 接案 ── "should I take this job."
+     撐得到什麼時候 says I will not hit zero; 接下來要接多少 says I will not get poorer;
+     這一季 is the settlement. All three are the same decision at different horizons, and
+     收入節奏 is the evidence underneath them, so it came out of its own tab. */
   #s-plan > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.38fr 1.06fr 1.06fr;
-    grid-template-rows:minmax(0,.95fr) minmax(0,.6fr) minmax(0,1.12fr);
+    grid-template-columns:1.2fr 1fr 1fr;
+    grid-template-rows:minmax(0,1fr) minmax(0,.92fr);
     grid-template-areas:
-      "toearn  lever   book"
-      "toearn  lever   book"
-      "cats    runway  ssn";}
+      "book  runway  ssn"
+      "book  iperf   ipay";}
+  [data-pane=iperf]{grid-area:iperf} [data-pane=ipay]{grid-area:ipay}
+  [data-pane=callist]{grid-area:callist} [data-pane=arecent]{grid-area:arecent}
+  [data-pane=alist]{grid-area:alist}
+  #s-plan > .grid > [data-pane=standing]{display:none}
   [data-pane=ssn]{grid-area:ssn} [data-pane=runway]{grid-area:runway}
   [data-pane=lever]{grid-area:lever} [data-pane=book]{grid-area:book}
   /* Stacked areas took the 花在哪 slot: the top edge is total spending and each band is a
      category's share, so "was that fortnight expensive, and because of what" is one look.
      The list is still a tab on the phone. */
-  #s-plan > .grid > [data-pane=trend]{grid-area:cats}
-  #s-plan > .grid > [data-pane=cats]{display:none}
-  [data-pane=standing]{display:none}
 
-  /* 這一期 is the whole reason for the page: one number, and permission to believe it. */
-  .heroamt{font-size:40px;font-weight:200;letter-spacing:-1.8px;line-height:1;
+  /* 這一期 is the whole reason for the page: one number, and permission to believe it.
+     Her spec puts the hero at weight 500 with -.045em tracking, not the hairline 200 this
+     had — a 68px number at weight 200 is elegant and slightly apologetic, and this is the
+     figure she is supposed to trust. */
+  .heroamt{font-size:clamp(40px,5.6vh,58px);font-weight:500;letter-spacing:-.045em;line-height:.92;
     font-variant-numeric:tabular-nums}
   .herorow{display:flex;align-items:baseline;gap:12px;padding:2px 0 12px}
   .herorow .k{font-size:11px;color:var(--muted);letter-spacing:.14em}
@@ -342,9 +401,9 @@
   .dx .t{font-size:9.5px;letter-spacing:.2em;color:var(--muted);margin-bottom:7px}
   .dx .h{font-size:15px;font-weight:300;line-height:1.45;margin-bottom:7px;color:var(--ink)}
   .dx .a{font-size:12.5px;line-height:1.7;color:var(--ink2)}
-  .dx.timing{border-color:rgba(240,180,60,.28)}  .dx.timing .h{color:var(--warn)}
-  .dx.income{border-color:rgba(46,229,169,.26)}  .dx.income .h{color:var(--accent)}
-  .dx.spending{border-color:rgba(255,105,120,.26)} .dx.spending .h{color:var(--bad)}
+  .dx.timing{border-color:rgba(245,213,71,.28)}  .dx.timing .h{color:var(--warn)}
+  .dx.income{border-color:rgba(156,201,245,.26)}  .dx.income .h{color:var(--accent)}
+  .dx.spending{border-color:rgba(255,61,143,.26)} .dx.spending .h{color:var(--bad)}
 
   /* the lever pane: whatever the diagnosis just told her to do */
   .lvhead{display:flex;align-items:baseline;gap:10px;padding:0 0 10px}
@@ -362,8 +421,8 @@
   .rw{display:flex;align-items:baseline;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid)}
   .rw:last-child{border-bottom:none}
   .rw .p{flex:0 0 2.8em;font-size:11px;color:var(--ink2);font-variant-numeric:tabular-nums}
-  .rw .bar{flex:1;height:4px;border-radius:999px;background:rgba(255,255,255,.05);position:relative;overflow:hidden}
-  .rw .bar i{position:absolute;inset:0 auto 0 0;border-radius:999px;background:var(--accent)}
+  .rw .bar{flex:1;height:2px;background:rgba(255,255,255,.12);position:relative;overflow:hidden}
+  .rw .bar i{position:absolute;inset:0 auto 0 0;background:var(--ink)}
   .rw.thin .bar i{background:var(--warn)} .rw.broke .bar i{background:var(--bad)}
   .rw .v{flex:0 0 auto;font-size:11.5px;font-variant-numeric:tabular-nums;min-width:4.6em;text-align:right}
   .rw.broke .v{color:var(--bad)} .rw.thin .v{color:var(--warn)}
@@ -373,13 +432,21 @@
   .lever b{display:block;font-size:10px;letter-spacing:.1em;margin-bottom:3px}
   .lever.chase b{color:var(--warn)} .lever.book b{color:var(--accent)} .lever.clear b{color:var(--accent)}
 
-  /* 這一季: the target as a track with three milestones on it, not three separate goals */
-  .track{position:relative;height:7px;border-radius:999px;background:rgba(255,255,255,.06);
-    margin:9px 0 5px;overflow:hidden}
-  .track i{position:absolute;inset:0 auto 0 0;border-radius:999px}
-  .track i.landed{background:var(--accent)}
-  .track i.booked{background:rgba(46,229,169,.32)}
-  .tmark{position:absolute;top:-3px;width:1px;height:13px;background:rgba(255,255,255,.35)}
+  /* 這一季: the target as a track with three milestones on it, not three separate goals.
+     Her rule for every progress rule in the system: 1.5–2px, square, never thick — and
+     the "you are here" position is an 8–9px dot in an accent, not a fatter bar. A 7px
+     pill reads as a component; a 2px rule reads as a measurement. */
+  .track{position:relative;height:2px;background:rgba(255,255,255,.12);
+    margin:13px 0 9px;overflow:visible}
+  .track i{position:absolute;inset:0 auto 0 0}
+  .track i.landed{background:var(--ink)}
+  .track i.booked{background:rgba(255,255,255,.28)}
+  .tmark{position:absolute;top:-4px;width:1px;height:10px;background:rgba(255,255,255,.35)}
+  /* the marker: 8px, and it is the only coloured thing on the rule */
+  .track .here{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;
+    transform:translate(-50%,-50%);background:var(--accent);
+    box-shadow:0 0 0 3px var(--plane)}
+  .track .here.over{background:var(--bad)}
   .tierhead{display:flex;align-items:baseline;gap:10px}
   .tierhead .nm2{font-size:12px;color:var(--ink2);letter-spacing:.08em;flex:0 0 2.6em}
   .tierhead .amt2{font-size:21px;font-weight:200;letter-spacing:-.7px;font-variant-numeric:tabular-nums}
@@ -410,13 +477,94 @@
   .tier .amt{font-size:19px;font-weight:200;letter-spacing:-.6px;font-variant-numeric:tabular-nums;
     min-width:5.2em;text-align:right}
   .tier .sub{flex:1;min-width:0;font-size:10.5px;color:var(--muted);line-height:1.45}
-  .meter{height:5px;border-radius:999px;background:rgba(255,255,255,.07);overflow:hidden;margin:7px 0 3px}
-  .meter i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+  .meter{height:2px;background:rgba(255,255,255,.12);overflow:hidden;margin:9px 0 5px}
+  .meter i{display:block;height:100%;background:var(--ink)}
   .wall{padding:12px 0;border-bottom:1px solid var(--grid)}
   .wall:last-child{border-bottom:none}
   .wall .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:12px}
   .wall .top b{font-variant-numeric:tabular-nums;font-weight:400}
   .wall .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:3px}
+
+  /* ── ⓘ ────────────────────────────────────────────────────────────────────
+     Momo: "there's right now a lot of small word explanation of the algorithm and how
+     things are calculated, maybe we could compact all that into small info icon."
+     There were thirty-six of them, and on 計畫 they were most of the page — the card
+     that answers "can I spend this" was three quarters footnote. The explanations were
+     not wrong, they were just permanently on.
+     The rule for what goes in one: anything that explains HOW a number was reached.
+     What the number IS stays on the surface; what she should DO about it stays on the
+     surface. Only the arithmetic hides, and it hides one tap away, with her own live
+     figures in it rather than a description of the formula. */
+  .i{display:inline-grid;place-items:center;width:15px;height:15px;flex:0 0 15px;
+     border-radius:50%;cursor:pointer;font-style:normal;font-size:9px;font-weight:600;
+     letter-spacing:0;line-height:1;color:var(--muted);text-transform:none;
+     border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.04);
+     vertical-align:middle;user-select:none;padding:0;
+     transition:color .15s,border-color .15s,background .15s}
+  .i::before{content:"i";font-family:"Instrument Sans",system-ui,sans-serif}
+  .i:hover,.i.on{color:var(--ink);border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.10)}
+  .i:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  h2 .i{margin-left:6px}
+
+  .pop{position:fixed;z-index:90;width:min(340px,calc(100vw - 32px));display:none;
+    padding:16px 18px 15px;border-radius:20px;
+    background:linear-gradient(rgba(255,255,255,.07),rgba(255,255,255,.07)) #101015;
+    -webkit-backdrop-filter:blur(30px) saturate(160%);backdrop-filter:blur(30px) saturate(160%);
+    border:1px solid rgba(255,255,255,.14);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 24px 50px -20px rgba(0,0,0,.85);
+    font-size:12px;line-height:1.65;color:var(--ink2)}
+  .pop.on{display:block}
+  .pop h4{margin:0 0 9px;font-size:11px;font-weight:500;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--muted)}
+  .pop .lede,.infoitem .lede{color:var(--ink);font-size:13px;line-height:1.6;margin-bottom:12px;font-weight:300}
+  .pop .calc,.infoitem .calc{border-top:1px solid rgba(255,255,255,.10);padding-top:10px}
+  .pop .cl2,.infoitem .cl2{display:flex;justify-content:space-between;gap:14px;padding:3.5px 0;font-size:11.5px}
+  .pop .cl2 .k,.infoitem .cl2 .k{color:var(--muted);flex:1;min-width:0}
+  .pop .cl2 b,.infoitem .cl2 b{font-weight:500;color:var(--ink);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .pop .cl2.on .k,.infoitem .cl2.on .k{color:var(--ink2)} .pop .cl2.on b{color:var(--accent)}
+  .pop .doit,.infoitem .doit{margin-top:11px;padding-top:10px;border-top:1px solid rgba(255,255,255,.10);
+    font-size:11.5px;line-height:1.7;color:var(--ink2)}
+  .pop .src,.infoitem .src{margin-top:9px;font-size:10px;color:var(--muted);line-height:1.6}
+  /* ── the drill-down ───────────────────────────────────────────────────────
+     From Momo's own screen 4: tap an envelope row, get that one category full-screen
+     with a scrubbable twelve-bar history. It is why 分類趨勢 does not need to be a
+     standing pane — the stacked chart answers "which band got fat", and this answers
+     "when, and by how much", which is a question you only ask about one category at a
+     time. */
+  .row.cat{cursor:pointer}
+  .row.cat:hover .nm{color:var(--accent)}
+  .row.cat:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+  .drill{position:fixed;inset:0;z-index:70;display:none;padding:38px 44px;
+    background:rgba(5,5,8,.86);
+    -webkit-backdrop-filter:blur(34px) saturate(180%);backdrop-filter:blur(34px) saturate(180%)}
+  .drill.on{display:flex;flex-direction:column}
+  .drill .dback{display:inline-flex;align-items:center;gap:6px;color:var(--muted);
+    font-size:12.5px;cursor:pointer;align-self:flex-start;background:none;border:0;
+    font-family:inherit;padding:4px 0}
+  .drill .dback:hover{color:var(--ink)}
+  .drill .deyebrow{font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);margin:18px 0 6px}
+  .drill .dtotal{font-size:42px;font-weight:500;letter-spacing:-.045em;line-height:1;
+    font-variant-numeric:tabular-nums}
+  .drill .dstat{font-size:13px;color:var(--ink2);margin-top:9px}
+  .drill .dstat.over{color:var(--bad)}
+  /* the label line has its own reserved height so scrubbing never nudges the chart */
+  .drill .dlabel{height:22px;font-size:12px;color:var(--ink2);margin:26px 0 6px;
+    font-variant-numeric:tabular-nums}
+  .drill .dbars{display:flex;align-items:flex-end;gap:5px;height:150px}
+  .drill .dbars i{flex:1;background:rgba(255,255,255,.12);min-height:1px;
+    transition:background .12s;cursor:pointer}
+  .drill .dbars i.on{background:var(--accent)}
+  .drill .daxis{display:flex;gap:5px;margin-top:8px}
+  .drill .daxis span{flex:1;text-align:center;font-size:9.5px;color:var(--muted)}
+
+  /* the index on 訓練輪: the same entries, all open at once, so nothing that left the
+     layout is actually gone — it just stopped shouting */
+  .infolist{display:grid;gap:14px}
+  .infoitem{padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.03);
+    border:1px solid var(--grid)}
+  .infoitem h4{margin:0 0 8px;font-size:11px;font-weight:500;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--muted)}
 
   /* ── 收入 screen: four figures, then rhythm / payers / record / what's coming ── */
   #s-proj > .grid{height:100%;display:grid;gap:var(--gap);
@@ -472,15 +620,15 @@
   .kind button{border:0;background:none;color:var(--muted);font-family:inherit;font-size:10px;
     letter-spacing:.06em;padding:4px 10px;border-radius:999px;cursor:default}
   .kind button.on{background:rgba(255,255,255,.07);color:var(--accent);
-    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28)}
+    box-shadow:inset 0 0 0 1px rgba(156,201,245,.28)}
   .dsec{font-size:9.5px;letter-spacing:.2em;color:var(--muted);margin:18px 0 6px;
     padding-top:12px;border-top:1px solid var(--grid)}
   .dsec:first-child{border-top:none;padding-top:0;margin-top:4px}
   .cl{display:inline-block;font-size:9.5px;padding:1px 7px;border-radius:999px;
     background:rgba(255,255,255,.06);color:var(--muted);margin-left:6px}
-  .cl.todo{color:var(--warn);background:rgba(240,180,60,.12)}
+  .cl.todo{color:var(--warn);background:rgba(245,213,71,.12)}
   .cl.sent{color:var(--ink2);background:rgba(255,255,255,.08)}
-  .cl.paid{color:var(--accent);background:rgba(46,229,169,.12)}
+  .cl.paid{color:var(--accent);background:rgba(156,201,245,.12)}
   .cl.wont{color:var(--muted)}
   .pj{cursor:pointer}
   .pj:hover{background:rgba(255,255,255,.02)}
@@ -513,7 +661,7 @@
   .switch button{border:0;background:none;color:var(--muted);font-family:inherit;font-size:10px;
     font-weight:300;letter-spacing:.08em;padding:3px 11px;border-radius:999px;cursor:pointer}
   .switch button.on{background:rgba(255,255,255,.07);color:var(--accent);
-    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28)}
+    box-shadow:inset 0 0 0 1px rgba(156,201,245,.28)}
 
   /* a payer, with its share drawn under the name */
   .pay{padding:9px 0;border-bottom:1px solid var(--grid)}
@@ -527,8 +675,8 @@
   /* ── BRAIN screen ── */
   #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1.3fr 1.05fr .95fr;grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
-    grid-template-areas:"bmath bchg bnw" "bmem  bmem bchat";}
-  [data-pane=bmath]{grid-area:bmath} [data-pane=bnw]{grid-area:bnw}
+    grid-template-areas:"bmath binfo bchg" "bnw   binfo bmem" "bchat binfo bmem";}
+  [data-pane=bmath]{grid-area:bmath} [data-pane=binfo]{grid-area:binfo} [data-pane=bnw]{grid-area:bnw}
   [data-pane=bmem]{grid-area:bmem} [data-pane=bchat]{grid-area:bchat}
   [data-pane=bchg]{grid-area:bchg}
 
@@ -542,7 +690,7 @@
   .chg.undone .what,.chg.undone .src{opacity:.4;text-decoration:line-through}
   .undo{flex:0 0 auto;border:1px solid var(--border);background:rgba(255,255,255,.04);
     color:var(--ink2);border-radius:999px;font-family:inherit;font-size:10px;padding:3px 10px;cursor:pointer}
-  .undo:hover{color:var(--bad);border-color:rgba(255,92,147,.45)}
+  .undo:hover{color:var(--bad);border-color:rgba(255,61,143,.45)}
   .undo[disabled]{opacity:.35;cursor:default}
   .formula{font-size:13px;line-height:1.95;color:var(--ink2)}
   .formula b{color:var(--ink);font-variant-numeric:tabular-nums}
@@ -558,7 +706,7 @@
   .segbar::-webkit-scrollbar{display:none}
   .segbar button{border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--ink2);
     border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
-  .segbar button.on{background:rgba(46,229,169,.14);border-color:rgba(46,229,169,.5);color:var(--accent);font-weight:650}
+  .segbar button.on{background:rgba(156,201,245,.14);border-color:rgba(156,201,245,.5);color:var(--accent);font-weight:650}
   .bottomnav{display:none;flex:0 0 auto;gap:4px;border-top:1px solid var(--border);padding-top:8px}
   .bottomnav a{flex:1;color:var(--muted);font-size:10.5px;padding:4px 2px;border-radius:9px;text-align:center;line-height:1.25}
   .bottomnav a .ic{display:block;font-size:16px;margin-bottom:1px}
@@ -613,46 +761,34 @@
     #s-brain > .grid > [data-pane]{display:none}
 
     /* pinned heroes */
-    #s-home > .grid > [data-pane=budget],
-    #s-home > .grid > [data-pane=nw],
     #s-account > .grid > [data-pane=ahead],
-    #s-income > .grid > [data-pane=istat],
     #s-proj > .grid > [data-pane=pstat]{display:flex;flex:0 0 auto}
 
     /* the selected pane fills what's left */
-    #s-home > .grid.sel-accounts > [data-pane=accounts],
-    #s-home > .grid.sel-recent   > [data-pane=recent],
-    #s-home > .grid.sel-flows    > [data-pane=flows],
-    #s-home > .grid.sel-cats     > [data-pane=cats],
-    #s-home > .grid.sel-pending  > [data-pane=pending],
-    #s-account > .grid.sel-aled   > [data-pane=aled],
-    #s-account > .grid.sel-acurve > [data-pane=acurve],
-    #s-account > .grid.sel-aflow  > [data-pane=aflow],
-    #s-account > .grid.sel-acats  > [data-pane=acats],
-    #s-acct > .grid.sel-alist   > [data-pane=alist],
-    #s-acct > .grid.sel-acomp   > [data-pane=acomp],
+    #s-home > .grid.sel-toearn > [data-pane=toearn],
+    #s-home > .grid.sel-lever > [data-pane=lever],
+    #s-home > .grid.sel-cats > [data-pane=cats],
+    #s-plan > .grid.sel-book > [data-pane=book],
+    #s-plan > .grid.sel-runway > [data-pane=runway],
+    #s-plan > .grid.sel-ssn > [data-pane=ssn],
+    #s-plan > .grid.sel-iperf > [data-pane=iperf],
+    #s-plan > .grid.sel-ipay > [data-pane=ipay],
+    #s-acct > .grid.sel-nw > [data-pane=nw],
+    #s-acct > .grid.sel-alist > [data-pane=alist],
+    #s-acct > .grid.sel-callist > [data-pane=callist],
+    #s-acct > .grid.sel-flows > [data-pane=flows],
     #s-acct > .grid.sel-arecent > [data-pane=arecent],
-    #s-cal  > .grid.sel-callist > [data-pane=callist],
-    #s-cal  > .grid.sel-calbars > [data-pane=calbars],
-    #s-cal  > .grid.sel-calpend > [data-pane=calpend],
-    #s-plan > .grid.sel-toearn   > [data-pane=toearn],
-    #s-plan > .grid.sel-lever    > [data-pane=lever],
-    #s-plan > .grid.sel-book     > [data-pane=book],
-    #s-plan > .grid.sel-ssn      > [data-pane=ssn],
-    #s-plan > .grid.sel-runway   > [data-pane=runway],
-    #s-plan > .grid.sel-standing > [data-pane=standing],
-    #s-plan > .grid.sel-cats     > [data-pane=cats],
-    #s-plan > .grid.sel-trend    > [data-pane=trend],
-    #s-proj > .grid.sel-plist   > [data-pane=plist],
+    #s-account > .grid.sel-aled > [data-pane=aled],
+    #s-account > .grid.sel-acurve > [data-pane=acurve],
+    #s-account > .grid.sel-aflow > [data-pane=aflow],
+    #s-account > .grid.sel-acats > [data-pane=acats],
+    #s-proj > .grid.sel-plist > [data-pane=plist],
     #s-proj > .grid.sel-pclient > [data-pane=pclient],
-    #s-income > .grid.sel-iperf > [data-pane=iperf],
-    #s-income > .grid.sel-ipay  > [data-pane=ipay],
-    #s-income > .grid.sel-irecv > [data-pane=irecv],
-    #s-income > .grid.sel-iexp  > [data-pane=iexp],
-    #s-brain > .grid.sel-bchg  > [data-pane=bchg],
+    #s-brain > .grid.sel-binfo > [data-pane=binfo],
     #s-brain > .grid.sel-bmath > [data-pane=bmath],
-    #s-brain > .grid.sel-bnw   > [data-pane=bnw],
-    #s-brain > .grid.sel-bmem  > [data-pane=bmem],
+    #s-brain > .grid.sel-bchg > [data-pane=bchg],
+    #s-brain > .grid.sel-bnw > [data-pane=bnw],
+    #s-brain > .grid.sel-bmem > [data-pane=bmem],
     #s-brain > .grid.sel-bchat > [data-pane=bchat]{display:flex;flex:1 1 auto;min-height:0}
   }
 </style>
@@ -683,13 +819,13 @@
       <h1 id="pageTitle">默默，阿姨看著呢</h1>
       <div class="quip" id="quip"></div>
     </div>
+    <!-- Four, named for the question each one answers. Six named for data types meant
+         「錢什麼時候進來」 had an answer on three of them and 「今天能不能買」 on two. -->
     <div class="tabs">
-      <a id="tab-home" href="#/">總覽</a>
-      <a id="tab-plan" href="#/plan">計畫</a>
-      <a id="tab-acct" href="#/accounts">帳戶</a>
-      <a id="tab-cal" href="#/cal">行事曆</a>
-      <a id="tab-income" href="#/income">收入</a>
-      <a id="tab-proj" href="#/projects">專案</a>
+      <a id="tab-home" href="#/">今天</a>
+      <a id="tab-acct" href="#/money">錢</a>
+      <a id="tab-plan" href="#/work">接案</a>
+      <a id="tab-proj" href="#/projects">案子</a>
     </div>
     <div class="asof" id="asof">載入中…</div>
   </div>
@@ -699,6 +835,22 @@
   <!-- ───────── HOME ───────── -->
   <div class="screen on" id="s-home">
     <div class="grid sel-accounts" id="homeGrid">
+
+      <section class="card" data-pane="toearn">
+        <h2>這一期 <span class="more" id="teMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="teBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="lever">
+        <h2 id="levTitle">能做的事 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="owed"></i> <span class="more" id="levMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="levBox"><div class="empty">計算中…</div></div>
+      </section>
+
+      <section class="card" data-pane="cats">
+        <h2>花在哪 <span class="more" id="catMeta"></span></h2>
+        <div class="body" id="planCats"><div class="empty">還沒有資料。</div></div>
+      </section>
+
       <section class="card" data-pane="budget">
         <h2>這期還能花</h2>
         <div class="flexbody">
@@ -712,24 +864,19 @@
         </div>
       </section>
 
-      <section class="card" data-pane="nw">
-        <h2>淨資產</h2>
-        <div class="flexbody">
-          <div class="nwtop"><span class="big" id="nwBig">—</span><span class="delta" id="nwDelta"></span></div>
-          <div class="cbox sparkwrap" style="margin:6px -4px 0"><canvas id="sparkChart"></canvas></div>
-          <div class="chiprow" id="nwChips"></div>
-        </div>
-      </section>
-
       <section class="card" data-pane="accounts">
         <h2>帳戶 <span class="more" id="acctTotals" style="cursor:default"></span></h2>
         <div class="body" id="acctBox"><div class="empty">載入中…</div></div>
       </section>
 
-      <section class="card" data-pane="flows">
-        <h2>每半月 收入 vs 支出 <span class="more" style="cursor:default;color:var(--muted)">粗線＝月份分界</span></h2>
-        <div class="flexbody"><div class="cbox"><canvas id="flowChart"></canvas></div></div>
+      <section class="card" data-pane="trend">
+        <h2>分類趨勢 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="trend"></i> <span class="more">近 12 個半月</span></h2>
+        <div class="flexbody"><div class="cbox"><canvas id="catTrendChart"></canvas></div></div>
       </section>
+
+
+
+
 
 
 
@@ -779,16 +926,46 @@
         </div>
         <div class="body" id="aTable"></div>
       </section>
+
+
+
+
+
     </div>
   </div>
 
   <!-- ───────── INCOME ───────── -->
   <div class="screen" id="s-acct">
     <div class="grid sel-alist" id="acctsGrid">
+      <section class="card" data-pane="nw">
+        <h2>淨資產 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="nw"></i></h2>
+        <div class="flexbody">
+          <div class="nwtop"><span class="big" id="nwBig">—</span><span class="delta" id="nwDelta"></span></div>
+          <div class="cbox sparkwrap" style="margin:6px -4px 0"><canvas id="sparkChart"></canvas></div>
+          <div class="chiprow" id="nwChips"></div>
+        </div>
+      </section>
+
 
       <section class="card" data-pane="alist">
         <h2>所有帳戶 <span class="more" id="alistMeta"></span></h2>
         <div class="body" id="alistBox"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="flows">
+        <h2>每半月 收入 vs 支出 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="flows"></i></h2>
+        <div class="flexbody"><div class="cbox"><canvas id="flowChart"></canvas></div></div>
+      </section>
+
+
+      <section class="card" data-pane="callist">
+        <h2>接下來 <span class="more" id="calMeta"></span></h2>
+        <div class="body" id="calBox"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="arecent">
+        <h2>最近的帳 <span class="more" onclick="go('#/brain')">完整紀錄 →</span></h2>
+        <div class="body" id="arecentBox"><div class="empty">載入中…</div></div>
       </section>
 
       <section class="card" data-pane="acomp">
@@ -800,22 +977,14 @@
         </div></div>
       </section>
 
-      <section class="card" data-pane="arecent">
-        <h2>最近的帳 <span class="more" onclick="go('#/brain')">完整紀錄 →</span></h2>
-        <div class="body" id="arecentBox"><div class="empty">載入中…</div></div>
-      </section>
+
+
 
     </div>
   </div>
 
   <div class="screen" id="s-cal">
     <div class="grid sel-callist" id="calGrid">
-
-      <section class="card" data-pane="callist">
-        <h2>接下來 <span class="more" id="calMeta"></span></h2>
-        <div class="body" id="calBox"><div class="empty">載入中…</div></div>
-      </section>
-
       <section class="card" data-pane="calbars">
         <h2>每月進出 <span class="more">只算有日期的</span></h2>
         <div class="flexbody"><div class="cbox"><canvas id="calChart"></canvas></div></div>
@@ -826,76 +995,28 @@
         <div class="body" id="calPendBox"><div class="empty">載入中…</div></div>
       </section>
 
+
+
+
     </div>
   </div>
 
   <div class="screen" id="s-plan">
     <div class="grid sel-toearn" id="planGrid">
-
-      <section class="card" data-pane="toearn">
-        <h2>這一期 <span class="more" id="teMeta" style="cursor:default;color:var(--muted)"></span></h2>
-        <div class="body" id="teBox"><div class="empty">計算中…</div></div>
-      </section>
-
-      <section class="card" data-pane="lever">
-        <h2 id="levTitle">能做的事 <span class="more" id="levMeta" style="cursor:default;color:var(--muted)"></span></h2>
-        <div class="body" id="levBox"><div class="empty">計算中…</div></div>
-      </section>
-
       <section class="card" data-pane="book">
-        <h2>接下來要接多少・不會變窮 <span class="more" id="bkMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <h2>接下來要接多少 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="tobook"></i> <span class="more" id="bkMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="bkBox"><div class="empty">計算中…</div></div>
       </section>
 
       <section class="card" data-pane="runway">
-        <h2>撐得到什麼時候・不會歸零 <span class="more" id="rwMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <h2>撐得到什麼時候 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="runway"></i> <span class="more" id="rwMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="rwBox"><div class="empty">計算中…</div></div>
       </section>
 
       <section class="card" data-pane="ssn">
-        <h2>這一季 <span class="more" id="ssnMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <h2>這一季 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="season"></i> <span class="more" id="ssnMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="ssnBox"><div class="empty">計算中…</div></div>
       </section>
-
-      <section class="card" data-pane="standing">
-        <h2>現在的水位</h2>
-        <div class="body" id="standBox"><div class="empty">計算中…</div></div>
-      </section>
-
-      <section class="card" data-pane="cats">
-        <h2>花在哪 <span class="more" id="catMeta"></span></h2>
-        <div class="body" id="planCats"><div class="empty">還沒有資料。</div></div>
-      </section>
-
-      <section class="card" data-pane="trend">
-        <h2>分類趨勢 <span class="more">近 12 個半月</span></h2>
-        <div class="flexbody"><div class="cbox"><canvas id="catTrendChart"></canvas></div></div>
-      </section>
-
-    </div>
-  </div>
-
-  <!-- ───────── 專案 ───────── -->
-  <div class="screen" id="s-proj">
-    <div class="grid sel-plist" id="projGrid">
-      <section class="card" data-pane="pstat"><div class="stats3" id="projStats"></div></section>
-
-      <section class="card" data-pane="plist">
-        <h2>每一個案子 <span class="more" id="projMeta" style="cursor:default;color:var(--muted)"></span></h2>
-        <div class="body" id="projList"><div class="empty">載入中…</div></div>
-      </section>
-
-      <section class="card" data-pane="pclient">
-        <h2>客戶 <span class="more" style="cursor:default;color:var(--muted)">日薪走勢</span></h2>
-        <div class="body" id="projClients"><div class="empty">載入中…</div></div>
-      </section>
-    </div>
-  </div>
-
-  <!-- ───────── 收入 ───────── -->
-  <div class="screen" id="s-income">
-    <div class="grid sel-iperf" id="incGrid">
-      <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
 
       <section class="card" data-pane="iperf">
         <h2>收入節奏
@@ -914,6 +1035,45 @@
         <div class="body" id="incPayers"><div class="empty">載入中…</div></div>
       </section>
 
+      <section class="card" data-pane="standing">
+        <h2>現在的水位 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="floor"></i></h2>
+        <div class="body" id="standBox"><div class="empty">計算中…</div></div>
+      </section>
+
+
+
+
+
+
+
+
+
+    </div>
+  </div>
+
+  <!-- ───────── 專案 ───────── -->
+  <div class="screen" id="s-proj">
+    <div class="grid sel-plist" id="projGrid">
+      <section class="card" data-pane="pstat"><div class="stats3" id="projStats"></div></section>
+
+      <section class="card" data-pane="plist">
+        <h2>每一個案子 <span class="more" id="projMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="projList"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="pclient">
+        <h2>客戶 <span class="more" style="cursor:default;color:var(--muted)">日薪走勢</span></h2>
+        <div class="body" id="projClients"><div class="empty">載入中…</div></div>
+      </section>
+
+
+
+    </div>
+  </div>
+
+  <!-- ───────── 收入 ───────── -->
+  <div class="screen" id="s-income">
+    <div class="grid sel-iperf" id="incGrid">
       <section class="card" data-pane="irecv">
         <h2>入帳紀錄 <span class="more" id="irecvMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="incReceived"><div class="empty">載入中…</div></div>
@@ -923,24 +1083,55 @@
         <h2>接下來三個月 <span class="more" id="iexpMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="incExpected"><div class="empty">載入中…</div></div>
       </section>
+
+      <section class="card" data-pane="istat"><div class="stats3" id="incStats"></div></section>
+
+
+
+
+
     </div>
   </div>
 
   <!-- ───────── BRAIN ───────── -->
   <div class="screen" id="s-brain">
     <div class="grid sel-bmath" id="brainGrid">
+      <!-- Everything that left the layout when the ⓘ went in lands here, all open at
+           once. The explanations were never the problem; being unable to turn them off
+           was. This is the off switch's other side. -->
       <section class="card" data-pane="bmath">
-        <h2>她怎麼算「這期能花多少」 <span class="more" onclick="go('#/')">← 回總覽</span></h2>
+        <h2>她怎麼算的 <span class="more" onclick="go('#/')">← 回今天</span></h2>
         <div class="body" id="budgetMath"></div></section>
+
+      <section class="card" data-pane="binfo">
+        <h2>每個數字是怎麼算出來的</h2>
+        <div class="body"><div class="infolist" id="infoIndex"></div></div></section>
+
+      <section class="card" data-pane="bnw"><h2>淨資產 & 設定</h2><div class="body" id="nwMath"></div></section>
+
+      <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
+
       <section class="card" data-pane="bchg">
         <h2>異動紀錄 <span class="more" id="chgMeta" style="cursor:default;color:var(--muted)"></span></h2>
         <div class="body" id="chgBox"><div class="empty">載入中…</div></div>
       </section>
-      <section class="card" data-pane="bnw"><h2>淨資產 & 設定</h2><div class="body" id="nwMath"></div></section>
       <section class="card" data-pane="bmem"><h2>她學到的商家</h2><div class="body" id="memBox"></div></section>
-      <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
     </div>
   </div>
+
+  <!-- one category, full screen, scrubbable -->
+  <div class="drill" id="drill" role="dialog" aria-label="分類細節">
+    <button class="dback" onclick="closeDrill()">← 回花在哪</button>
+    <div class="deyebrow" id="drEyebrow"></div>
+    <div class="dtotal" id="drTotal"></div>
+    <div class="dstat" id="drStat"></div>
+    <div class="dlabel" id="drLabel"></div>
+    <div class="dbars" id="drBars"></div>
+    <div class="daxis" id="drAxis"></div>
+  </div>
+
+  <!-- one popover, reused by every ⓘ on every screen -->
+  <div class="pop" id="pop" role="dialog" aria-label="怎麼算的"></div>
 
   <div class="scrim" id="pjScrim" onclick="closeProject()"></div>
   <aside class="drawer" id="pjDrawer" aria-hidden="true">
@@ -952,12 +1143,10 @@
   </aside>
 
   <div class="bottomnav">
-    <a id="bn-home" href="#/"><span class="ic">◎</span>總覽</a>
-    <a id="bn-plan" href="#/plan"><span class="ic">◇</span>計畫</a>
-    <a id="bn-acct" href="#/accounts"><span class="ic">▤</span>帳戶</a>
-    <a id="bn-cal" href="#/cal"><span class="ic">◷</span>行事曆</a>
-    <a id="bn-income" href="#/income"><span class="ic">↓</span>收入</a>
-    <a id="bn-proj" href="#/projects"><span class="ic">▧</span>專案</a>
+    <a id="bn-home" href="#/"><span class="ic">◎</span>今天</a>
+    <a id="bn-acct" href="#/money"><span class="ic">▤</span>錢</a>
+    <a id="bn-plan" href="#/work"><span class="ic">◇</span>接案</a>
+    <a id="bn-proj" href="#/projects"><span class="ic">▧</span>案子</a>
   </div>
 </div>
 
@@ -998,8 +1187,8 @@ function showAudit(problems){
   if(!seen.length){ if(bar) bar.remove(); return; }
   if(!bar){
     bar=document.createElement('div'); bar.id='auditBar';
-    bar.style.cssText='flex:0 0 auto;background:rgba(255,176,46,.12);border:1px solid rgba(255,176,46,.35);'
-      +'color:#ffb02e;border-radius:10px;padding:7px 12px;font-size:12px;line-height:1.5';
+    bar.style.cssText='flex:0 0 auto;background:rgba(245,213,71,.12);border:1px solid rgba(245,213,71,.35);'
+      +'color:#F5D547;border-radius:10px;padding:7px 12px;font-size:12px;line-height:1.5';
     document.querySelector('.app').insertBefore(bar, document.querySelector('.screen'));
   }
   bar.innerHTML='⚠️ 數字對不起來：'+seen.map(esc).join('｜');
@@ -1035,16 +1224,19 @@ function halfMonthScales(points,yFmt){
 }
 
 /* ── mobile pane switcher ── */
+/* On the phone a tab shows one pane at a time and this is the switcher. It follows the
+   four-tab split: whatever a tab holds on the desktop grid, it offers here in the same
+   reading order. 這一期 is deliberately first on 今天 — it is the only thing most visits
+   are actually for. */
 const SEGS = {
-  home:   [['accounts','帳戶'],['flows','半月收支']],
-  plan:   [['toearn','這一期'],['lever','能做的事'],['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
-           ['cats','花在哪'],['trend','趨勢']],
-  acct:   [['alist','帳戶'],['acomp','錢在哪'],['arecent','最近的帳']],
-  cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
+  home:   [['toearn','這一期'],['lever','能做的事'],['cats','花在哪']],
+  plan:   [['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
+           ['iperf','收入節奏'],['ipay','誰付錢']],
+  acct:   [['nw','淨資產'],['alist','帳戶'],['callist','接下來'],
+           ['flows','半月收支'],['arecent','最近的帳']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
-  income: [['iperf','節奏'],['ipay','誰付錢'],['irecv','入帳紀錄'],['iexp','接下來']],
   proj:   [['plist','每一個案子'],['pclient','客戶']],
-  brain:  [['bchg','異動紀錄'],['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
+  brain:  [['bmath','她怎麼算的'],['binfo','每個數字'],['bchg','異動紀錄'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
 const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', acct:'acctsGrid',
               cal:'calGrid', income:'incGrid', proj:'projGrid', brain:'brainGrid'};
@@ -1061,12 +1253,231 @@ function buildSeg(view){
   if(segs.length) selectPane(view,segs[0][0]);
 }
 
+/* ── ⓘ ─────────────────────────────────────────────────────────────────────────
+   One registry, one popover, one rule about what belongs in it.
+
+   IN: how a number was arrived at — the three lenses, the tax haircut, the confidence
+   discount, why the fortnight line is what it is.
+   OUT: what the number means, and what she is supposed to do about it. The diagnosis
+   block stays on the card at 15px; it is the answer to "should I feel bad about this",
+   which is the whole reason the three-lens model exists, and burying it behind a tap
+   would undo the thing she asked for two builds ago.
+
+   `how` is handed the live payload, so the popover shows her arithmetic with her own
+   figures in it — 「水位 $5,485 − 守住 $2,233 ÷ 4 期」 rather than a description of a
+   formula. A static sentence about how something is computed is documentation; the same
+   sentence with tonight's numbers in it is a receipt. */
+const INFOCTX={};
+const _r=(k,v,on)=>`<div class="cl2${on?' on':''}"><span class="k">${k}</span><b>${v}</b></div>`;
+
+const INFO={
+  daily:{
+    t:'今天還能花',
+    lede:'今天這一天可以用的錢。工作支出跟等報帳的不算在裡面——那不是你的花費。',
+    how(c){ const fn=c.fn, dy=(fn&&fn.daily)||{}; if(!fn) return '';
+      return _r('這一期的線', F0(fn.line))
+        + _r(`÷ 這一期還有 ${fn.days_left} 天`, `${F0(dy.daily_base)}／天`)
+        + (dy.daily_bump>0?_r('你從口袋加碼的', '+'+F0(dy.daily_bump), true):'')
+        + _r('今天已經花掉', '−'+F(dy.today_spent))
+        + _r('剩下', F0(dy.today_left), true); },
+    do:'沒花完的不會不見，會掉進「本期口袋」。要一次花多一點，跟阿姨說一聲，她從口袋裡撥。'},
+
+  pool:{
+    t:'本期口袋',
+    lede:'這一期到今天為止，每天沒花完的錢累積起來的。這是你可以刻意花掉的，不是意外省下來的。',
+    how(c){ const fn=c.fn, dy=(fn&&fn.daily)||{}; if(!fn) return '';
+      return _r('算法', '每天的「基本額」減掉那天實際花的')
+        + _r('累積到今天', F0(dy.pool), true); },
+    do:'加碼只能從這裡拿。口袋是空的就加不了——這樣加碼永遠是真的有那筆錢，不是先借未來的。'},
+
+  line:{
+    t:'這一期的線',
+    lede:'三個鏡頭各自算一條線，取最緊的那條。水位定線，另外兩個只能把它收得更緊，而且只在它們是正的時候。',
+    how(c){ const fn=c.fn; if(!fn) return '';
+      return (fn.lenses||[]).map(L=>
+          `<div class="cl2${L.name===fn.binding?' on':''}"><span class="k">${esc(L.name)}　`
+          + `<span style="color:var(--muted)">${esc(L.why||'')}</span></span>`
+          + `<b>${F0(L.value)}</b></div>`).join('')
+        + _r('綁住的是', esc(fn.binding), true); },
+    do(c){ return c.fn ? esc(c.fn.law||'') : ''; }},
+
+  owed:{
+    t:'別人欠你的',
+    lede:'已經做完、對方還沒付的錢。這是今天就能動的槓桿——催款會改變這個月，接新案子不會。',
+    how(c){ const rw=c.rw; if(!rw) return '';
+      return _r('筆數', (rw.owed||[]).length+' 筆')
+        + _r('總額', F0(rw.owed_total), true)
+        + _r('為什麼不能當現金用', '還沒進帳戶，水位算不到'); },
+    do:'今天接的案子，錢一個半月後才會到。所以缺錢的時候先打電話，不是先找工作。'},
+
+  tobook:{
+    t:'接下來要接多少',
+    lede:'要維持不變窮，接下來這一段得接進來多少錢。算的是「錢會落在什麼時候」，不是「什麼時候做」。',
+    how(c){ const tb=c.tb; if(!tb) return '';
+      return _r('已排定（打過折的）', F0(tb.booked||0))
+        + _r('今天接的案子，錢會落在', esc(tb.window||''))
+        + _r('最晚殺青日', esc(tb.wrap_by||'—'))
+        + (c.rw&&c.rw.day_rate&&c.rw.day_rate.rate?_r('換算日薪', F0(c.rw.day_rate.rate)+'／天', true):''); },
+    do:'前面那幾天是房租跟吃飯，越後面的才是在補水位、存錢。今天接的錢一個半月後才到——所以這張表算的是那個時候的窗口，不是這一季。'},
+
+  dayrate:{
+    t:'你的日薪',
+    lede:'最近有記天數的案子算出來的，用合約上的日薪，不是發票總額——前置費跟加班不是按天算的，混進去會把價碼灌水。',
+    how(c){ const dr=c.rw&&c.rw.day_rate; if(!dr) return '';
+      return _r('取樣', `${dr.jobs||0} 個案子`)
+        + _r('近期', F0(dr.recent||0)+'／天')
+        + _r('全部平均', F0(dr.observed||0)+'／天')
+        + _r('現在用的', F0(dr.rate||0)+'／天', true); },
+    do:'作品集／無酬的案子不算進來，不然 $0 會被平均進你的價碼。要改哪個案子的類型，跟阿姨講。'},
+
+  runway:{
+    t:'撐得到什麼時候',
+    lede:'完全不接新案子，照最省的過法，水位撐到哪一期見底。這是地板，不是預測。',
+    how(c){ const fc=c.rw&&c.rw.lean; if(!fc) return '';
+      return _r('現在水位（扣掉卡債跟預留的稅）', F0(fc.opening||0))
+        + _r('最省每期', F0(fc.burn||0))
+        + _r('已經排定的收入', '照落帳日排進去，並打過信心折')
+        + _r('撐得到', esc((fc.first_broke||fc.first_thin||{}).label||'八期以上'), true); },
+    do:'這一格說的是「不會歸零」；「接下來要接多少」說的是「不會變窮」。兩個都要看——撐得住不代表在往前走。'},
+
+  season:{
+    t:'這一季',
+    lede:'一整季的現金結餘，含這一季要繳的稅。負的不一定是花太兇，通常是錢卡在別人那還沒進來。',
+    how(c){ const sm=c.sm; if(!sm) return '';
+      return _r('進來', F0(sm.in_total||0))
+        + _r('出去', F0(sm.out_total||0))
+        + _r('結餘', F0(sm.net||0), true)
+        + _r('做完但還沒收到的', F0(sm.pending_gross||0)+'（打折後 '+F0(sm.pending||0)+'）'); },
+    do:'待收的錢只算 85%，因為還沒到手。錢卡在別人那，不是你亂花。'},
+
+  floor:{
+    t:'守住的水位',
+    lede:'你決定「絕對不動」的那一層。水位算可用額度的時候會先把它扣掉，所以它是一個決定，不是一個意外。',
+    how(c){ const p=c.plan; const st=p&&p.standing; if(!st) return '';
+      return (st.ladder||[]).map(r=>_r(esc(r.name)+`（${r.months} 個月最低開銷）`, F0(r.amount),
+                 st.defended&&r.name===st.defended.name)).join('')
+        + _r('現在守到', F0(st.floor||0), true); },
+    do:'要換一階跟阿姨說。往上守會讓每天能花的變少，但那是你選的，不是水位漲跌決定的。'},
+
+  nw:{
+    t:'淨資產',
+    lede:'所有資產減掉負債。跟「這期能花多少」是兩件事——淨資產漂亮不代表這個月手頭鬆。',
+    how(c){ const o=c.ov; if(!o) return '';
+      return _r('資產', F0(o.assets||0)) + _r('負債', '−'+F0(Math.abs(o.debts||0)))
+        + _r('淨資產', F0(o.net_worth||0), true)
+        + _r('其中可動用的', F0(o.spendable||0))
+        + (o.invest?_r('投資（不算可動用）', F0(o.invest)):''); },
+    do:'緊急預備金放在 Apple Savings，銀行不同步，所以那個數字是手動的——動到它記得跟阿姨講一聲。'},
+
+  trend:{
+    t:'分類趨勢',
+    lede:'每一段是那一類的花費，疊起來的高度就是那半個月的總支出。看的是「哪一段變胖了」。',
+    how(){ return _r('期間', '近 12 個半月，不含還沒過完的這一期')
+        + _r('粗線', '月份分界') + _r('不含', '工作支出、報帳中、轉帳還卡費'); },
+    do:'點一類可以看那一類自己的走勢跟最大的幾筆。'},
+
+  flows:{
+    t:'每半月 收入 vs 支出',
+    lede:'每半個月進來多少、出去多少。收入是照「錢真的到帳的日子」放的，不是照做工的日子。',
+    how(){ return _r('週期', '每月 1–15 / 16–月底')
+        + _r('固定開銷', '按實際天數攤到兩期')
+        + _r('收入認列', '照入帳日，不是工作日'); },
+    do:'兩根柱子長期一高一低才是趨勢；單一期的落差多半是入帳時間造成的。'},
+};
+
+/* 訓練輪 renders every entry expanded, in the order they appear across the four tabs.
+   The point of hiding the arithmetic is that Momo can choose when to read it — not that
+   she has to go hunting for it one tap at a time when she does want the whole picture. */
+const INFO_ORDER=['daily','pool','line','owed','tobook','dayrate','runway','season','floor','nw','trend','flows'];
+function renderInfoIndex(){
+  const box=el('infoIndex'); if(!box) return;
+  box.innerHTML = INFO_ORDER.filter(k=>INFO[k])
+    .map(k=>`<div class="infoitem">${infoHTML(k)}</div>`).join('');
+}
+
+/* ── the drill-down ──────────────────────────────────────────────────────────── */
+function openDrill(cat){
+  const c=(INFOCTX.plan||{}).categories; if(!c) return;
+  const r=(c.rows||[]).find(x=>x.category===cat); if(!r) return;
+  const s=r.series||[], mx=Math.max(1,...s);
+  // "is this period unusual" needs her own middle, not a cap she never set — she does not
+  // budget by envelope, so there is nothing to be over except her own habit
+  const sorted=[...s].sort((a,b)=>a-b);
+  const med=sorted.length?(sorted.length%2?sorted[(sorted.length-1)/2]
+            :(sorted[sorted.length/2-1]+sorted[sorted.length/2])/2):0;
+  // "over" has to mean something. Five dollars above her median is noise, and painting
+  // noise pink teaches her to stop believing the colour.
+  const last=s.length?s[s.length-1]:0, over=med>0 && last>med*1.15;
+  el('drEyebrow').textContent=`${r.label}　${r.treatment_label}`;
+  el('drTotal').textContent=F0(r.total);
+  el('drStat').className='dstat'+(over?' over':'');
+  el('drStat').textContent = med>0
+    ? `這一期 ${F0(last)}，比你自己的中位數 ${F0(med)} ${last>=med?'多':'少'} ${F0(Math.abs(last-med))}`
+    : `每期平均 ${F0(r.per_period)}`;
+  el('drLabel').textContent='';
+  el('drBars').innerHTML=s.map((v,i)=>
+    `<i data-i="${i}" style="height:${Math.max(1,100*v/mx)}%"></i>`).join('');
+  el('drAxis').innerHTML=(c.labels||[]).map(l=>`<span>${esc(l)}</span>`).join('');
+  const bars=[...el('drBars').children];
+  const hi=i=>{ bars.forEach((b,j)=>b.classList.toggle('on',j===i));
+    el('drLabel').textContent = i==null?'' : `${(c.labels||[])[i]||''}　${F(s[i])}`; };
+  bars.forEach((b,i)=>{ b.onpointerenter=()=>hi(i); b.onpointerdown=()=>hi(i); });
+  el('drBars').onpointerleave=()=>{ bars.forEach(b=>b.classList.remove('on'));
+    el('drLabel').textContent=''; };
+  el('drill').classList.add('on');
+}
+function closeDrill(){ el('drill').classList.remove('on'); }
+
+let popKey=null, popAnchor=null;
+function iBtn(k, cls){ return `<i class="i${cls?' '+cls:''}" tabindex="0" role="button"`
+  + ` aria-label="怎麼算的" data-info="${k}"></i>`; }
+
+function infoHTML(k){
+  const e=INFO[k]; if(!e) return '';
+  const how=(typeof e.how==='function'? (e.how(INFOCTX)||'') : (e.how||''));
+  const dd =(typeof e.do ==='function'? (e.do(INFOCTX) ||'') : (e.do ||''));
+  return `<h4>${esc(e.t)}</h4><div class="lede">${e.lede}</div>`
+    + (how?`<div class="calc">${how}</div>`:'')
+    + (dd ?`<div class="doit">${dd}</div>`:'');
+}
+function closePop(){
+  const p=el('pop'); if(p) p.classList.remove('on');
+  if(popAnchor) popAnchor.classList.remove('on');
+  popKey=null; popAnchor=null;
+}
+function openPop(k, anchor){
+  const p=el('pop'); if(!p) return;
+  p.innerHTML=infoHTML(k); p.classList.add('on');
+  anchor.classList.add('on'); popKey=k; popAnchor=anchor;
+  // place it under the icon, then pull it back inside the viewport on both axes
+  const a=anchor.getBoundingClientRect(), b=p.getBoundingClientRect(), pad=12;
+  let left=Math.min(Math.max(pad, a.left+a.width/2-b.width/2), innerWidth-b.width-pad);
+  let top = a.bottom+8;
+  if(top+b.height>innerHeight-pad) top=Math.max(pad, a.top-b.height-8);
+  p.style.left=left+'px'; p.style.top=top+'px';
+}
+addEventListener('click', e=>{
+  const t=e.target.closest && e.target.closest('.i');
+  if(t){ e.preventDefault(); e.stopPropagation();
+    const k=t.dataset.info;
+    if(popKey===k && popAnchor===t) closePop(); else { closePop(); openPop(k,t); }
+    return; }
+  if(!(e.target.closest && e.target.closest('.pop'))) closePop();
+});
+addEventListener('keydown', e=>{
+  if(e.key==='Escape'){ closePop(); closeDrill(); }
+  if((e.key==='Enter'||e.key===' ') && document.activeElement
+     && document.activeElement.classList.contains('i')){
+    e.preventDefault(); document.activeElement.click(); }
+});
+addEventListener('resize', closePop, {passive:true});
+
 /* ── routing ── */
 function go(h){ location.hash=h; }
 const VIEWS=['home','account','plan','acct','cal','income','proj','brain'];
 function setNav(name){
   // 'brain' is deliberately absent — it has no tab, so on that screen nothing lights up
-  for(const v of ['home','plan','acct','cal','income','proj']){
+  for(const v of ['home','plan','acct','proj']){
     const on = (v===name)||(name==='account'&&v==='acct');
     const t=el('tab-'+v), b=el('bn-'+v);
     if(t) t.classList.toggle('on',on);
@@ -1081,27 +1492,31 @@ let backTo='#/accounts';
 async function route(){
   const h=location.hash||'#/';
   const m=h.match(/^#\/a\/(.+)$/);
+  /* A tab is now a question, not a dataset, so one tab can need more than one loader.
+     The loaders are unchanged and still write to the panes they always wrote to — the
+     panes just live on a different screen now, and each keeps its own已載入 guard, so
+     asking for the same one twice costs nothing. The old hashes still resolve: Momo has
+     had #/plan bookmarked for weeks. */
   let view='home';
   if(m) view='account';
-  else if(h.startsWith('#/plan')) view='plan';
-  else if(h.startsWith('#/accounts')) view='acct';
-  else if(h.startsWith('#/cal')) view='cal';
-  else if(h.startsWith('#/income')) view='income';
+  else if(h.startsWith('#/work')||h.startsWith('#/plan')||h.startsWith('#/income')) view='plan';
+  else if(h.startsWith('#/money')||h.startsWith('#/accounts')||h.startsWith('#/cal')) view='acct';
   else if(h.startsWith('#/projects')) view='proj';
   else if(h.startsWith('#/brain')) view='brain';
-  if(view==='home')  { backTo='#/';         el('aBack').textContent='← 回總覽'; }
-  if(view==='acct')  { backTo='#/accounts'; el('aBack').textContent='← 回帳戶'; }
+  if(view==='home')  { backTo='#/';      el('aBack').textContent='← 回今天'; }
+  if(view==='acct')  { backTo='#/money'; el('aBack').textContent='← 回錢'; }
+  closeDrill(); closePop();
   for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
   setNav(view); buildSeg(view);
   try{
     if(view==='account'){ curAccount=decodeURIComponent(m[1]); aOffset=0; aInit=false; await loadAccount(); }
-    else if(view==='plan'){ el('pageTitle').textContent='計畫'; await loadPlan(); }
-    else if(view==='acct'){ el('pageTitle').textContent='帳戶'; await loadAccounts(); }
-    else if(view==='cal'){ el('pageTitle').textContent='行事曆'; await loadCal(); }
-    else if(view==='income'){ el('pageTitle').textContent='收入紀錄'; await loadIncome(); }
-    else if(view==='proj'){ el('pageTitle').textContent='專案'; await loadProjects(); }
+    else if(view==='plan'){ el('pageTitle').textContent='接案';
+      await Promise.all([loadPlan(), loadIncome()]); }
+    else if(view==='acct'){ el('pageTitle').textContent='錢';
+      await Promise.all([loadHome(), loadAccounts(), loadCal()]); }
+    else if(view==='proj'){ el('pageTitle').textContent='案子'; await loadProjects(); }
     else if(view==='brain'){ el('pageTitle').textContent='訓練輪'; await loadBrain(); }
-    else { el('pageTitle').textContent='默默，阿姨看著呢'; await loadHome(); }
+    else { el('pageTitle').textContent='今天'; await loadPlan(); }
     resizeCharts();
   }catch(e){ el('asof').innerHTML='<span class="err">載入失敗（'+e.message+'）</span>'; }
 }
@@ -1115,13 +1530,14 @@ async function loadHome(){
     getJSON('/api/overview'), getJSON('/api/trends'), getJSON('/api/accounts')]);
   stamp(o.as_of);
   showAudit([...(o.audit||[]),...(t.audit||[]),...(acc.audit||[])]);
+  Object.assign(INFOCTX,{ov:o});   // so the 淨資產 ⓘ can show her own figures
 
   if(o.budget){
     const b=o.budget, gap=b.shortfall||0, over=b.remaining<0;
     const pctLeft=b.allowance>0?Math.max(0,Math.min(100,100*b.remaining/b.allowance)):0;
     const r=el('budgetRing');
     r.style.setProperty('--pct', over?100:pctLeft);
-    r.style.setProperty('--rc', over?'#ff5c93':'#2ee5a9');
+    r.style.setProperty('--rc', over?'#FF3D8F':'#9CC9F5');
     el('ringBig').textContent=F0(b.remaining);
     el('ringBig').className='big '+(over?'neg':'pos');
     el('ringSub').textContent = b.per_day_left!=null ? `一天 ${F0(b.per_day_left)}` : '';
@@ -1168,8 +1584,8 @@ async function loadHome(){
     el('nwDelta').textContent=(d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) 30天`;
     el('nwDelta').style.color=d>=0?'var(--accent)':'var(--bad)';
     chart('sparkChart',{type:'line',
-      data:{labels:ns.map(p=>p.day),datasets:[{data:ns.map(p=>p.net),borderColor:'#2ee5a9',
-        backgroundColor:'rgba(46,229,169,.10)',borderWidth:2,tension:.3,pointRadius:0,pointHoverRadius:4,fill:true}]},
+      data:{labels:ns.map(p=>p.day),datasets:[{data:ns.map(p=>p.net),borderColor:'#9CC9F5',
+        backgroundColor:'rgba(156,201,245,.10)',borderWidth:2,tension:.3,pointRadius:0,pointHoverRadius:4,fill:true}]},
       options:{plugins:{tooltip:{intersect:false,mode:'index',callbacks:{label:c=>F(c.parsed.y)}}},
         scales:{x:{display:false},y:{display:false}}}});
   }
@@ -1189,8 +1605,8 @@ async function loadHome(){
   const fl=t.flows||[];
   if(fl.length) chart('flowChart',{type:'bar',
     data:{labels:fl.map(x=>x.label),datasets:[
-      {label:'收入',data:fl.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:18},
-      {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:18}]},
+      {label:'收入',data:fl.map(x=>x.income),backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:18},
+      {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'rgba(255,255,255,.30)',borderRadius:4,maxBarThickness:18}]},
     options:{plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
       scales:halfMonthScales(fl)}});
 }
@@ -1208,6 +1624,8 @@ async function loadPlan(){
      shortage this month, because it happened a couple weeks ago." */
   const te=d.to_earn, fn=d.fortnight, rw=d.runway, sm=d.settlement, tb=d.to_book;
   const dy = fn.daily || {daily_base:0,daily_today:0,daily_bump:0,today_spent:0,today_left:0,pool:0};
+  // everything the ⓘ popovers need to show her own numbers back to her
+  Object.assign(INFOCTX,{plan:d, fn, rw, sm, tb, te});
 
   const okc = fn.verdict==='under' ? 'var(--accent)' : 'var(--bad)';
   el('teMeta').textContent =
@@ -1237,17 +1655,19 @@ async function loadPlan(){
          reads as permission all month and then as a cliff, and gives her nothing to decide
          against on a Tuesday. What a day doesn't use lands in 本期口袋 — visible, and hers
          to spend on purpose rather than by drift. */
-      : `<div class="herorow">
-           <span class="k">今天還能花</span>
+      : (()=>{ const pct = dy.daily_today>0
+                 ? Math.min(100,100*Math.max(0,dy.today_spent)/dy.daily_today) : 0;
+        return `<div class="herorow">
+           <span class="k">今天還能花 ${iBtn('daily')}</span>
            <span class="heroamt" style="color:${dy.today_left>=0?'var(--accent)':'var(--bad)'}">${F0(dy.today_left)}</span>
            <span class="r">${dy.daily_bump>0?`含加碼 ${F0(dy.daily_bump)}`:`一天 ${F0(dy.daily_base)}`}</span>
          </div>
-         <div class="track"><i class="landed" style="width:${
-            dy.daily_today>0?Math.min(100,100*Math.max(0,dy.today_spent)/dy.daily_today):0}%"></i></div>
-         <div class="kv"><span>本期口袋　<span class="tag">沒花完的存在這</span></span>
+         <div class="track"><i class="landed" style="width:${pct}%"></i>
+           <span class="here${pct>=100?' over':''}" style="left:${pct}%"></span></div>
+         <div class="kv"><span>本期口袋 ${iBtn('pool')}</span>
            <b style="color:${dy.pool>=0?'var(--accent)':'var(--bad)'}">${F0(dy.pool)}</b></div>
-         <div class="kv"><span>這一期的線　<span class="tag">剩 ${fn.days_left} 天</span></span><b>${F0(fn.line)}</b></div>
-         <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>`)
+         <div class="kv"><span>這一期的線 ${iBtn('line')}　<span class="tag">剩 ${fn.days_left} 天</span></span><b>${F0(fn.line)}</b></div>
+         <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>`; })())
     /* Promoted out of 11px grey. This sentence is the answer to "should I feel bad about
        this number", which is the entire point of having built the three-lens model. */
     + `<div class="dx ${fn.kind}">
@@ -1255,13 +1675,11 @@ async function loadPlan(){
          <div class="h">綁住的是「${esc(fn.binding)}」——${esc(fn.diagnosis)}。</div>
          <div class="a">${esc(fn.lever)}</div>
        </div>`
-    + `<div style="font-size:9.5px;letter-spacing:.2em;color:var(--muted);margin:16px 0 2px">怎麼算出來的</div>`
-    + (fn.lenses||[]).map(L=>`<div class="ev2">
-        <span class="d">${esc(L.name)}</span>
-        <span class="w"><span class="s">${esc(L.why||'')}</span></span>
-        <span class="plus" style="color:${L.name===fn.binding?'var(--accent)':'var(--muted)'}">${F0(L.value)}</span>
-      </div>`).join('')
-    + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">${esc(fn.law)}</p>`;
+    ;
+  /* 怎麼算出來的 — six rows of arithmetic and a footnote — used to live here, under the
+     one number Momo checks before buying a coffee. It is now behind the ⓘ on 這一期的線,
+     with her live figures in it. The diagnosis above stays where it is: that one is not
+     an explanation of the maths, it is the answer to "should I feel bad about this". */
 
   /* ── 能做的事 ──────────────────────────────────────────────────────────────
      The page used to say 催已經欠你的錢 and then leave her to go find out who owed what,
@@ -1311,9 +1729,6 @@ async function loadPlan(){
                 o.lands?`・預計 ${md(o.lands)} 入帳`:''}${
                 o.late_days>0?`・晚了 ${o.late_days} 天`:''}</span></span>
             <span class="a">${F0(o.amount)}</span></div>`).join('')
-        + `<p style="font-size:10.5px;color:var(--muted);line-height:1.7;margin:12px 0 0">
-             這些是已經做完、對方還沒付的錢。催款是今天就能動的槓桿，接新案子不是——
-             今天接的，一個半月後才會進來。</p>`
       : `<div class="empty">目前沒有人欠你錢。</div>`;
   }
 
@@ -1366,7 +1781,7 @@ async function loadPlan(){
      </div>
      ${sm.unpaid_face>0?`<div class="kv"><span>其中做了但還沒收到的</span>
        <b class="pos">${F0(sm.unpaid_face)}<span class="tag">　打折後 ${F0(sm.unpaid_weighted)}</span></b></div>
-       <div class="daysleft" style="margin:2px 0 8px">錢卡在別人那，不是你亂花。</div>`:''}
+`:''}
      <div class="kv"><span>進來　已入帳 ${F0(sm.cash_in)}${sm.cash_in_more>0?`＋還會入 ${F0(sm.cash_in_more)}`:''}</span>
        <b>${F0(sm.in_total)}</b></div>
      <div class="kv"><span>出去　刷卡現金 ${F0(sm.spend_actual)}＋自己轉 ${F0(sm.spend_by_hand)}＋剩下 ${sm.days_left} 天預估 ${F0(sm.spend_projected)}</span>
@@ -1415,9 +1830,7 @@ async function loadPlan(){
            <div class="track"><i class="landed" style="width:${Math.min(100,t.covered_pct)}%"></i></div>
            <div class="sub2">${esc(t.why)}　<span style="color:var(--muted)">還差 ${F0(t.gap)}（稅前）</span></div>
          </div>`).join('')
-      + `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:10px 0 0">
-           前面那幾天是房租跟吃飯，越後面的才是在補水位、存錢。今天接的，錢一個半月後才到——
-           所以這張表算的是那個時候的窗口，不是這一季。</p>`;
+      ;  // the window-vs-season caveat moved into the ⓘ on this card's title
   }
 
   /* the three walls */
@@ -1457,7 +1870,9 @@ async function loadPlan(){
     `<div style="font-size:10px;color:var(--muted);margin-bottom:10px">` +
     c.by_treatment.map(t=>`${esc(t.label)} ${t.share}%`).join('　') + `</div>` +
     c.rows.slice(0,10).map(r=>`
-      <div class="row"><span class="l"><i class="dot" style="background:${catColor(r.category)}"></i>
+      <div class="row cat" tabindex="0" role="button" onclick="openDrill('${esc(r.category)}')"
+           onkeydown="if(event.key==='Enter')openDrill('${esc(r.category)}')">
+        <span class="l"><i class="dot" style="background:${catColor(r.category)}"></i>
         <span class="nm">${esc(r.label)}</span>
         <span class="tag">${esc(r.treatment_label)}・每期 ${F0(r.per_period)}</span></span>
         <span class="r">${F0(r.total)}　<span style="color:var(--muted);font-size:11px">${r.share}%</span></span></div>`).join('');
@@ -1574,7 +1989,7 @@ async function loadCal(){
   const bm=c.by_month||[];
   if(bm.length) chart('calChart',{type:'bar',
     data:{labels:bm.map(x=>x.month.slice(2).replace('-','/')),datasets:[
-      {label:'進',data:bm.map(x=>x.in),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:20},
+      {label:'進',data:bm.map(x=>x.in),backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:20},
       {label:'出',data:bm.map(x=>x.out),backgroundColor:'#e2477e',borderRadius:4,maxBarThickness:20}]},
     options:{plugins:{legend:{display:true,position:'bottom',
         labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
@@ -1623,15 +2038,15 @@ async function loadAccount(){
   el('aCurveTitle').textContent=owe?'欠款走勢':'餘額走勢';
   chart('acctCurve',{type:'line',
     data:{labels:d.curve.map(x=>x.label),datasets:[{data:d.curve.map(x=>x.value),
-      borderColor:owe?'#e2477e':'#2ee5a9',backgroundColor:owe?'rgba(226,71,126,.10)':'rgba(46,229,169,.10)',
+      borderColor:owe?'#e2477e':'#9CC9F5',backgroundColor:owe?'rgba(226,71,126,.10)':'rgba(156,201,245,.10)',
       borderWidth:2,tension:.3,pointRadius:2,pointHoverRadius:5,fill:true,spanGaps:false}]},
     options:{plugins:{tooltip:{callbacks:{title:c=>d.curve[c[0].dataIndex].key,label:c=>F(c.parsed.y)}}},
       scales:halfMonthScales(d.curve)}});
 
   chart('acctFlow',{type:'bar',
     data:{labels:d.series.map(x=>x.label),datasets:[
-      {label:'進',data:d.series.map(x=>x.income),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:16},
-      {label:'出',data:d.series.map(x=>x.spend),backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:16}]},
+      {label:'進',data:d.series.map(x=>x.income),backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:16},
+      {label:'出',data:d.series.map(x=>x.spend),backgroundColor:'rgba(255,255,255,.30)',borderRadius:4,maxBarThickness:16}]},
     options:{plugins:{tooltip:{callbacks:{title:c=>d.series[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
       scales:halfMonthScales(d.series)}});
 
@@ -1868,7 +2283,7 @@ function drawIncChart(){
     const pts=d.halves, med=d.median_half;
     chart('incChart',{type:'bar',
       data:{labels:pts.map(p=>p.label),datasets:[
-        {label:'入帳',data:pts.map(p=>p.amount),backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:22},
+        {label:'入帳',data:pts.map(p=>p.amount),backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:22},
         medLine(pts.map(()=>med))]},
       options:{plugins:{tooltip:{callbacks:{title:c=>pts[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
         scales:halfMonthScales(pts)}});
@@ -1883,9 +2298,9 @@ function drawIncChart(){
     chart('incChart',{type:'bar',
       data:{labels,datasets:[
         {label:'已入帳',data:[...past.map(m=>m.amount),...pad(fut.length)],
-          backgroundColor:'#15ad81',borderRadius:4,maxBarThickness:26,stack:'s'},
+          backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:26,stack:'s'},
         {label:'已排定',data:[...pad(past.length),...fut.map(m=>m.booked)],
-          backgroundColor:'#5b8df5',borderRadius:4,maxBarThickness:26,stack:'s'},
+          backgroundColor:'rgba(156,201,245,.35)',borderRadius:4,maxBarThickness:26,stack:'s'},
         {label:'照過去節奏',data:[...pad(past.length),...fut.map(m=>Math.max(0,m.likely-m.booked))],
           backgroundColor:'rgba(91,141,245,.20)',borderColor:'rgba(91,141,245,.60)',borderWidth:1,
           borderRadius:4,maxBarThickness:26,stack:'s'},
@@ -1959,8 +2374,12 @@ async function undoChange(id, btn){
 let brainLoaded=false;
 async function loadBrain(){
   if(brainLoaded) return; brainLoaded=true;
+  // pull the live payloads the ⓘ entries read from, so the index is not a stub when
+  // 訓練輪 is the first page opened in a session
+  await Promise.all([loadPlan().catch(()=>{}), loadHome().catch(()=>{})]);
   const [d]=await Promise.all([getJSON('/api/brain'), loadChanges()]);
   stamp();
+  renderInfoIndex();
   if(d.budget_detail){
     const b=d.budget_detail;
     const pipe=b.booked_pipeline.length? b.booked_pipeline.map(p=>`${esc(p.note||'某案')} ${F0(p.amount)}（${esc(p.when||'?')}）`).join('、'):'（沒有已排定的案子）';
