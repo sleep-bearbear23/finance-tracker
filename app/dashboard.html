@@ -1783,7 +1783,24 @@ async function loadPlan(){
   const vtxt = sm.verdict==='saved'?'存下':sm.verdict==='even'?'大致打平':'缺口';
   el('ssnMeta').textContent = `${md(sm.start)}–${md(sm.end)} · 剩 ${sm.days_left} 天`
     + (sm.tax?` · ${sm.tax.label} 稅 ${md(sm.tax.due)} 繳`:'');
-  el('ssnBox').innerHTML =
+  const sb = d.season_board;
+  const board = !sb ? '' :
+    `<div style="font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:16px 0 6px">這一季的計分板</div>`
+    + (sb.tiers||[]).map(t=>`<div class="tierrow" style="padding:8px 0">
+        <div class="tierhead"><span class="nm2">${esc(t.name)}</span>
+          <span class="amt2" style="font-size:16px">${F0(t.target)}</span>
+          <span class="pct">${t.cleared?'達標':`還差 ${F0(t.remaining)}`}</span></div>
+        <div class="track"><i class="landed" style="width:${t.pct_landed}%"></i>
+          <i class="booked" style="left:${t.pct_landed}%;width:${Math.max(0,t.pct-t.pct_landed)}%"></i></div>
+      </div>`).join('')
+    + (sb.won_this_season>0?`<div class="kv"><span>這季自己談下來的</span><b class="pos">${F0(sb.won_this_season)}</b></div>`:'')
+    + ((sb.probably_landed||[]).length?`<div class="daysleft" style="color:var(--warn)">
+        ${sb.probably_landed.map(x=>`「${esc(x.note)}」$${x.amount.toLocaleString()} 好像已經進來了，我沒重複算——跟阿姨說一聲把它劃掉`).join('；')}</div>`:'')
+    + (sb.events||[]).slice(-4).reverse().map(e=>`<div class="ev2">
+        <span class="d">${esc((e.date||'').slice(5))}</span>
+        <span class="w">${esc(e.label)}</span>
+        <span class="plus ${e.mine?'':''}" style="${e.mine?'color:var(--accent)':''}">+${F0(e.weighted||e.amount)}</span></div>`).join('');
+  el('ssnBox').innerHTML = board +
     `<div class="tierhead" style="padding:2px 0 6px">
        <span class="nm2" style="flex:0 0 4.4em">現金結餘</span>
        <span class="amt2" style="color:${vcol}">${F0(sm.net)}</span>

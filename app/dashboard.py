@@ -706,6 +706,16 @@ async def _diagnostics(s) -> list[str]:
     return out
 
 
+
+async def _season_board(s):
+    try:
+        te = await AN.to_earn(s, 3)
+        sb = await SE.progress(s, te["tiers"])
+        return sb
+    except Exception:
+        return None
+
+
 @router.get("/api/plan")
 async def api_plan(request: Request):
     """計畫: where the money goes, how that has trended, where the walls are, and how
@@ -723,6 +733,9 @@ async def api_plan(request: Request):
             # Two modules, because they answer two different questions on two different
             # clocks: what this season DID (cash, mostly already decided) and what she has
             # to book now (which lands next season). See season.settlement / AN.to_book.
+            # the scoreboard: frozen targets, the dated event log, 這季自己談下來的 —
+            # fully built since the season work, never wired to a surface until now
+            "season_board": await _season_board(s),
             "settlement": await SE.settlement(
                 s, f, burn_monthly=te["fixed_monthly"] + te["normal_flex_monthly"],
                 by_hand_monthly=rec.get("by_hand_monthly", 0.0),

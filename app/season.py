@@ -191,11 +191,23 @@ async def progress(session, tiers: list[dict], f: F.Facts | None = None) -> dict
     carried = set((s.get("opened_with") or {}).get("notes") or [])
     booked_face = booked = 0.0
     booked_rows = []
+    # Reconciliation before counting (the review's F-7): an invoice whose money has
+    # ALREADY landed — deposit in the ledger, row not yet marked received — used to count
+    # twice, once in landed and once in booked, which pushed 還要接幾天 down. Falsely
+    # reassuring is the expensive direction. A booked item that matches a landed amount
+    # (±2%) is treated as arrived: skipped here, flagged for her to sweep.
+    unclaimed = [r["amount"] for r in landed_rows]
+    probably_landed = []
     for p in await prefs.pending_invoices(session):
         land = prefs.landing(p)
         if land is None or not _counts(p, land, lo, hi):
             continue
         amt = float(p.get("amount") or 0)
+        hit = next((x for x in unclaimed if abs(x - amt) <= max(1.0, amt * 0.02)), None)
+        if hit is not None:
+            unclaimed.remove(hit)
+            probably_landed.append({"note": (p.get("note") or "")[:40], "amount": amt})
+            continue
         conf = prefs.confidence(p, today)
         booked_face += amt
         booked += amt * conf
@@ -214,6 +226,8 @@ async def progress(session, tiers: list[dict], f: F.Facts | None = None) -> dict
                             "late_days": max(0, (today - land).days)})
 
     secured = round(landed + booked, 2)
+    # surfaced so 陳會計/the dashboard can say 「這筆好像已經進來了，我先不重複算——跟我說
+    # 一聲把它劃掉」 instead of silently double-counting or silently dropping
     rows = []
     for name, bare in (s.get("targets") or {}).items():
         rows.append({
@@ -245,6 +259,7 @@ async def progress(session, tiers: list[dict], f: F.Facts | None = None) -> dict
         "landed": round(landed, 2),
         "booked": round(booked, 2), "booked_face": round(booked_face, 2),
         "secured": secured,
+        "probably_landed": probably_landed,
         "won_this_season": round(sum(e["weighted"] for e in booked_rows if e["mine"]), 2),
         "opened_with": s.get("opened_with") or {},
         "tiers": rows,

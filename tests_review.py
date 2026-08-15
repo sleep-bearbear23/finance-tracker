@@ -392,6 +392,22 @@ async def main():
         check("the weekly check speaks at most once per week",
               msg2 is None, str(msg2))
 
+        print("\n[19] F-7 — money can't count twice on the scoreboard")
+        from app import analytics as AN, season as SE
+        await tools.run(s, "add_expected_payment",
+                        {"amount": 1585, "note": "已經到帳但忘了劃掉的案子", "when": now().strftime("%Y-%m")})
+        s.add(Transaction(id="tx-dup", account_id="chase", amount=1585.0,
+                          merchant_desc="ZELLE FROM SOMEONE", status="income",
+                          inflow_kind=T.PAY, posted_at=now()))
+        await s.commit()
+        te = await AN.to_earn(s, 3)
+        sb = await SE.progress(s, te["tiers"])
+        check("an invoice whose money already landed is flagged, not double-counted",
+              any("忘了劃掉" in x["note"] for x in sb.get("probably_landed", [])),
+              str(sb.get("probably_landed"))[:70])
+        check("…and the event log still sums exactly to the headline",
+              near(sb["events"][-1]["running"], sb["secured"]) if sb.get("events") else True)
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)
