@@ -27,6 +27,7 @@ Path("/tmp/dashtest.db").unlink(missing_ok=True)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import cleanup, dashboard, migrate, prefs, retag  # noqa: E402
+from app import seed_invoices as SI  # noqa: E402
 from app import facts as F  # noqa: E402
 from app import period as P  # noqa: E402
 from app.config import TZ  # noqa: E402
@@ -93,6 +94,7 @@ async def seed():
         await prefs.update_account(s, "Venmo", 145.28, "cash")
         await retag.retag(s)
         await retag.net_refunds(s)
+        await SI.backfill(s)          # the invoice archive, so 專案 has jobs to join
         await dashboard.write_snapshot(s)
 
 
@@ -606,6 +608,54 @@ async def main():
               live["daily_base"] * (live["days_closed"] + 1) - live["pool"] - live["today_left"]
               + live["daily_bump"], fnl["spent"], 0.05),
           f'pool {live and live["pool"]} today_left {live and live["today_left"]} spent {fnl["spent"]}')
+
+    print("\n[15] one record per job, assembled from the three lists that described it")
+    pj = g("/api/projects")
+    rows = pj["projects"]
+    # Momo: "since so much of my earning is related to project, we should just start a tab
+    # that tracks project." The invoice archive knew the rate and the days, 待收款 knew the
+    # stage and the landing, the ledger knew the deposit — and nothing joined them.
+    check("every job carries a name and an amount",
+          rows and all(p.get("name") and p.get("total") is not None for p in rows),
+          f'{len(rows)} rows')
+    check("a job cannot be both still owed and already paid",
+          all(not (p.get("owed") and p.get("paid")) for p in rows),
+          str([p["name"] for p in rows if p.get("owed") and p.get("paid")]))
+    check("what is owed here matches what 該催的錢 is chasing",
+          near(pj["owed_total"], plan["runway"]["owed_total"], 0.02),
+          f'{pj["owed_total"]} vs {plan["runway"]["owed_total"]}')
+    # A deposit four months BEFORE she billed for a job is some other job's money. The
+    # window has to run forward from the invoice, not either side of it.
+    check("a payment is never matched to an invoice raised after it",
+          all(p["paid_on"] >= (p.get("invoiced_on") or "0000")[:10] or
+              (datetime.fromisoformat(p["paid_on"])
+               - datetime.fromisoformat(p["invoiced_on"])).days >= -7
+              for p in rows if p.get("paid_on") and p.get("invoiced_on")))
+    check("a matched payment says it was matched by amount, not asserted as fact",
+          all(p.get("paid_match") == "amount" for p in rows if p.get("paid")))
+    # Non-shoot work (a poster design) has no days, so it must not dilute the day rate.
+    shoot = [p for p in rows if p.get("days") and p.get("rate")]
+    check("only jobs with days and a rate feed the day rate",
+          near(pj["shoot_days"], sum(int(p["days"]) for p in shoot)),
+          f'{pj["shoot_days"]} vs {sum(int(p["days"]) for p in shoot)}')
+    check("the average rate is shoot fees over shoot days, prep money excluded",
+          pj["avg_rate"] is None
+          or near(pj["avg_rate"], round(pj["day_fees"] / pj["shoot_days"], 2), 0.02),
+          f'{pj["avg_rate"]} vs {pj["day_fees"]}/{pj["shoot_days"]}')
+    # Not an identity across ALL jobs: a booking she has not invoiced yet has a total but
+    # no rate/days/extras split, so it lands in billed and in neither of the other two.
+    check("an invoiced job's total is its shoot fees plus its extras",
+          all(near(p["total"], (p.get("day_total") or 0) + (p.get("extras") or 0), 0.02)
+              for p in rows if p.get("invoice") and p.get("day_total")),
+          str([(p["name"], p["total"]) for p in rows
+               if p.get("invoice") and p.get("day_total")
+               and not near(p["total"], (p.get("day_total") or 0) + (p.get("extras") or 0), 0.02)]))
+    check("shoot fees and extras never add up to more than what was billed",
+          pj["day_fees"] + pj["extras"] <= pj["billed"] + EPS,
+          f'{pj["day_fees"]} + {pj["extras"]} vs {pj["billed"]}')
+    check("每個客戶的日薪走勢 is ordered oldest to newest",
+          all(all((c["rates"][i]["when"] or "") <= (c["rates"][i+1]["when"] or "")
+                  for i in range(len(c["rates"]) - 1)) for c in pj["clients"]))
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

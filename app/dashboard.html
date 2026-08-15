@@ -419,6 +419,30 @@
   .wall .note{font-size:10px;color:var(--muted);line-height:1.5;margin-top:3px}
 
   /* ── 收入 screen: four figures, then rhythm / payers / record / what's coming ── */
+  #s-proj > .grid{height:100%;display:grid;gap:var(--gap);
+    grid-template-columns:1.55fr 1fr;
+    grid-template-rows:auto minmax(0,1fr);
+    grid-template-areas:
+      "pstat  pstat"
+      "plist  pclient";}
+  [data-pane=pstat]{grid-area:pstat;background:none;border:none;box-shadow:none;padding:0;
+    overflow:visible;-webkit-backdrop-filter:none;backdrop-filter:none}
+  [data-pane=plist]{grid-area:plist} [data-pane=pclient]{grid-area:pclient}
+
+  /* one row per job: date, name, client, what it was worth, where it is now */
+  .pj{display:flex;align-items:baseline;gap:11px;padding:11px 0;border-bottom:1px solid var(--grid)}
+  .pj:last-child{border-bottom:none}
+  .pj .d{flex:0 0 5.8em;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;
+    white-space:nowrap}
+  .pj .w{flex:1;min-width:0}
+  .pj .w b{display:block;font-size:12.5px;font-weight:400;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .pj .w .s{display:block;font-size:10px;color:var(--muted);margin-top:3px}
+  .pj .amt{flex:0 0 auto;font-size:13px;font-variant-numeric:tabular-nums;text-align:right}
+  .pj .amt .r{display:block;font-size:9.5px;color:var(--muted);margin-top:3px}
+  .pj .st{flex:0 0 4.6em;text-align:right;font-size:10px;letter-spacing:.06em}
+  .pj.owed .st{color:var(--warn)} .pj.paid .st{color:var(--accent)}
+  .pj.late .st{color:var(--bad)}
   #s-income > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1.3fr .8fr .95fr;
     grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
@@ -535,11 +559,13 @@
     /* one hero + exactly one switchable pane; only that pane scrolls.
        NOTE: hide rules are kept at LOWER specificity than the sel-* show rules. */
     #s-home > .grid, #s-account > .grid, #s-income > .grid, #s-brain > .grid, #s-plan > .grid,
+    #s-proj > .grid,
     #s-acct > .grid, #s-cal > .grid{
       display:flex;flex-direction:column;gap:8px}
     #s-home > .grid > [data-pane],
     #s-account > .grid > [data-pane],
     #s-income > .grid > [data-pane],
+    #s-proj > .grid > [data-pane],
     #s-plan > .grid > [data-pane],
     #s-acct > .grid > [data-pane],
     #s-cal > .grid > [data-pane],
@@ -549,7 +575,8 @@
     #s-home > .grid > [data-pane=budget],
     #s-home > .grid > [data-pane=nw],
     #s-account > .grid > [data-pane=ahead],
-    #s-income > .grid > [data-pane=istat]{display:flex;flex:0 0 auto}
+    #s-income > .grid > [data-pane=istat],
+    #s-proj > .grid > [data-pane=pstat]{display:flex;flex:0 0 auto}
 
     /* the selected pane fills what's left */
     #s-home > .grid.sel-accounts > [data-pane=accounts],
@@ -575,6 +602,8 @@
     #s-plan > .grid.sel-standing > [data-pane=standing],
     #s-plan > .grid.sel-cats     > [data-pane=cats],
     #s-plan > .grid.sel-trend    > [data-pane=trend],
+    #s-proj > .grid.sel-plist   > [data-pane=plist],
+    #s-proj > .grid.sel-pclient > [data-pane=pclient],
     #s-income > .grid.sel-iperf > [data-pane=iperf],
     #s-income > .grid.sel-ipay  > [data-pane=ipay],
     #s-income > .grid.sel-irecv > [data-pane=irecv],
@@ -619,6 +648,7 @@
       <a id="tab-acct" href="#/accounts">帳戶</a>
       <a id="tab-cal" href="#/cal">行事曆</a>
       <a id="tab-income" href="#/income">收入</a>
+      <a id="tab-proj" href="#/projects">專案</a>
     </div>
     <div class="asof" id="asof">載入中…</div>
   </div>
@@ -804,6 +834,23 @@
     </div>
   </div>
 
+  <!-- ───────── 專案 ───────── -->
+  <div class="screen" id="s-proj">
+    <div class="grid sel-plist" id="projGrid">
+      <section class="card" data-pane="pstat"><div class="stats3" id="projStats"></div></section>
+
+      <section class="card" data-pane="plist">
+        <h2>每一個案子 <span class="more" id="projMeta" style="cursor:default;color:var(--muted)"></span></h2>
+        <div class="body" id="projList"><div class="empty">載入中…</div></div>
+      </section>
+
+      <section class="card" data-pane="pclient">
+        <h2>客戶 <span class="more" style="cursor:default;color:var(--muted)">日薪走勢</span></h2>
+        <div class="body" id="projClients"><div class="empty">載入中…</div></div>
+      </section>
+    </div>
+  </div>
+
   <!-- ───────── 收入 ───────── -->
   <div class="screen" id="s-income">
     <div class="grid sel-iperf" id="incGrid">
@@ -860,6 +907,7 @@
     <a id="bn-acct" href="#/accounts"><span class="ic">▤</span>帳戶</a>
     <a id="bn-cal" href="#/cal"><span class="ic">◷</span>行事曆</a>
     <a id="bn-income" href="#/income"><span class="ic">↓</span>收入</a>
+    <a id="bn-proj" href="#/projects"><span class="ic">▧</span>專案</a>
   </div>
 </div>
 
@@ -945,10 +993,11 @@ const SEGS = {
   cal:    [['callist','接下來'],['calbars','每月進出'],['calpend','待收款']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   income: [['iperf','節奏'],['ipay','誰付錢'],['irecv','入帳紀錄'],['iexp','接下來']],
+  proj:   [['plist','每一個案子'],['pclient','客戶']],
   brain:  [['bchg','異動紀錄'],['bmath','預算算法'],['bnw','淨資產'],['bmem','商家'],['bchat','對話']],
 };
 const GRID = {home:'homeGrid', account:'acctGrid', plan:'planGrid', acct:'acctsGrid',
-              cal:'calGrid', income:'incGrid', brain:'brainGrid'};
+              cal:'calGrid', income:'incGrid', proj:'projGrid', brain:'brainGrid'};
 function selectPane(view,pane){
   const g = el(GRID[view]); if(!g) return;
   g.className = g.className.replace(/\bsel-\S+/g,'').trim() + ' sel-' + pane;
@@ -964,10 +1013,10 @@ function buildSeg(view){
 
 /* ── routing ── */
 function go(h){ location.hash=h; }
-const VIEWS=['home','account','plan','acct','cal','income','brain'];
+const VIEWS=['home','account','plan','acct','cal','income','proj','brain'];
 function setNav(name){
   // 'brain' is deliberately absent — it has no tab, so on that screen nothing lights up
-  for(const v of ['home','plan','acct','cal','income']){
+  for(const v of ['home','plan','acct','cal','income','proj']){
     const on = (v===name)||(name==='account'&&v==='acct');
     const t=el('tab-'+v), b=el('bn-'+v);
     if(t) t.classList.toggle('on',on);
@@ -988,6 +1037,7 @@ async function route(){
   else if(h.startsWith('#/accounts')) view='acct';
   else if(h.startsWith('#/cal')) view='cal';
   else if(h.startsWith('#/income')) view='income';
+  else if(h.startsWith('#/projects')) view='proj';
   else if(h.startsWith('#/brain')) view='brain';
   if(view==='home')  { backTo='#/';         el('aBack').textContent='← 回總覽'; }
   if(view==='acct')  { backTo='#/accounts'; el('aBack').textContent='← 回帳戶'; }
@@ -999,6 +1049,7 @@ async function route(){
     else if(view==='acct'){ el('pageTitle').textContent='帳戶'; await loadAccounts(); }
     else if(view==='cal'){ el('pageTitle').textContent='行事曆'; await loadCal(); }
     else if(view==='income'){ el('pageTitle').textContent='收入紀錄'; await loadIncome(); }
+    else if(view==='proj'){ el('pageTitle').textContent='專案'; await loadProjects(); }
     else if(view==='brain'){ el('pageTitle').textContent='訓練輪'; await loadBrain(); }
     else { el('pageTitle').textContent='默默，阿姨看著呢'; await loadHome(); }
     resizeCharts();
@@ -1566,6 +1617,57 @@ const YM = m => m.slice(5).replace(/^0/,'')+'月';
 // 12-month run reads without a legend.
 const YMax = m => m.slice(5)==='01' ? [YM(m), m.slice(0,4)] : YM(m);
 const nowYM = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); };
+
+/* ── 專案 ─────────────────────────────────────────────────────────────────
+   Momo's idea, and the fix for three lists of the same thing: "since so much of my earning
+   is related to project, we should just start a tab that tracks project where we can just
+   document more complete information about each project."
+
+   The invoice archive knew the day rate and the shoot dates, 待收款 knew the stage and when
+   the money should land, the ledger knew when it actually cleared — and nothing joined them,
+   so a gig she shot in May was three unrelated rows. */
+let projLoaded=false;
+async function loadProjects(){
+  if(projLoaded) return; projLoaded=true;
+  const d=await getJSON('/api/projects');
+  stamp();
+  el('projStats').innerHTML=[
+    ['接過的案子', d.n, `${d.shoot_days} 個拍攝日`],
+    ['開出去的錢', F0(d.billed), `拍攝費 ${F0(d.day_fees)}＋前製加班 ${F0(d.extras)}`],
+    ['還沒收到', F0(d.owed_total), d.owed_n?`${d.owed_n} 筆`:'都收齊了'],
+    ['平均日薪', d.avg_rate?F0(d.avg_rate):'—', '拍攝費 ÷ 拍攝天數'],
+  ].map(([k,v,x])=>`<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div>
+      <div class="sub">${esc(x)}</div></div>`).join('');
+
+  el('projMeta').textContent = `${d.n} 個・${d.shoot_days} 天`;
+  el('projList').innerHTML = (d.projects||[]).map(p=>{
+    const cls = p.owed ? (p.late_days>0?'late':'owed') : (p.paid?'paid':'');
+    const bits = [];
+    if(p.client) bits.push(esc(p.client));
+    if(p.days && p.rate) bits.push(`${p.days} 天 × ${F0(p.rate)}`);
+    if(p.extras>0) bits.push(`前製加班 ${F0(p.extras)}`);
+    if(p.invoice) bits.push(esc(p.invoice));
+    if(p.owed && p.lands) bits.push(p.late_days>0?`晚了 ${p.late_days} 天`:`預計 ${md(p.lands)} 入帳`);
+    if(p.paid_on) bits.push(`${md(p.paid_on)} 入帳`);
+    return `<div class="pj ${cls}">
+      <span class="d">${esc((p.invoiced_on||p.when||'').slice(0,10)||'—')}</span>
+      <span class="w"><b>${esc(p.name||'—')}</b><span class="s">${bits.join('・')}</span></span>
+      <span class="amt">${F0(p.total)}${p.rate?`<span class="r">${F0(p.rate)}／天</span>`:''}</span>
+      <span class="st">${esc(p.status||'')}</span></div>`;
+  }).join('') || '<div class="empty">還沒有案子紀錄。</div>';
+
+  el('projClients').innerHTML = (d.clients||[]).map(c=>{
+    const tr = (c.rates||[]).map(r=>F0(r.rate)).join(' → ') || '—';
+    const up = (c.rates||[]).length>1 && c.rates[c.rates.length-1].rate>c.rates[0].rate;
+    return `<div class="pj">
+      <span class="w"><b>${esc(c.client)}</b>
+        <span class="s">${c.jobs} 個案子・${c.days} 天</span></span>
+      <span class="amt">${F0(c.total)}<span class="r" style="${up?'color:var(--accent)':''}">${tr}</span></span>
+    </div>`;
+  }).join('') || '<div class="empty">還沒有客戶紀錄。</div>';
+  el('projList').insertAdjacentHTML('beforeend',
+    `<p style="font-size:10px;color:var(--muted);line-height:1.6;margin:12px 0 0">${esc(d.note||'')}</p>`);
+}
 
 async function loadIncome(){
   if(incLoaded) return; incLoaded=true;

@@ -22,7 +22,8 @@ from sqlalchemy import select
 from . import (accounts as acct, allowance, analytics as AN, budget, categories,
                changelog as CL,
                export as EX, facts as F, fixed as FX, networth, period as P,
-               prefs, runway as RW, season as SE, stability as STAB, tax as TAX,
+               prefs, projects as PJ, runway as RW, season as SE, stability as STAB,
+               tax as TAX,
                taxonomy)
 from .config import aware, now, settings
 from .db import Session
@@ -680,6 +681,19 @@ async def api_plan(request: Request):
             "runway": await RW.plan(s, f),
             "audit": f.audit(),
         }
+
+
+@router.get("/api/projects")
+async def api_projects(request: Request):
+    """專案: one record per job — Momo's idea, and the fix for three lists of the same thing.
+
+    "since so much of my earning is related to project, we should just start a tab that
+    tracks project… It's a good record to have." The invoice archive, the pending list and
+    the ledger each held a third of every gig; this lines them up on the amount."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        return await PJ.summary(s)
 
 
 @router.get("/api/calendar")
