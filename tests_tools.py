@@ -434,6 +434,100 @@ async def main():
         check("…but the work she is holding still counts toward the target",
               reopened["secured"] > 0, str(reopened["secured"]))
 
+        print("\n[13] 「Uber 多算了兩筆，只有 10.94 那筆是這個工作的 其他是日常開銷」")
+        # The whole failure in one block. She told 陳會計 a batch of charges belonged to a
+        # shoot; tag_project searched thirty days for "uber", found four, and moved all four
+        # without asking. When she corrected it there was no tool that moves anything OUT of
+        # a project, so 陳會計 returned nothing at all — twice, because the gap is structural
+        # and 再試一次 cannot close it.
+        fares = {10.94: "transit", 22.30: "transit", 31.10: "snacks", 18.00: "food"}
+        ids = {}
+        for amt, cat in fares.items():
+            r = await tools.run(s, "log_expense",
+                                {"amount": amt, "merchant": "Uber", "category": cat})
+            ids[amt] = r["id"]
+
+        before = await n_changes(s)
+        vague = await tools.run(s, "tag_project", {"which": "Uber", "project": "AWCT",
+                                                   "reimbursable": True})
+        check("four charges for one merchant is not something she may assume",
+              not vague["ok"] and len(vague.get("needs_pick") or []) == 4,
+              str(vague.get("error"))[:70])
+        check("…and asking costs nothing — it wrote no rows",
+              await n_changes(s) == before, f'{before} → {await n_changes(s)}')
+        untouched = await s.get(Transaction, ids[22.30])
+        check("…nor touched the charges themselves",
+              untouched.project is None and untouched.category == "transit",
+              f"{untouched.category}/{untouched.project}")
+        check("the ask names dates and amounts so she can answer with a number",
+              all(r.get("date") and r.get("amount") for r in vague["needs_pick"]),
+              str(vague["needs_pick"][0]))
+
+        yes = await tools.run(s, "tag_project", {"which": "Uber", "project": "AWCT",
+                                                 "reimbursable": True, "confirm": True})
+        check("when she says 都要, all four move", yes["ok"] and yes["moved"] == 4, str(yes)[:80])
+        moved = await s.get(Transaction, ids[31.10])
+        check("…as work spending, off her daily line",
+              moved.category == "work" and moved.project, f"{moved.category}/{moved.project}")
+
+        # The correction. Not an undo: undoing the call would also throw away 10.94, which
+        # she just confirmed is right.
+        fix = await tools.run(s, "untag_project",
+                              {"which": "Uber", "project": "AWCT",
+                               "only": [22.30, 31.10, 18.00]},
+                              source_text="Uber 多算了兩筆，只有 10.94 那筆是這個工作的 其他是日常開銷")
+        check("she can take the wrong ones back out", fix["ok"] and fix["moved"] == 3, str(fix)[:80])
+        kept = await s.get(Transaction, ids[10.94])
+        check("the one she confirmed stays on the job",
+              kept.category == "work" and bool(kept.project), f"{kept.category}/{kept.project}")
+        back = {amt: await s.get(Transaction, tid) for amt, tid in ids.items() if amt != 10.94}
+        check("every other one gets its OWN old category back — not one guess for all four",
+              all(back[a].category == fares[a] for a in back),
+              str({a: back[a].category for a in back}))
+        check("…and is off the job entirely",
+              all(t.project is None and not t.reimbursable for t in back.values()))
+        check("the log knew what they were, so nothing was guessed",
+              fix["guessed"] == 0, str(fix["guessed"]))
+        check("the receipt says they start eating the daily allowance again",
+              "每天能花的錢" in fix["summary"], fix["summary"][:60])
+
+        never = await tools.run(s, "untag_project", {"which": "路邊停車"})
+        check("untagging something that was never on a job says so plainly",
+              not never["ok"] and "本來就是" in never["error"], str(never)[:80])
+
+        raw = await changelog.prior_value(s, "transactions", ids[10.94], "category")
+        check("the log answers 'what was this before' for rows a tool touched", raw["found"])
+        check("…and admits when it cannot",
+              not (await changelog.prior_value(s, "transactions", "no-such-row",
+                                               "category"))["found"])
+
+        pick2 = await tools.run(s, "set_claim", {"which": "Uber", "state": "sent"})
+        check("the same guard covers claims — one Uber cannot stand for four",
+              not pick2["ok"] and bool(pick2.get("needs_pick")), str(pick2)[:70])
+        one = await tools.run(s, "set_claim", {"which": "Uber", "state": "sent",
+                                               "only": [10.94]})
+        check("naming the amount is enough to act", one["ok"] and one["n"] == 1, str(one)[:70])
+
+        # 再試一次 was Momo's, by hand, and it produced the identical non-answer. Now the
+        # retry is the loop's job, and the second miss still ends in a sentence.
+        agent._client = _Fake([_Resp([]), _Resp([_Text("好啦，我把那三筆拿掉。")])])
+        rescue = await agent.handle(s, "Uber 多算了兩筆")
+        agent._client = real
+        check("an empty response is retried before she ever sees it",
+              "拿掉" in rescue["reply"], rescue["reply"][:40])
+
+        agent._client = _Fake([_Resp([]), _Resp([])])
+        dead = await agent.handle(s, "Uber 多算了兩筆")
+        agent._client = real
+        check("twice empty and she STILL gets a sentence, not a stage direction",
+              dead["reply"] == agent.BLANK_REPLY, dead["reply"][:40])
+
+        check("she is never left with a blank stare",
+              len(agent.BLANK_REPLY) > 20 and "想不出話" not in agent.BLANK_REPLY,
+              agent.BLANK_REPLY[:40])
+        check("…and the blank reply points at something that works without her",
+              "還原" in agent.BLANK_REPLY and "金額" in agent.BLANK_REPLY)
+
         check("a not-yet-due invoice is not worth its face value",
               prefs.confidence({"when": "2026-12", "amount": 1}, None) < 1.0,
               str(prefs.confidence({"when": "2026-12", "amount": 1}, None)))

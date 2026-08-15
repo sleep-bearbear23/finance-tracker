@@ -31,6 +31,13 @@ _client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
 #: letting a confused model grind in a loop.
 MAX_ROUNDS = 5
 
+#: What she says when she has nothing. Names it as her problem, not Momo's, and hands back
+#: two things that actually work — amounts are unambiguous, and the dashboard's 還原 does
+#: not need her at all.
+BLANK_REPLY = ("阿姨剛剛沒接住你那句，不是你講錯，是我這邊卡住。再講一次好無？\n"
+               "如果是要改哪幾筆，直接報金額最準（像「10.94 那筆留著，其他拿掉」）。"
+               "或者去網頁的「紀錄」那邊按還原，那個不用經過我。")
+
 RULES = """
 你是默默的記帳阿姨，同時是唯一能改他資料的人。
 
@@ -49,6 +56,13 @@ RULES = """
 - 他在問問題（還能花多少、淨資產、為什麼）→ 直接回答，不要呼叫工具
 - 你不確定他是在報「收入」還是「餘額」→ 問清楚，不要猜。猜錯會蓋掉真的數字。
 - 他只是在聊天
+
+**改錯了要能改回來。** 他說你剛剛歸錯了、多算了、那筆其實是日常開銷 → untag_project。
+「只有 X 那筆是這個工作的，其他不是」的意思是：X 留著，其他用 untag_project 拿掉。
+工具回你一份編號清單（needs_pick）的時候，那是還沒動手，把清單唸給他聽問是哪幾筆。
+
+**沒有工具能做的事，也要開口。** 找不到對的工具就直說做不到、建議他怎麼講，
+或叫他去網頁的「紀錄」按還原。不管發生什麼事，永遠不要一句話都不回。
 
 工具失敗（ok=false）時，照實說失敗了、為什麼，不要假裝成功。
 如果他一句話裡有好幾件事，全部都做完再回。
@@ -89,6 +103,7 @@ async def handle(session, text: str, *, actor: str = "line") -> dict:
     messages = [{"role": "user", "content": text}]
     changes: list[str] = []
     calls: list[dict] = []
+    retried = False
 
     for _ in range(MAX_ROUNDS):
         resp = await _client.messages.create(
@@ -97,8 +112,21 @@ async def handle(session, text: str, *, actor: str = "line") -> dict:
         )
         uses = _tool_blocks(resp)
         if not uses:
-            return {"reply": _text_of(resp) or "（阿姨想不出話說）",
-                    "changes": changes, "calls": calls}
+            said = _text_of(resp)
+            if said:
+                return {"reply": said, "changes": changes, "calls": calls}
+            # No tools, no words. Momo hit this asking to undo part of a retag, and hit it
+            # again on 再試一次 — so it is not always a hiccup. Log enough to tell the two
+            # apart next time, try once more, then say something she can act on. The old
+            # 「（阿姨想不出話說）」 was a stage direction: it named the problem and offered
+            # no way out of it.
+            print(f"[agent] empty reply stop_reason={getattr(resp, 'stop_reason', None)!r} "
+                  f"blocks={[getattr(b, 'type', '?') for b in resp.content]} "
+                  f"retried={retried} text={text[:80]!r}")
+            if not retried:
+                retried = True
+                continue
+            return {"reply": BLANK_REPLY, "changes": changes, "calls": calls}
 
         messages.append({"role": "assistant", "content": resp.content})
         results = []

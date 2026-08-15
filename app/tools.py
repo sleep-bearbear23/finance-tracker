@@ -37,6 +37,72 @@ def _money(v) -> str:
     return f"${float(v or 0):,.2f}".replace(".00", "")
 
 
+# ── finding the charges she means ────────────────────────────────────
+# 「Uber 多算了兩筆，只有 10.94 那筆是這個工作的 其他是日常開銷」. tag_project had searched
+# thirty days of merchant names AND notes for "uber", found four, and moved all four without
+# asking — right for Mission Fuel by luck, wrong for the merchant she uses twice a week.
+# Any merchant she uses often will over-collect, so the rule is now: one hit writes, more
+# than one comes back as a numbered list and she says which.
+
+def _as_amount(v):
+    try:
+        return float(str(v).replace("$", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _when(t):
+    return t.posted_at or t.created_at
+
+
+def _find_charges(rows, which, cutoff, *, only=None, project=None):
+    """Spends matching a merchant fragment or an exact amount, newest first."""
+    key = (which or "").strip().lower()
+    want = _as_amount(key)
+    picks = [a for a in (_as_amount(x) for x in (only or [])) if a is not None]
+    hits = []
+    for t in rows:
+        if t.amount >= 0:
+            continue
+        d = _when(t)
+        if d and d.date() < cutoff:
+            continue
+        if project is not None and (t.project or "") != project:
+            continue
+        hay = f"{t.merchant_desc or ''} {t.note or ''} {t.project or ''}".lower()
+        amt = abs(t.amount)
+        if not ((key and key in hay) or (want is not None and abs(amt - want) < 0.02)):
+            continue
+        if picks and not any(abs(amt - p) < 0.02 for p in picks):
+            continue
+        hits.append(t)
+    hits.sort(key=lambda t: (_when(t) is not None, _when(t)), reverse=True)
+    return hits, bool(picks)
+
+
+def _needs_pick(hits, picked, confirm) -> bool:
+    """She has to choose unless she already narrowed it herself."""
+    return len(hits) > 1 and not picked and not bool(confirm)
+
+
+def _picker(hits, verb: str) -> dict:
+    from . import taxonomy as _T
+    rows = [{"n": i, "merchant": (t.merchant_desc or "")[:24],
+             "amount": round(abs(t.amount), 2),
+             "date": _when(t).date().isoformat() if _when(t) else None,
+             "category": _T.label(t.category), "project": t.project or None}
+            for i, t in enumerate(hits, 1)]
+    listed = "；".join(
+        f"{r['n']}. {r['date'] or ''} {r['merchant']} {_money(r['amount'])}"
+        f"（{r['category']}）" for r in rows)
+    return {
+        "ok": False, "needs_pick": rows,
+        "error": (f"找到 {len(hits)} 筆，不確定要{verb}哪幾筆，所以還沒動：{listed}。"
+                  f"把這幾筆唸給他聽，問是哪幾筆。他報金額之後再呼叫一次，"
+                  f"金額放進 only（例如 only=[10.94]）；他說「全部」「都要」就把 confirm 設成 true。"),
+    }
+
+
 # ── schemas ──────────────────────────────────────────────────────────
 SCHEMAS: list[dict] = [
     {
@@ -390,6 +456,12 @@ SCHEMAS: list[dict] = [
                 "which": {"type": "string", "description": "Merchant, amount, or project."},
                 "state": {"type": "string", "enum": ["todo", "sent", "paid", "wont"]},
                 "days": {"type": "integer", "description": "How far back to look. Default 90."},
+                "only": {"type": "array", "items": {"type": "number"},
+                         "description": "The exact amounts she picked, when more than one "
+                                        "charge matched and you read her the list."},
+                "confirm": {"type": "boolean",
+                            "description": "Set true only after she says 全部／都要 to a list "
+                                           "you read her. Never set it on the first call."},
             },
             "required": ["which", "state"],
         },
@@ -421,8 +493,42 @@ SCHEMAS: list[dict] = [
                 "reimbursable": {"type": "boolean",
                                  "description": "True when the production pays it back."},
                 "days": {"type": "integer", "description": "How far back to look. Default 30."},
+                "only": {"type": "array", "items": {"type": "number"},
+                         "description": "The exact amounts she picked, when more than one "
+                                        "charge matched and you read her the list."},
+                "confirm": {"type": "boolean",
+                            "description": "Set true only after she says 全部／都要 to a list "
+                                           "you read her. Never set it on the first call."},
             },
             "required": ["which", "project"],
+        },
+    },
+    {
+        "name": "untag_project",
+        "description": (
+            "Take charges back OFF a job — she says something you filed under a project "
+            "was actually ordinary spending. This is the correction path for tag_project, "
+            "including a partial one: 「只有 10.94 那筆是這個工作的，其他是日常開銷」 means "
+            "untag_project on the rest. Their old categories come back from the log, and "
+            "they start counting against her daily allowance again.\n"
+            "Use this and NOT tag_project whenever the direction is out. If she is picking "
+            "which of several charges to keep on the job, untag the ones she did NOT name."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "which": {"type": "string",
+                          "description": "Merchant name or exact amount to find the charges by."},
+                "project": {"type": "string",
+                            "description": "Only look inside this job, if she named one."},
+                "days": {"type": "integer", "description": "How far back to look. Default 60."},
+                "only": {"type": "array", "items": {"type": "number"},
+                         "description": "The exact amounts she picked, when more than one "
+                                        "charge matched and you read her the list."},
+                "confirm": {"type": "boolean",
+                            "description": "Set true only after she says 全部／都要 to a list "
+                                           "you read her. Never set it on the first call."},
+            },
+            "required": ["which"],
         },
     },
     {
@@ -867,7 +973,7 @@ async def set_project_kind(s, rec, project, kind):
     return {"ok": True, "summary": rec.summary, "id": hit["id"], "kind": kind}
 
 
-async def set_claim(s, rec, which, state, days=90):
+async def set_claim(s, rec, which, state, days=90, only=None, confirm=False):
     """Move a fronted cost along: 還沒去要 → 已經要了 → 收回來了（或決定自己吸收）。"""
     from sqlalchemy import select
     from . import claims as CL
@@ -875,26 +981,15 @@ async def set_claim(s, rec, which, state, days=90):
 
     if state not in ("todo", "sent", "paid", "wont"):
         return {"ok": False, "error": "state 只能是 todo／sent／paid／wont"}
-    key = (which or "").strip().lower()
+    if not (which or "").strip():
+        return {"ok": False, "error": "要說是哪一筆（商家名字或金額）"}
     cutoff = now().date() - _td(days=int(days or 90))
     rows = (await s.execute(select(Transaction))).scalars().all()
-    hits = []
-    for t in rows:
-        if t.amount >= 0:
-            continue
-        d = (t.posted_at or t.created_at)
-        if d and d.date() < cutoff:
-            continue
-        hay = f"{t.merchant_desc or ''} {t.note or ''} {t.project or ''}".lower()
-        amt = False
-        try:
-            amt = abs(abs(t.amount) - float(key.replace("$", "").replace(",", ""))) < 0.02
-        except ValueError:
-            pass
-        if key and (key in hay or amt):
-            hits.append(t)
+    hits, picked = _find_charges(rows, which, cutoff, only=only)
     if not hits:
         return {"ok": False, "error": f"最近 {days} 天找不到「{which}」。"}
+    if _needs_pick(hits, picked, confirm):
+        return _picker(hits, f"改成「{CL.LABEL[state]}」的")
     total = 0.0
     for t in hits:
         before = changelog.snapshot_row(t, ["claim", "reimbursable"])
@@ -918,7 +1013,8 @@ async def match_refunds(s, rec, apply=True):
     return {"ok": True, "summary": rec.summary or "沒有可以自動對上的。", **out}
 
 
-async def tag_project(s, rec, which, project, reimbursable=None, days=30):
+async def tag_project(s, rec, which, project, reimbursable=None, days=30,
+                      only=None, confirm=False):
     """Move charges she has already logged onto a job, and out of her daily allowance.
 
     This is the repair path for the thing that went wrong: she told 陳會計 a taxi and a
@@ -944,23 +1040,11 @@ async def tag_project(s, rec, which, project, reimbursable=None, days=30):
     cutoff = now().date() - _td(days=int(days or 30))
 
     rows = (await s.execute(select(Transaction))).scalars().all()
-    hits = []
-    for t in rows:
-        if t.amount >= 0:
-            continue
-        d = (t.posted_at or t.created_at)
-        if d and d.date() < cutoff:
-            continue
-        hay = f"{t.merchant_desc or ''} {t.note or ''}".lower()
-        amt_match = False
-        try:
-            amt_match = abs(abs(t.amount) - float(key.replace("$", "").replace(",", ""))) < 0.02
-        except ValueError:
-            pass
-        if key in hay or amt_match:
-            hits.append(t)
+    hits, picked = _find_charges(rows, which, cutoff, only=only)
     if not hits:
         return {"ok": False, "error": f"最近 {days} 天找不到「{which}」這筆。"}
+    if _needs_pick(hits, picked, confirm):
+        return _picker(hits, "移到案子裡的")
 
     moved, total = [], 0.0
     for t in hits:
@@ -981,6 +1065,76 @@ async def tag_project(s, rec, which, project, reimbursable=None, days=30):
              + ("，標成可以報帳。" if reimbursable else "。")
              + " " + "；".join(moved[:4]))
     return {"ok": True, "summary": rec.summary, "moved": len(moved), "total": round(total, 2)}
+
+
+async def untag_project(s, rec, which, project=None, days=60, only=None, confirm=False):
+    """Take charges back off a job and return them to her ordinary spending.
+
+    The missing half. `tag_project` could only move money in, so 「Uber 多算了兩筆，只有
+    10.94 那筆是這個工作的」 was a sentence with no tool behind it — 陳會計 had a clear
+    instruction, a rule saying she may only change data by calling something, and nothing
+    to call. She went silent, and silence repeated on retry because the gap is structural.
+
+    Putting a charge back needs its old category, and guessing would quietly rewrite her
+    history. So the log is asked first: every tool write photographs the row before it
+    touches it, which makes 「what was this before I moved it」 a lookup, not an estimate.
+    Merchant memory, then the classifier's guess, only cover rows no tool ever touched.
+    """
+    from sqlalchemy import select
+    from . import taxonomy as T
+    from . import projects as PJ
+    from datetime import timedelta as _td
+
+    if not (which or "").strip():
+        return {"ok": False, "error": "要說是哪一筆（商家名字或金額）"}
+    pid = None
+    if project:
+        hit = await PJ.resolve(s, project)
+        if hit["id"] is None:
+            names = "、".join(o["name"] for o in hit["options"][:4])
+            return {"ok": False, "ambiguous": hit["options"],
+                    "error": f"「{project}」對得上好幾個案子：{names}。是哪一個？"}
+        pid = hit["id"]
+    cutoff = now().date() - _td(days=int(days or 60))
+
+    rows = (await s.execute(select(Transaction))).scalars().all()
+    hits, picked = _find_charges(rows, which, cutoff, only=only, project=pid)
+    hits = [t for t in hits if t.project or T.is_work(t.category)]
+    if not hits:
+        return {"ok": False,
+                "error": f"最近 {days} 天沒有掛在案子上的「{which}」，本來就是日常開銷了。"}
+    if _needs_pick(hits, picked, confirm):
+        return _picker(hits, "從案子裡拿掉的")
+
+    cols = ["category", "project", "reimbursable", "status", "claim"]
+    back, total, guessed = [], 0.0, 0
+    for t in hits:
+        before = changelog.snapshot_row(t, cols)
+        prior = await changelog.prior_value(s, "transactions", t.id, "category")
+        if prior["found"] and not T.is_work(prior["value"]):
+            cat = prior["value"]
+        else:
+            guessed += 1
+            desc = t.merchant_desc or ""
+            mem = await s.get(MerchantMemory, categories.merchant_key(desc))
+            cat = (mem.category if mem is not None and mem.category
+                   else categories.guess(desc))
+        was = t.project
+        t.category = cat
+        t.project = None
+        t.reimbursable = False
+        t.claim = None
+        total += abs(t.amount)
+        back.append(f"{(t.merchant_desc or '')[:18]} {_money(abs(t.amount))}"
+                    f"（{('離開「' + was + '」，') if was else ''}改回 {T.label(cat)}）")
+        rec.row("transactions", t.id, before, changelog.snapshot_row(t, cols))
+    await s.commit()
+    rec.says(f"{len(back)} 筆共 {_money(total)} 從案子裡拿掉，改回日常開銷，"
+             f"會重新從每天能花的錢裡扣。 " + "；".join(back[:4])
+             + (f"（其中 {guessed} 筆找不到原本的分類，用商家猜的，不對再跟我講）"
+                if guessed else ""))
+    return {"ok": True, "summary": rec.summary, "moved": len(back),
+            "total": round(total, 2), "guessed": guessed}
 
 
 async def log_expense(s, rec, amount, merchant, category=None, note=None, date=None,  # noqa: A002
@@ -1129,6 +1283,7 @@ HANDLERS = {
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
     "tag_project": tag_project,
+    "untag_project": untag_project,
     "set_project_kind": set_project_kind,
     "set_claim": set_claim,
     "match_refunds": match_refunds,

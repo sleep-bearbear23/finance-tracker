@@ -104,6 +104,34 @@ async def recent(session, limit: int = 60, include_undone: bool = True) -> list[
     return out
 
 
+async def prior_value(session, table: str, ident, column: str, *, limit: int = 300) -> dict:
+    """What a row's column held before the most recent tool touched it.
+
+    This is what makes "put it back" possible for one row out of a batch. ``undo`` reverses
+    a whole tool call; Momo's actual correction was 「Uber 多算了兩筆，只有 10.94 那筆是這個
+    工作的」 — four charges moved, one of them right. Undoing the call and re-tagging works
+    but throws away her other answers, so the untag path asks the log what each row was
+    instead of guessing.
+
+    Returns ``{"found": bool, "value": …}``. found=False means no tool ever touched this
+    column here (the classifier set it at import), so the caller has to fall back. An
+    explicit null IS an answer — the charge was genuinely uncategorised before.
+    """
+    q = select(Change).order_by(Change.at.desc(), Change.id.desc()).limit(limit)
+    for c in (await session.execute(q)).scalars().all():
+        try:
+            patch = json.loads(c.patch or "{}")
+        except ValueError:
+            continue
+        for r in reversed(patch.get("rows") or []):
+            if r.get("table") != table or str(r.get("id")) != str(ident):
+                continue
+            before = r.get("before")
+            if isinstance(before, dict) and column in before:
+                return {"found": True, "value": before.get(column)}
+    return {"found": False, "value": None}
+
+
 async def undo(session, change_id: int) -> dict:
     """Put back exactly what was there before, and say so. Idempotent by the undone_at flag."""
     c = await session.get(Change, change_id)
