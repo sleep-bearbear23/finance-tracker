@@ -114,6 +114,21 @@ async def _alert_job():
             print(f"[alerts] error: {e!r}")
 
 
+async def _watch_job():
+    """The earning-side look-ahead — see watch.py. Monday, before the week gets decided."""
+    async with Session() as s:
+        try:
+            from . import watch
+            msg = await watch.weekly(s)
+            owner = await get_kv(s, "owner_user_id")
+            if msg and owner:
+                await line_client.push(owner, msg)
+                await memory.remember(s, "assistant", msg)
+            await set_kv(s, "last_run:watch", now().isoformat())
+        except Exception as e:
+            print(f"[watch] error: {e!r}")
+
+
 async def _weekly_job():
     async with Session() as s:
         try:
@@ -252,6 +267,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_claims_job, "interval", hours=4, id="claims")
     scheduler.add_job(_alert_job, "interval", hours=6, id="alerts")
     scheduler.add_job(_weekly_job, "cron", day_of_week="sun", hour=18, id="weekly")
+    scheduler.add_job(_watch_job, "cron", day_of_week="mon", hour=10, id="watch")
     scheduler.add_job(_monthly_job, "cron", day=1, hour=9, id="monthly")
     scheduler.add_job(_reconcile_job, "cron", day=5, hour=9, id="reconcile")
     scheduler.add_job(_reminder_job, "cron", hour=settings.REMINDER_HOUR, id="reminder")

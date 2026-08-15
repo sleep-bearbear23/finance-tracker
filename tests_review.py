@@ -369,6 +369,29 @@ async def main():
         check("a dead alert loop becomes a visible warning within a day",
               any("超支提醒" in d for d in diags), str(diags)[:70])
 
+        print("\n[18] Phase 6.1 — the earning-side watch loop")
+        from app import seed_invoices as SI, watch
+        await SI.backfill(s, force=True)     # her 13-invoice archive — the rate's evidence
+        sv = await watch.survival_days(s)
+        check("the floor is derived from the engine, not typed",
+              sv["days"] is not None and 3 < sv["days"] < 30, str(sv))
+
+        pipe = await watch.pipeline(s)
+        check("the pipeline reads booked days and a baseline",
+              "booked" in pipe and pipe["baseline"] >= pipe["floor"],
+              f'{pipe["booked"]} vs {pipe["baseline"]}')
+
+        note = await watch.rate_note(s, 800, 4)     # $200/day against a $350 archive
+        check("a below-rate booking gets one informational line",
+              note is not None and "200" in note, str(note))
+        check("a normal-rate booking gets none",
+              await watch.rate_note(s, 1400, 4) is None)
+
+        msg = await watch.weekly(s)
+        msg2 = await watch.weekly(s)
+        check("the weekly check speaks at most once per week",
+              msg2 is None, str(msg2))
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)

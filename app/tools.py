@@ -673,6 +673,12 @@ async def add_expected_payment(s, rec, amount, note, when=None, days=None,
              + (f"（{days} 天，一天 {_money(float(amount) / days)}）" if days else "")
              + f"　{_STAGE_ZH[st]}，先當 {conf:.0%} 算"
              + (f"，預估 {land} 入帳" if land else "，還沒說什麼時候"))
+    # the rate note — at booking time, because that is the only moment it is actionable
+    if days:
+        from . import watch as W
+        note_r = await W.rate_note(s, amount, days)
+        if note_r:
+            rec.says(rec.summary + "　" + note_r)
     return {"ok": True, "summary": rec.summary, "item": item}
 
 
