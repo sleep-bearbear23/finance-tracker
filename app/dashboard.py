@@ -672,7 +672,8 @@ async def api_plan(request: Request):
             # to book now (which lands next season). See season.settlement / AN.to_book.
             "settlement": await SE.settlement(
                 s, f, burn_monthly=te["fixed_monthly"] + te["normal_flex_monthly"],
-                by_hand_monthly=rec.get("by_hand_monthly", 0.0)),
+                by_hand_monthly=rec.get("by_hand_monthly", 0.0),
+                by_hand_rows=rec.get("by_hand_rows")),
             "to_book": await AN.to_book(s, f),
             # Momo's three layers: the fortnight (what I can spend and what kind of tight
             # this is), the runway (the earning goal, as a schedule with deadlines), and

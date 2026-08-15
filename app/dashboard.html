@@ -1784,7 +1784,7 @@ async function loadPlan(){
 `:''}
      <div class="kv"><span>進來　已入帳 ${F0(sm.cash_in)}${sm.cash_in_more>0?`＋還會入 ${F0(sm.cash_in_more)}`:''}</span>
        <b>${F0(sm.in_total)}</b></div>
-     <div class="kv"><span>出去　刷卡現金 ${F0(sm.spend_actual)}＋自己轉 ${F0(sm.spend_by_hand)}＋剩下 ${sm.days_left} 天預估 ${F0(sm.spend_projected)}</span>
+     <div class="kv"><span>出去　刷卡現金 ${F0(sm.spend_actual)}＋房租那類自己轉的 ${F0(sm.spend_by_hand)}＋剩下 ${sm.days_left} 天預估 ${F0(sm.spend_projected)}</span>
        <b>${F0(sm.out_total)}</b></div>`
     + (sm.unpaid||[]).map(u=>`<div class="ev2">
          <span class="d">${esc((u.when||'').slice(5))}</span>

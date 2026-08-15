@@ -1007,6 +1007,8 @@ async def match_refunds(s, rec, apply=True):
     """Pair credits that came in with the costs they repay, and hand back what is unclear."""
     from . import claims as CL
     out = await CL.match(s, apply=bool(apply))
+    for ch in out.pop("changes", []):
+        rec.row(ch["table"], ch["id"], ch["before"], ch["after"])
     if out["n_settled"]:
         rec.says(f"對上 {out['n_settled']} 筆退款／報帳："
                  + "；".join(f"{x['merchant']} {_money(x['amount'])}" for x in out["settled"][:4]))

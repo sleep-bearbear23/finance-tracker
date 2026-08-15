@@ -230,40 +230,50 @@ async def flows(session, keys: list[str], account_filter=None) -> dict[str, dict
 
 # ── the headline number ──────────────────────────────────────────────
 async def status(session, key: str | None = None) -> dict:
+    """The allowance, from the ONE engine.
+
+    This used to be its own formula — max(0, income − fixed − savings), single lens, no
+    floor, fixed costs from a KV key typed once at onboarding that defaulted to $0 and
+    was never resynced. It drove the phone alerts, the weekly report and the persisted
+    trend, while the dashboard showed :func:`allowance.compute`'s three-lens number —
+    two different answers to 「還能花多少」, hundreds of dollars apart, neither surface
+    saying so. Momo's bar is 「they all need to agree, even if approximate」, so the
+    formula is gone: every caller now gets the same number the dashboard defends.
+
+    The dict shape is preserved for the callers; the supplementary fields (income basis,
+    fixed, savings) are computed here from the same itemized sources the engine uses."""
+    from . import allowance as AL          # function-level: allowance imports budget
+    from . import fixed as FX
     key = key or current_key()
     start, end = P.key_bounds(key)
-    prefs_ = await get_prefs(session)
+    a = await AL.compute(session, key)
+
     inc = await income_basis(session, key)
-
-    income_p = inc["used"]
-    fixed_p = split_monthly(prefs_["fixed_monthly"], key)
-    sav_p = savings_for(prefs_["savings_amount"], prefs_["savings_cadence"], key, income_p)
-    allowance = max(0.0, income_p - fixed_p - sav_p)
-
-    # Not filtered to amount < 0: a refund inside the period has to come back off the
-    # total, otherwise a returned $200 order eats the allowance twice.
-    rows = (await session.execute(select(Transaction))).scalars().all()
-    spent = sum(spend_amount(t) for t in rows
-                if (d := eff_date(t)) and start <= d <= end and is_discretionary(t))
+    prefs_ = await get_prefs(session)
+    fixed_m = await FX.monthly_total(session, on=start)
+    fixed_p = await FX.per_period(session, key)
+    sav_p = savings_for(prefs_["savings_amount"], prefs_["savings_cadence"], key, inc["used"])
 
     today = now().date()
-    allowance, spent = round(allowance, 2), round(spent, 2)
     left = P.days_left(key, today) if start <= today <= end else 0
     return {
         "period_key": key, "period_label": P.label(key),
         "period_start": start, "period_end": end,
         "days_in_period": P.days_in(key), "days_left": left,
         "days_elapsed": P.elapsed_days(key, today),
-        "income_period": round(income_p, 2),
+        "income_period": round(inc["used"], 2),
         "income_expected": round(inc["expected"], 2),
         "income_actual": round(inc["actual"], 2),
         "income_blend": inc["blend"],
         "fixed_period": round(fixed_p, 2),
-        "fixed_monthly": prefs_["fixed_monthly"],
+        "fixed_monthly": fixed_m,
         "savings_period": round(sav_p, 2),
-        "allowance": allowance,
-        "spent": spent,
-        "remaining": round(allowance - spent, 2),
-        "per_day_left": round(max(0.0, allowance - spent) / left, 2) if left else None,
-        "pct_used": round(100 * spent / allowance, 1) if allowance > 0 else None,
+        "allowance": a["allowance"],
+        "spent": a["spent"],
+        "remaining": a["remaining"],
+        "per_day_left": a["per_day_left"],
+        "pct_used": a["pct_used"],
+        # so a surface can tell 「額度是 0」 apart from 「還沒設定」
+        "engine": "三鏡頭", "binding": a.get("binding"),
+        "configured": bool(a.get("budget_from")),
     }

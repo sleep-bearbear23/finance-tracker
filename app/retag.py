@@ -52,19 +52,27 @@ async def retag(session) -> dict[str, int]:
             n_mapped += 1
         else:
             n_guessed += 1
-        t.category = new
         if new is None:
-            n_unknown += 1
-        elif T.is_skip(new) and t.status not in ("reconciled",):
-            t.status = "ignored"
-            n_ignored += 1
+            n_unknown += 1          # keep the old value; blank teaches nothing
+        else:
+            t.category = new
+            if T.is_skip(new) and t.status not in ("reconciled",):
+                t.status = "ignored"
+                n_ignored += 1
 
     # merchant memory speaks the same language, or she'll re-teach every merchant
     n_mem = 0
     for m in (await session.execute(select(MerchantMemory))).scalars().all():
         if m.category and m.category not in T.ALL:
-            m.category = T.from_legacy(m.category, m.key or "") or T.guess(m.key or "")
-            n_mem += 1
+            # A failed lookup keeps what she taught rather than blanking it. The old
+            # `x or y` wrote None when both lookups missed — merchant_key squashes
+            # 「99 RANCH MARKET」 to 「ranchmarket」, which matches no rule with a space
+            # or digit in it — and six of her fifty-eight taught merchants (KFC, Petco,
+            # De Lacey Parking…) were quietly saved back as blank.
+            new = T.from_legacy(m.category, m.key or "") or T.guess(m.key or "")
+            if new:
+                m.category = new
+                n_mem += 1
 
     await set_kv(session, RETAG_FLAG, "1")
     await session.commit()
@@ -121,9 +129,13 @@ async def net_family_paybacks(session, force: bool = False) -> dict[str, int]:
     for t in rows:
         if not T.family_payback(t.merchant_desc or "", t.amount):
             continue
-        if t.inflow_kind == T.REIMBURSE_FAMILY and t.category == "household":
-            continue                      # already reclaimed on an earlier pass
-        if t.status == "reconciled":
+        if t.inflow_kind == T.REIMBURSE_FAMILY:
+            # Already claimed as a payback — whatever category it carries NOW is where
+            # Momo (or a later pass) decided it belongs. The old guard also required
+            # category == "household", so recategorising a payback to anything else made
+            # this pass force it back on every flag bump. Her answer wins.
+            continue
+        if t.status in ("reconciled", "enriched"):
             continue                      # Momo has ruled on this one; leave it alone
         t.category = "household"
         t.inflow_kind = T.REIMBURSE_FAMILY
@@ -153,7 +165,10 @@ async def net_refunds(session, force: bool = False) -> dict[str, int]:
             continue
         if t.inflow_kind == T.PAY or t.status == "income":
             continue  # real pay, hands off
-        if (t.category or "") in ("tax", "transfer") or t.status == "reconciled":
+        if (t.category or "") in ("tax", "transfer") or t.status in ("reconciled", "enriched"):
+            # enriched = she answered 陳會計's question about this row. Re-guessing an
+            # answered row on the next flag bump is the system eating its best data —
+            # her corrections — with no undo trail. Boot passes yield to humans.
             continue
 
         charge = _match(t, by_brand.get(T.brand_key(t.merchant_desc), []))

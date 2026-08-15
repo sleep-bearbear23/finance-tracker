@@ -33,8 +33,10 @@ DEFAULTS: list[dict] = [
     # manual: Momo has to actually send this one every month. It is the reason the
     # calendar now carries monthly lines she initiates herself — she asked for the $1,000
     # to her mother to be on there, and it was already a fixed cost, just invisible.
+    # since: rent began 2026-07. Without it the splitter amortised $1,000/month back
+    # through June and the season opened with ~$400 of phantom rent she never paid.
     {"name": "房租（Zelle 給媽媽）", "amount": 1000.0, "cadence": "monthly",
-     "cat": "rent", "where": "Chase", "manual": True},
+     "cat": "rent", "where": "Chase", "manual": True, "since": "2026-07-01"},
     {"name": "加油", "amount": 150.0, "cadence": "monthly", "cat": "gas",
      "where": "Apple Card", "note": "一個月 3 次上下，工作要開車"},
     {"name": "Claude 訂閱（含加值）", "amount": 110.0, "cadence": "monthly",
@@ -112,18 +114,40 @@ async def save(session, new_rows: list[dict]) -> None:
             continue
         clean.append({k: r.get(k) for k in
                       ("name", "amount", "cadence", "cat", "where", "next_due", "note",
-                       "manual")
+                       "manual", "since")
                       if r.get(k) is not None} | {"amount": amt})
     await set_kv(session, KEY, json.dumps(clean, ensure_ascii=False))
 
 
-async def monthly_total(session, include_sinking: bool | None = None) -> float:
-    return round(sum(r["monthly"] for r in await rows(session, include_sinking)), 2)
+def active(r: dict, on) -> bool:
+    """Is this cost alive on a given date? A row with no ``since`` always was.
+
+    ``since`` exists because a fixed cost has a birthday: Momo's rent started 2026-07,
+    and a splitter that amortises $1,000/month across every period it can see invented
+    ~$400 of June rent. A date the cost didn't exist on is not a cheaper version of the
+    cost — it's no cost at all."""
+    s = r.get("since")
+    if not s or on is None:
+        return True
+    try:
+        return date.fromisoformat(str(s)[:10]) <= on
+    except ValueError:
+        return True
+
+
+async def monthly_total(session, include_sinking: bool | None = None, on=None) -> float:
+    return round(sum(r["monthly"] for r in await rows(session, include_sinking)
+                     if active(r, on)), 2)
 
 
 async def per_period(session, key: str, include_sinking: bool | None = None) -> float:
-    """Charged to one half-month, weighted by real day count (15/31 vs 16/31)."""
-    return round(P.split_monthly(await monthly_total(session, include_sinking), key), 2)
+    """Charged to one half-month, weighted by real day count (15/31 vs 16/31).
+
+    Rows are filtered by whether they were alive at the period's start, so a cost that
+    began in July charges nothing to June."""
+    lo, _ = P.key_bounds(key)
+    return round(P.split_monthly(
+        await monthly_total(session, include_sinking, on=lo), key), 2)
 
 
 async def by_treatment(session) -> dict[str, float]:
@@ -312,8 +336,12 @@ async def reconcile(session, periods: int = OBSERVED_PERIODS) -> dict:
     rel = abs(gap) / stated if stated else 0.0
     return {"stated_all": stated_all, "stated": stated,
             "observed": obs["monthly"], "gap": gap,
-            "by_hand": [{"name": r["name"], "monthly": r["monthly"]} for r in by_hand],
-            "by_hand_monthly": round(sum(r["monthly"] for r in by_hand), 2),
+            "by_hand": [{"name": r["name"], "monthly": r["monthly"],
+                         "since": r.get("since")} for r in by_hand],
+            "by_hand_monthly": round(sum(r["monthly"] for r in by_hand
+                                         if active(r, now().date())), 2),
+            "by_hand_rows": [{"monthly": r["monthly"], "since": r.get("since"),
+                              "name": r["name"]} for r in by_hand],
             "periods": obs["periods"], "series": obs["series"],
             "enough": obs.get("enough", False),
             "diverged": bool(obs.get("enough")) and rel > DIVERGENCE_FLAG,

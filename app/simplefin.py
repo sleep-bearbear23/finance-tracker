@@ -6,8 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from sqlalchemy import select
+
 from . import classify
-from .config import TZ, now, settings
+from .config import TZ, aware, now, settings
 from .db import get_kv, set_kv
 from .models import Account, Transaction
 
@@ -75,28 +77,72 @@ async def ingest(session) -> int:
             a.balance_date = datetime.fromtimestamp(int(acct["balance-date"]), tz=timezone.utc).astimezone(TZ)
 
         for tx in acct.get("transactions", []):
-            if await session.get(Transaction, tx["id"]):
-                continue  # already have it
-            try:
-                amount = float(tx.get("amount", 0) or 0)
-            except (TypeError, ValueError):
-                amount = 0.0
-            posted = None
-            if tx.get("posted"):
-                posted = datetime.fromtimestamp(int(tx["posted"]), tz=timezone.utc).astimezone(TZ)
-            desc = tx.get("description", "") or tx.get("payee", "") or ""
-            status, category, note, inflow = await classify.classify(
-                session, desc, amount, backfill=not initialized)
-            if status == "needs_context":
-                new_needs += 1
-
-            session.add(Transaction(
-                id=tx["id"], account_id=acct["id"], amount=amount,
-                merchant_desc=desc, posted_at=posted, category=category, note=note,
-                status=status, inflow_kind=inflow,
-            ))
+            new_needs += await absorb(session, acct["id"], tx, initialized)
 
     await session.commit()
     if not initialized:
         await set_kv(session, _INIT_KEY, "1")
     return new_needs
+
+
+async def absorb(session, acct_id: str, tx: dict, initialized: bool) -> int:
+    """File one feed transaction: insert, upgrade a pending twin, or skip a known row.
+
+    Split out of :func:`ingest` so the dating rules are testable without a bank."""
+    try:
+        amount = float(tx.get("amount", 0) or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    posted = None
+    if tx.get("posted"):
+        posted = datetime.fromtimestamp(int(tx["posted"]), tz=timezone.utc).astimezone(TZ)
+    desc = tx.get("description", "") or tx.get("payee", "") or ""
+
+    have = await session.get(Transaction, tx["id"])
+    if have is not None:
+        # A pending row carries no posted date; the bank fills it in when the
+        # charge settles. Sixteen rows — including a $1,400 Zelle from a work
+        # payer — sat with posted_at NULL forever because this upgrade never
+        # happened, and a row with no date belongs to no period.
+        if have.posted_at is None and posted is not None:
+            have.posted_at = posted
+        return 0
+
+    # Some banks settle a pending charge under a NEW id. Without this check the
+    # same money lands twice: once undated, once dated. If an undated row on this
+    # account matches on amount and description within a week, this IS that row —
+    # keep everything Momo taught it and move it onto the settled identity.
+    twin = None
+    if posted is not None:
+        twin = next(
+            (t for t in (await session.execute(
+                select(Transaction).where(
+                    Transaction.account_id == acct_id,
+                    Transaction.posted_at.is_(None)))).scalars()
+             if abs(t.amount - amount) < 0.005
+             and (t.merchant_desc or "")[:24] == desc[:24]
+             and t.created_at is not None
+             and abs((posted - aware(t.created_at)).days) <= 7),
+            None)
+    if twin is not None:
+        session.add(Transaction(
+            id=tx["id"], account_id=acct_id, amount=amount,
+            merchant_desc=desc, posted_at=posted,
+            category=twin.category, note=twin.note, status=twin.status,
+            inflow_kind=twin.inflow_kind, reimbursable=twin.reimbursable,
+            project=twin.project, claim=twin.claim,
+            effective_at=twin.effective_at, nets_txn_id=twin.nets_txn_id,
+            created_at=twin.created_at,
+        ))
+        await session.delete(twin)
+        return 0
+
+    status, category, note, inflow = await classify.classify(
+        session, desc, amount, backfill=not initialized)
+
+    session.add(Transaction(
+        id=tx["id"], account_id=acct_id, amount=amount,
+        merchant_desc=desc, posted_at=posted, category=category, note=note,
+        status=status, inflow_kind=inflow,
+    ))
+    return 1 if status == "needs_context" else 0

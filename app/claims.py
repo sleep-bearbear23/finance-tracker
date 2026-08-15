@@ -114,7 +114,7 @@ async def match(session, apply: bool = True) -> dict:
     """
     rows = (await session.execute(select(Transaction))).scalars().all()
     charges = [t for t in rows if t.amount < 0]
-    settled, asks = [], []
+    settled, asks, changes = [], [], []
 
     for c in rows:
         if c.amount <= 0 or c.nets_txn_id:
@@ -138,20 +138,35 @@ async def match(session, apply: bool = True) -> dict:
             continue
         t = hits[0]
         if apply:
+            from . import changelog as CL
+            cols = ["category", "inflow_kind", "effective_at", "status",
+                    "nets_txn_id", "claim"]
+            before_c = CL.snapshot_row(c, cols)
+            before_t = CL.snapshot_row(t, cols)
             c.nets_txn_id = t.id
-            c.category = t.category
+            # enriched = Momo already told 陳會計 what this credit was. The link and the
+            # settlement still happen, but her words on the row do not get overwritten
+            # by the charge's fields.
+            if c.status != "enriched":
+                c.category = t.category
+                c.status = "auto"
             c.inflow_kind = c.inflow_kind or (
                 T.REIMBURSE_WORK if T.is_work(t.category) else T.REFUND)
-            c.effective_at = t.posted_at or t.created_at
-            c.status = "auto"
+            c.effective_at = c.effective_at or (t.posted_at or t.created_at)
             t.claim = "paid"
+            # five fields across two rows used to change here with no Change row at all —
+            # a wrong pairing was unfixable, and nets_txn_id then hid it from re-matching
+            changes.append({"table": "transactions", "id": c.id,
+                            "before": before_c, "after": CL.snapshot_row(c, cols)})
+            changes.append({"table": "transactions", "id": t.id,
+                            "before": before_t, "after": CL.snapshot_row(t, cols)})
         settled.append({"credit": c.id, "charge": t.id,
                         "amount": round(c.amount, 2),
                         "merchant": (t.merchant_desc or "")[:40],
                         "project": t.project})
     if apply and (settled or asks):
         await session.commit()
-    return {"settled": settled, "ask": asks,
+    return {"settled": settled, "ask": asks, "changes": changes,
             "n_settled": len(settled), "n_ask": len(asks)}
 
 

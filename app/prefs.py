@@ -20,8 +20,14 @@ def _norm(name: str) -> str:
 
 
 async def get_prefs(session) -> dict:
+    # fixed_monthly comes from the itemized rows, never the typed KV. The KV held
+    # $3,778.38 from onboarding week — likely her whole-month spending, filed as fixed
+    # costs — while the rows total $1,521.34, which Momo has confirmed correct. The typed
+    # figure drove the phone alerts and the weekly report for a month; the stale layer of
+    # truth is retired, not resynced.
+    from . import fixed as FX
     return {
-        "fixed_monthly": _f(await get_kv(session, "cfg_fixed_monthly"), 0.0),
+        "fixed_monthly": await FX.monthly_total(session),
         "savings_amount": _f(await get_kv(session, "cfg_savings_amount"), 0.0),
         "savings_cadence": await get_kv(session, "cfg_savings_cadence", "biweekly"),
     }
@@ -39,6 +45,7 @@ async def set_prefs(session, values=None, *, fixed_monthly=None, savings_amount=
     elif values is not None:
         raise TypeError("set_prefs(values) takes a dict")
     if fixed_monthly is not None:
+        # kept as a record of what she said at onboarding; nothing reads it anymore
         await set_kv(session, "cfg_fixed_monthly", str(fixed_monthly))
     if savings_amount is not None:
         await set_kv(session, "cfg_savings_amount", str(savings_amount))
@@ -322,6 +329,11 @@ def _from_invoices(rows: list[dict]) -> list[dict]:
     the price of a day. Non-shoot work (a poster design) carries no days and drops out."""
     out = []
     for r in rows or []:
+        # Unpaid work is real work and belongs in the record, but it is not evidence about
+        # her price. A portfolio short with 4 days and no fee would drag the divisor down
+        # and quietly lower every earning goal built on it.
+        if (r.get("kind") or "shoot") != "shoot":
+            continue
         try:
             d = int(r.get("days") or 0)
             rate = float(r.get("rate") or 0)

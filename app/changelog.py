@@ -31,9 +31,15 @@ from .models import Change, KV, MerchantMemory, Transaction
 WATCHED: tuple[str, ...] = (
     "cfg_upcoming", "cfg_accounts", "cfg_fixed_costs", "cfg_sinking", "cfg_sinking_on",
     "cfg_savings_amount", "cfg_savings_cadence", "cfg_emergency_target",
-    "cfg_monthly_baseline", "cfg_fixed_monthly", "cfg_budget_start",
+    "cfg_monthly_baseline", "cfg_fixed_monthly",
+    # cfg_budget_start was a typo pointed at a key that does not exist — the real one is
+    # cfg_budget_from (allowance.START_KEY). A guard aimed at nothing guards nothing.
+    "cfg_budget_from",
     "cfg_cash_on_hand", "cfg_total_debt", "cfg_income_sources", "cfg_season",
     "cfg_defend_months", "cfg_daily_grants", "cfg_season_pot", "cfg_day_rate",
+    # the project overlay: set_project_kind can pull a job out of the day-rate basis,
+    # which moves a headline number — that write was invisible and unrecoverable
+    "cfg_projects",
 )
 
 _TABLES = {"transactions": Transaction, "merchant_memory": MerchantMemory}

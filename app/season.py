@@ -303,7 +303,8 @@ async def _won_dates(session) -> dict[str, str]:
 
 # ── Module A: how this season actually went ──────────────────────────
 async def settlement(session, f: F.Facts | None = None, burn_monthly: float = 0.0,
-                     by_hand_monthly: float = 0.0) -> dict:
+                     by_hand_monthly: float = 0.0,
+                     by_hand_rows: list[dict] | None = None) -> dict:
     """Did this season break even? A settlement, deliberately not a target.
 
     Momo: "how I'm doing this season is partially, if not largely, because of last
@@ -358,8 +359,25 @@ async def settlement(session, f: F.Facts | None = None, burn_monthly: float = 0.
 
     spent = sum(budget.spend_amount(t) for t in f.txns
                 if budget.is_spend(t) and (d := budget.eff_date(t)) and lo <= d <= hi)
-    # rent leaves as a Zelle, which the ledger books as a transfer — real money, invisible
-    by_hand_so_far = round(by_hand_monthly * elapsed / 30.4, 2)
+    # rent leaves as a Zelle, which the ledger books as a transfer — real money, invisible.
+    # Each by-hand cost is charged only from the day it existed: rent began 2026-07-01, and
+    # `monthly × elapsed` billed this season for a June rent that was never paid (~$400).
+    if by_hand_rows:
+        by_hand_so_far = 0.0
+        for r in by_hand_rows:
+            frm = lo
+            s = str(r.get("since") or "")[:10]
+            if s:
+                try:
+                    frm = max(lo, date.fromisoformat(s))
+                except ValueError:
+                    pass
+            days = (min(today, hi) - frm).days + 1
+            if days > 0:
+                by_hand_so_far += float(r.get("monthly") or 0) * days / 30.4
+        by_hand_so_far = round(by_hand_so_far, 2)
+    else:
+        by_hand_so_far = round(by_hand_monthly * elapsed / 30.4, 2)
     projected = round(burn_monthly * left / 30.4, 2)
     out_total = round(spent + by_hand_so_far + projected, 2)
     in_total = round(cash_in + more, 2)
