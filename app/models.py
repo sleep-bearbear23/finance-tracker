@@ -55,6 +55,12 @@ class Transaction(Base):
     # money even when it buys groceries, so it hangs off the project rather than the
     # fortnight — see projects.py and taxonomy's 工作 note.
     project: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Where a reimbursable cost is in its life. None = not a claim at all.
+    #   todo   she fronted it and has not asked for it back yet
+    #   sent   it is on an invoice / submitted, now it is someone else's turn
+    #   paid   the money came back (nets_txn_id points at the credit)
+    #   wont   she has decided to eat it — a real cost of doing business
+    claim: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     # For a refund/reimbursement: the id of the charge it reverses, when we found it.
     nets_txn_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # The date the budget should count this on. Only ever set for a refund: a return

@@ -360,6 +360,51 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "set_project_kind",
+        "description": (
+            "Say what a job IS: shoot = paid work, portfolio = unpaid / for her reel, "
+            "design = paid but not per shoot day, spec = pitch or test. ONLY 'shoot' feeds "
+            "her day rate — a portfolio short with four days and no fee would drag the "
+            "average down and quietly lower every earning goal that divides by it. Ask "
+            "when she mentions a job is unpaid or for her portfolio."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "kind": {"type": "string", "enum": ["shoot", "portfolio", "design", "spec"]},
+            },
+            "required": ["project", "kind"],
+        },
+    },
+    {
+        "name": "set_claim",
+        "description": (
+            "Move money she FRONTED along its life: 'todo' = she has not asked for it back "
+            "yet, 'sent' = she has asked and is waiting, 'paid' = it came back, 'wont' = "
+            "she has decided to eat it. Use it when she says she submitted an expense "
+            "report, chased a refund, got money back, or gave up on one. This is what "
+            "lets you tell her whether SHE is the one holding it up or they are."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "which": {"type": "string", "description": "Merchant, amount, or project."},
+                "state": {"type": "string", "enum": ["todo", "sent", "paid", "wont"]},
+                "days": {"type": "integer", "description": "How far back to look. Default 90."},
+            },
+            "required": ["which", "state"],
+        },
+    },
+    {
+        "name": "match_refunds",
+        "description": (
+            "Pair credits that have arrived with the costs they repay, by amount. Run it "
+            "when a refund or reimbursement lands, or when she asks what is still "
+            "outstanding. It only settles where exactly ONE outstanding claim has that "
+            "amount; anything ambiguous comes back in `ask` for you to check with her — "
+            "two identical fares on one shoot cannot be told apart by the number alone."),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "tag_project",
         "description": (
             "Move charges she ALREADY logged onto a job. Use it when she says something "
@@ -805,6 +850,74 @@ async def set_income_baseline(s, rec, amount):
     return {"ok": True, "summary": rec.summary}
 
 
+async def set_project_kind(s, rec, project, kind):
+    """Mark what a job IS. Unpaid work stays in the record and out of the day rate."""
+    from . import projects as PJ
+    if kind not in PJ.KINDS:
+        return {"ok": False, "error": f"kind 只能是 {'／'.join(PJ.KINDS)}"}
+    hit = await PJ.resolve(s, project)
+    if hit["id"] is None:
+        names = "、".join(o["name"] for o in hit["options"][:4])
+        return {"ok": False, "error": f"「{project}」對得上好幾個案子：{names}。是哪一個？"}
+    await PJ.annotate(s, hit["id"], kind=kind)
+    zh = PJ.KINDS[kind]
+    extra = ("　（無酬的案子不會算進日薪，也不會拉低要接多少的估算）"
+             if kind not in PJ.RATED else "")
+    rec.says(f"「{project}」標成{zh}。{extra}")
+    return {"ok": True, "summary": rec.summary, "id": hit["id"], "kind": kind}
+
+
+async def set_claim(s, rec, which, state, days=90):
+    """Move a fronted cost along: 還沒去要 → 已經要了 → 收回來了（或決定自己吸收）。"""
+    from sqlalchemy import select
+    from . import claims as CL
+    from datetime import timedelta as _td
+
+    if state not in ("todo", "sent", "paid", "wont"):
+        return {"ok": False, "error": "state 只能是 todo／sent／paid／wont"}
+    key = (which or "").strip().lower()
+    cutoff = now().date() - _td(days=int(days or 90))
+    rows = (await s.execute(select(Transaction))).scalars().all()
+    hits = []
+    for t in rows:
+        if t.amount >= 0:
+            continue
+        d = (t.posted_at or t.created_at)
+        if d and d.date() < cutoff:
+            continue
+        hay = f"{t.merchant_desc or ''} {t.note or ''} {t.project or ''}".lower()
+        amt = False
+        try:
+            amt = abs(abs(t.amount) - float(key.replace("$", "").replace(",", ""))) < 0.02
+        except ValueError:
+            pass
+        if key and (key in hay or amt):
+            hits.append(t)
+    if not hits:
+        return {"ok": False, "error": f"最近 {days} 天找不到「{which}」。"}
+    total = 0.0
+    for t in hits:
+        before = changelog.snapshot_row(t, ["claim", "reimbursable"])
+        t.claim = state
+        if state in ("todo", "sent") and t.reimbursable is None:
+            t.reimbursable = True
+        total += abs(t.amount)
+        rec.row("transactions", t.id, before, changelog.snapshot_row(t, ["claim", "reimbursable"]))
+    await s.commit()
+    rec.says(f"{len(hits)} 筆共 {_money(total)} → {CL.LABEL[state]}")
+    return {"ok": True, "summary": rec.summary, "n": len(hits), "total": round(total, 2)}
+
+
+async def match_refunds(s, rec, apply=True):
+    """Pair credits that came in with the costs they repay, and hand back what is unclear."""
+    from . import claims as CL
+    out = await CL.match(s, apply=bool(apply))
+    if out["n_settled"]:
+        rec.says(f"對上 {out['n_settled']} 筆退款／報帳："
+                 + "；".join(f"{x['merchant']} {_money(x['amount'])}" for x in out["settled"][:4]))
+    return {"ok": True, "summary": rec.summary or "沒有可以自動對上的。", **out}
+
+
 async def tag_project(s, rec, which, project, reimbursable=None, days=30):
     """Move charges she has already logged onto a job, and out of her daily allowance.
 
@@ -1016,6 +1129,9 @@ HANDLERS = {
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
     "tag_project": tag_project,
+    "set_project_kind": set_project_kind,
+    "set_claim": set_claim,
+    "match_refunds": match_refunds,
     "log_income": log_income,
     "remember_merchant": remember_merchant,
 }

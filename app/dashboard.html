@@ -443,6 +443,47 @@
   .pj .st{flex:0 0 4.6em;text-align:right;font-size:10px;letter-spacing:.06em}
   .pj.owed .st{color:var(--warn)} .pj.paid .st{color:var(--accent)}
   .pj.late .st{color:var(--bad)}
+
+  /* ── 專案細節：slide-over ────────────────────────────────────────────────────
+     Momo: "there should probably be a project panel for individual projects, we can do
+     slide from the right popup style." A job's whole life — what it paid, what she fronted
+     for it, what is still owed either way — does not fit in a list row and does not deserve
+     its own page either. */
+  /* --surface is a 4% white wash meant to sit ON the page; used as a drawer background it
+     let the whole dashboard read through the panel. Opaque, with the wash layered on top. */
+  .drawer{position:fixed;inset:0 0 0 auto;width:min(560px,92vw);z-index:60;
+    background:linear-gradient(var(--surface),var(--surface)) var(--surface-solid);
+    border-left:1px solid var(--border);
+    box-shadow:-30px 0 60px rgba(0,0,0,.55);
+    transform:translateX(100%);transition:transform .28s cubic-bezier(.22,1,.36,1);
+    display:flex;flex-direction:column;padding:22px 24px 18px}
+  .drawer.on{transform:none}
+  .scrim{position:fixed;inset:0;z-index:59;background:rgba(0,0,0,.5);opacity:0;
+    pointer-events:none;transition:opacity .28s}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .drawer .dh{display:flex;align-items:flex-start;gap:12px;flex:0 0 auto}
+  .drawer .dh h3{margin:0;font-size:19px;font-weight:300;letter-spacing:-.3px;line-height:1.35}
+  .drawer .dh .x{margin-left:auto;flex:0 0 auto;background:none;border:0;color:var(--muted);
+    font-size:20px;cursor:pointer;font-family:inherit;line-height:1;padding:2px 4px}
+  .drawer .dsub{font-size:11.5px;color:var(--muted);margin:6px 0 0;line-height:1.7}
+  .drawer .dbody{flex:1;min-height:0;overflow:auto;margin-top:16px}
+  .kind{display:inline-flex;gap:4px;background:rgba(255,255,255,.045);border-radius:999px;
+    padding:2px;margin:12px 0 4px}
+  .kind button{border:0;background:none;color:var(--muted);font-family:inherit;font-size:10px;
+    letter-spacing:.06em;padding:4px 10px;border-radius:999px;cursor:default}
+  .kind button.on{background:rgba(255,255,255,.07);color:var(--accent);
+    box-shadow:inset 0 0 0 1px rgba(46,229,169,.28)}
+  .dsec{font-size:9.5px;letter-spacing:.2em;color:var(--muted);margin:18px 0 6px;
+    padding-top:12px;border-top:1px solid var(--grid)}
+  .dsec:first-child{border-top:none;padding-top:0;margin-top:4px}
+  .cl{display:inline-block;font-size:9.5px;padding:1px 7px;border-radius:999px;
+    background:rgba(255,255,255,.06);color:var(--muted);margin-left:6px}
+  .cl.todo{color:var(--warn);background:rgba(240,180,60,.12)}
+  .cl.sent{color:var(--ink2);background:rgba(255,255,255,.08)}
+  .cl.paid{color:var(--accent);background:rgba(46,229,169,.12)}
+  .cl.wont{color:var(--muted)}
+  .pj{cursor:pointer}
+  .pj:hover{background:rgba(255,255,255,.02)}
   #s-income > .grid{height:100%;display:grid;gap:var(--gap);
     grid-template-columns:1.3fr .8fr .95fr;
     grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
@@ -900,6 +941,15 @@
       <section class="card" data-pane="bchat"><h2>對話紀錄</h2><div class="body" id="chatBox"></div></section>
     </div>
   </div>
+
+  <div class="scrim" id="pjScrim" onclick="closeProject()"></div>
+  <aside class="drawer" id="pjDrawer" aria-hidden="true">
+    <div class="dh">
+      <div><h3 id="pjName">—</h3><p class="dsub" id="pjSub"></p></div>
+      <button class="x" onclick="closeProject()" aria-label="關閉">✕</button>
+    </div>
+    <div class="dbody" id="pjBody"></div>
+  </aside>
 
   <div class="bottomnav">
     <a id="bn-home" href="#/"><span class="ic">◎</span>總覽</a>
@@ -1626,10 +1676,68 @@ const nowYM = () => { const d=new Date(); return d.getFullYear()+'-'+String(d.ge
    The invoice archive knew the day rate and the shoot dates, 待收款 knew the stage and when
    the money should land, the ledger knew when it actually cleared — and nothing joined them,
    so a gig she shot in May was three unrelated rows. */
+/* the slide-over: one job's whole life on one surface */
+let projData = null;
+function openProject(id){
+  const p = (projData?.projects || []).find(x => x.id === id);
+  if(!p) return;
+  el('pjName').textContent = p.name || '—';
+  el('pjSub').textContent = [p.client, p.invoice, p.status].filter(Boolean).join('・');
+  const money = (k,v,cls)=>`<div class="kv"><span>${esc(k)}</span><b class="${cls||''}">${v}</b></div>`;
+  const kinds = projData.kinds || {};
+  const cur = p.kind || 'shoot';
+  let h = `<div class="kind">` + Object.entries(kinds).map(([k,zh])=>
+      `<button class="${k===cur?'on':''}">${esc(zh)}</button>`).join('') + `</div>`
+    + (p.rated===false
+        ? `<p class="dsub">這種案子不算進日薪，也不會影響「還要接幾天」。</p>` : '');
+
+  h += `<div class="dsec">錢進來</div>`
+    + money('開的金額', F0(p.total))
+    + (p.rate ? money('日薪 × 天數', `${F0(p.rate)} × ${p.days} 天`) : '')
+    + (p.extras>0 ? money('前製・加班', F0(p.extras)) : '')
+    + (p.invoiced_on ? money('開發票', p.invoiced_on) : '')
+    + (p.owed ? money(p.late_days>0?`還沒收到・晚了 ${p.late_days} 天`:'還沒收到',
+                      F0(p.owed), p.late_days>0?'':'pos') : '')
+    + (p.lands && p.owed ? money('預計入帳', p.lands) : '')
+    + (p.paid ? money(`${md(p.paid_on)} 入帳`, F0(p.paid), 'pos') : '');
+  if(p.paid && p.paid_match==='amount')
+    h += `<p class="dsub">這筆是用金額對上的，不是百分之百確定：${esc(p.paid_desc||'')}</p>`;
+
+  const costs = p.costs || [];
+  h += `<div class="dsec">為這個案子花的錢${costs.length?`（${costs.length} 筆）`:''}</div>`;
+  if(!costs.length){
+    h += `<p class="dsub">還沒有。跟阿姨說哪筆是為了這個案子花的，她會搬過來，
+          那筆錢就不會從你每天能花的錢裡扣。</p>`;
+  } else {
+    h += costs.map(c=>`<div class="pj" style="cursor:default">
+        <span class="d">${esc((c.date||'').slice(5))}</span>
+        <span class="w"><b>${esc(c.merchant)}</b>
+          <span class="s">${esc(c.cat_label||'')}${
+            c.claim?`<span class="cl ${c.claim}">${esc(c.claim_label)}</span>`:''}</span></span>
+        <span class="amt">${F0(c.amount)}</span></div>`).join('')
+      + money('總共花了', F0(p.cost_total||0))
+      + (p.cost_waiting>0 ? money('還沒拿回來', F0(p.cost_waiting), 'warn') : '')
+      + (p.cost_recovered>0 ? money('已經拿回來', F0(p.cost_recovered), 'pos') : '')
+      + (p.cost_own>0 ? money('自己吸收', F0(p.cost_own)) : '')
+      + money(p.cost_waiting>0?'這個案子淨進帳（假設都收得回來）':'這個案子淨進帳',
+              F0(p.net!=null?p.net:(p.total||0)));
+  }
+  if(p.note) h += `<div class="dsec">備註</div><p class="dsub">${esc(p.note)}</p>`;
+  el('pjBody').innerHTML = h;
+  el('pjDrawer').classList.add('on'); el('pjScrim').classList.add('on');
+  el('pjDrawer').setAttribute('aria-hidden','false');
+}
+function closeProject(){
+  el('pjDrawer').classList.remove('on'); el('pjScrim').classList.remove('on');
+  el('pjDrawer').setAttribute('aria-hidden','true');
+}
+addEventListener('keydown', e=>{ if(e.key==='Escape') closeProject(); });
+
 let projLoaded=false;
 async function loadProjects(){
   if(projLoaded) return; projLoaded=true;
   const d=await getJSON('/api/projects');
+  projData=d;
   stamp();
   el('projStats').innerHTML=[
     ['接過的案子', d.n, `${d.shoot_days} 個拍攝日`],
@@ -1637,7 +1745,7 @@ async function loadProjects(){
     ['還沒收到', F0(d.owed_total), d.owed_n?`${d.owed_n} 筆`:'都收齊了'],
     ['平均日薪', d.avg_rate?F0(d.avg_rate):'—', '拍攝費 ÷ 拍攝天數'],
     ['為案子花的', F0(d.spent_on_jobs||0),
-      (d.claimable>0?`可報帳 ${F0(d.claimable)}`:'沒有可報帳的')
+      (d.awaiting_claim>0?`還沒拿回來 ${F0(d.awaiting_claim)}`:'沒有待收的')
       + (d.own_cost>0?`・自己吸收 ${F0(d.own_cost)}`:'')],
   ].map(([k,v,x])=>`<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div>
       <div class="sub">${esc(x)}</div></div>`).join('');
@@ -1654,7 +1762,7 @@ async function loadProjects(){
     if(p.paid_on) bits.push(`${md(p.paid_on)} 入帳`);
     if(p.cost_total) bits.push(`為它花了 ${F0(p.cost_total)}`
         + (p.cost_reimbursable>0?`（可報 ${F0(p.cost_reimbursable)}）`:''));
-    return `<div class="pj ${cls}">
+    return `<div class="pj ${cls}" onclick="openProject('${esc(p.id)}')">
       <span class="d">${esc((p.invoiced_on||p.when||'').slice(0,10)||'—')}</span>
       <span class="w"><b>${esc(p.name||'—')}</b><span class="s">${bits.join('・')}</span></span>
       <span class="amt">${F0(p.total)}${p.rate?`<span class="r">${F0(p.rate)}／天</span>`:''}</span>

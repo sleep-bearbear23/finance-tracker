@@ -27,6 +27,7 @@ Path("/tmp/dashtest.db").unlink(missing_ok=True)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import cleanup, dashboard, migrate, prefs, retag  # noqa: E402
+from app import prefs as prefs_mod  # noqa: E402
 from app import seed_invoices as SI  # noqa: E402
 from app import facts as F  # noqa: E402
 from app import period as P  # noqa: E402
@@ -685,6 +686,36 @@ async def main():
           _pj._score("Woman in Blue Dress", "The Lady in the Blue Dress 07/07–07/11") >= 30)
     check("an unrelated name matches nothing",
           _pj._score("沒聽過的新案子", "Prince In Workboots 05/10–05/17") == 0)
+
+    print("\n[17] money she fronted, and the credit that settles it")
+    from app import claims as _cl
+    from app import projects as _pj2
+    # Momo: "there need to be a transaction record for each project, and updated refund and
+    # reimbursement status, and whether she needs to rush me for asking reimbursement or
+    # asking amazon about refund etc."
+    check("a reimbursable work cost defaults to 「還沒去要」, not to nothing",
+          _cl.state_of(_Row(claim=None, reimbursable=True, category="work")) == "todo")
+    check("an explicit state always wins over the default",
+          _cl.state_of(_Row(claim="sent", reimbursable=True, category="work")) == "sent")
+    check("an ordinary purchase is not a claim",
+          _cl.state_of(_Row(claim=None, reimbursable=None, category="food")) is None)
+    check("who has the ball is derived from the state, not guessed",
+          _cl.LABEL["todo"] != _cl.LABEL["sent"] and set(_cl.LABEL) ==
+          {"todo", "sent", "paid", "wont"})
+    # Unpaid work belongs in the record and nowhere near the price she charges.
+    check("only 接案拍攝 prices a shoot day",
+          _pj2.RATED == ("shoot",) and set(_pj2.KINDS) >=
+          {"shoot", "portfolio", "design", "spec"})
+    check("a portfolio job is dropped from the rate rather than averaged in at $0",
+          prefs_mod.day_rate([], [], invoices=[
+              {"kind": "shoot", "rate": 350.0, "days": 8, "day_total": 2800.0},
+              {"kind": "portfolio", "rate": 0.0, "days": 4, "day_total": 0.0},
+          ])["observed"] == 350.0)
+    check("a paid design job is also kept out of the DAY rate — it is not priced per day",
+          prefs_mod.day_rate([], [], invoices=[
+              {"kind": "shoot", "rate": 300.0, "days": 5, "day_total": 1500.0},
+              {"kind": "design", "rate": 550.0, "days": 1, "day_total": 550.0},
+          ])["n"] == 1)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

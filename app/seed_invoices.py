@@ -42,13 +42,29 @@ def load() -> list[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
-async def invoices(session) -> list[dict]:
+async def invoices(session, overlaid: bool = True) -> list[dict]:
+    """The archive, with Momo's own corrections folded in.
+
+    ``kind`` in particular has to come through here: she marks a job as 作品集／無酬 in the
+    project overlay, and if the day rate keeps reading the raw archive it goes on averaging
+    a $0 day into her price — which is the exact thing she asked to be protected from."""
     raw = await get_kv(session, KEY)
     try:
         rows = json.loads(raw) if raw else []
     except (TypeError, ValueError):
         rows = []
-    return [r for r in rows if isinstance(r, dict)]
+    rows = [r for r in rows if isinstance(r, dict)]
+    if not overlaid:
+        return rows
+    from . import projects as PJ
+    over = await PJ.overlay(session)
+    out = []
+    for r in rows:
+        pid = PJ.slug(r.get("project") or r.get("num") or "")
+        extra = over.get(pid) or {}
+        out.append({**r, **{k: v for k, v in extra.items()
+                            if k in ("kind", "rate", "days", "client") and v is not None}})
+    return out
 
 
 async def backfill(session, force: bool = False) -> dict:

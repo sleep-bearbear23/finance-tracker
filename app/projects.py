@@ -30,13 +30,29 @@ import re
 from datetime import date, timedelta
 
 from . import budget
+from . import claims as CL
 from . import facts as F
 from . import prefs
 from . import seed_invoices as SI
+from . import taxonomy as TX
 from .config import now
 from .db import get_kv, set_kv
 
 OVERLAY_KEY = "cfg_projects"
+
+#: What a job IS, which decides whether its numbers are allowed to shape the model.
+#: Momo: "Some projects are unpaid work that I do for portfolio, I won't want stats from
+#: those projects to mess up the algorithm ($0 day rate)." A portfolio short is real work
+#: and belongs in the record; it is not evidence about what she charges, and averaging a
+#: $0 day into her rate would quietly lower every earning goal that divides by it.
+KINDS = {
+    "shoot":     "接案拍攝",      # paid work — the only kind the day rate may read
+    "portfolio": "作品集／無酬",   # unpaid, by choice
+    "design":    "設計案",        # paid, but not priced per shoot day
+    "spec":      "提案／試拍",     # speculative
+}
+#: only these price a shoot day
+RATED = ("shoot",)
 
 #: How close a deposit has to be to an invoice total to count as that invoice being paid.
 #: Exact to the cent in her data; the tolerance is for a wire fee shaving a dollar off.
@@ -155,7 +171,7 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
     """Every job on record, newest first."""
     f = f or await F.build(session)
     today = now().date()
-    invoices = await SI.invoices(session)
+    invoices = await SI.invoices(session, overlaid=False)
     pend = await prefs.pending_invoices(session)
     over = await overlay(session)
 
@@ -167,11 +183,16 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
         if t.amount >= 0 or not getattr(t, "project", None):
             continue
         d = budget.eff_date(t)
+        st = CL.state_of(t)
         costs.setdefault(t.project, []).append({
+            "id": t.id,
             "date": d.isoformat() if d else None,
             "amount": round(abs(t.amount), 2),
             "merchant": (t.merchant_desc or "")[:40],
+            "category": t.category, "cat_label": TX.label(t.category),
             "reimbursable": getattr(t, "reimbursable", None),
+            "claim": st, "claim_label": CL.LABEL.get(st or "", ""),
+            "age": (today - d).days if d else 0,
         })
 
     # deposits that could be someone paying an invoice
@@ -196,6 +217,7 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
             "rate": inv.get("rate"), "days": inv.get("days"),
             "day_total": inv.get("day_total"), "extras": inv.get("extras"),
             "total": round(total, 2), "kind": inv.get("kind") or "shoot",
+            "kind_label": KINDS.get(inv.get("kind") or "shoot", "接案拍攝"),
             "note": inv.get("note"),
         }
 
@@ -248,6 +270,7 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
             "client": None, "invoice": None, "invoiced_on": None,
             "rate": None, "days": q.get("days"),
             "total": round(float(q.get("amount") or 0), 2), "kind": "shoot",
+            "kind_label": KINDS["shoot"],
             "stage": prefs.stage_of(q), "owed": round(float(q.get("amount") or 0), 2),
             "expect_on": q.get("expect_on"), "wrapped_on": q.get("wrapped_on"),
             "lands": land.isoformat() if land else None,
@@ -265,11 +288,20 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
         rows = costs.get(p["id"]) or []
         if rows:
             back = round(sum(c["amount"] for c in rows if c["reimbursable"]), 2)
+            waiting = round(sum(c["amount"] for c in rows
+                                if c["claim"] in ("todo", "sent")), 2)
             p["costs"] = sorted(rows, key=lambda c: c["date"] or "", reverse=True)
             p["cost_total"] = round(sum(c["amount"] for c in rows), 2)
             p["cost_reimbursable"] = back
             p["cost_own"] = round(p["cost_total"] - back, 2)
+            p["cost_waiting"] = waiting
+            p["cost_recovered"] = round(sum(c["amount"] for c in rows
+                                            if c["claim"] == "paid"), 2)
+            # what the job actually put in her pocket, after what she fronted for it
+            p["net"] = round(float(p.get("total") or 0) - p["cost_own"], 2)
         p.update({k: v for k, v in (over.get(p["id"]) or {}).items() if k != "id"})
+        p["kind_label"] = KINDS.get(p.get("kind") or "shoot", p.get("kind") or "")
+        p["rated"] = (p.get("kind") or "shoot") in RATED
     out.sort(key=lambda p: (p.get("invoiced_on") or p.get("wrapped_on")
                             or p.get("when") or ""), reverse=True)
     return out
@@ -278,7 +310,9 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
 async def summary(session, f: F.Facts | None = None) -> dict:
     """The tab's header: what she has done, what it paid, and what is still out there."""
     rows = await build(session, f)
-    shoot = [p for p in rows if p.get("days") and p.get("rate")]
+    # A portfolio job has days and no fee. Letting it into this list is exactly the
+    # "$0 day rate" Momo asked to be protected from.
+    shoot = [p for p in rows if p.get("days") and p.get("rate") and p.get("rated")]
     owed = [p for p in rows if p.get("owed")]
     days = sum(int(p["days"]) for p in shoot)
     fees = sum(float(p.get("day_total") or 0) for p in shoot)
@@ -301,10 +335,12 @@ async def summary(session, f: F.Facts | None = None) -> dict:
         row["day_rate"] = (round(row["total"] / row["days"], 2) if row["days"] else None)
     spent = round(sum(float(p.get("cost_total") or 0) for p in rows), 2)
     claimable = round(sum(float(p.get("cost_reimbursable") or 0) for p in rows), 2)
+    waiting = round(sum(float(p.get("cost_waiting") or 0) for p in rows), 2)
     return {
         "projects": rows,
         "n": len(rows), "shoot_days": days,
-        "spent_on_jobs": spent, "claimable": claimable,
+        "spent_on_jobs": spent, "claimable": claimable, "awaiting_claim": waiting,
+        "kinds": KINDS,
         "own_cost": round(spent - claimable, 2),
         "day_fees": round(fees, 2), "extras": round(extras, 2),
         "billed": round(sum(float(p.get("total") or 0) for p in rows), 2),

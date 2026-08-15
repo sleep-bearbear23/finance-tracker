@@ -60,6 +60,26 @@ async def _poll_job():
                 pass
 
 
+async def _claims_job():
+    """Pair arriving credits with the costs they repay, and flag what needs a human.
+
+    Momo: "she need to detect some income transaction from vendors and ask about whether
+    it's a refund for something, and do matching with numbers too (cuz manual
+    identification could be crazy)." So the numbers go first and she is only asked where
+    two outstanding claims share an amount."""
+    async with Session() as s:
+        try:
+            from . import claims
+            out = await claims.match(s)
+            if out["n_settled"]:
+                print(f"[claims] settled {out['n_settled']}")
+                await opsroom.say(f"↩️ 退款／報帳對上 {out['n_settled']} 筆")
+            if out["n_ask"]:
+                await opsroom.say(f"❓ {out['n_ask']} 筆退款金額對得上不只一筆，要問默默")
+        except Exception as e:
+            print(f"[claims] error: {e!r}")
+
+
 async def _flush_job():
     async with Session() as s:
         try:
@@ -155,6 +175,7 @@ async def lifespan(app: FastAPI):
         print(f"[migrate] error: {e!r}")
     scheduler.add_job(_poll_job, "interval", minutes=settings.POLL_INTERVAL_MIN, id="poll")
     scheduler.add_job(_flush_job, "interval", minutes=1, id="flush")
+    scheduler.add_job(_claims_job, "interval", hours=4, id="claims")
     scheduler.add_job(_alert_job, "interval", hours=6, id="alerts")
     scheduler.add_job(_weekly_job, "cron", day_of_week="sun", hour=18, id="weekly")
     scheduler.add_job(_monthly_job, "cron", day=1, hour=9, id="monthly")
