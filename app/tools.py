@@ -28,6 +28,11 @@ _STAGE_ZH = {"booked": "已接（還沒拍）", "wrapped": "已殺青", "invoice
 _CAD_ZH = {"monthly": "每月", "quarterly": "每季", "semiannual": "每半年", "annual": "每年"}
 
 
+def categories_is_work(cat: str | None) -> bool:
+    from . import taxonomy as _T
+    return _T.is_work(cat)
+
+
 def _money(v) -> str:
     return f"${float(v or 0):,.2f}".replace(".00", "")
 
@@ -344,8 +349,35 @@ SCHEMAS: list[dict] = [
                 "category": {"type": "string"},
                 "note": {"type": "string"},
                 "date": {"type": "string", "description": "YYYY-MM-DD. Defaults to today."},
+                "project": {"type": "string",
+                            "description": "The job this was spent on, if it was for work. "
+                                           "Setting it files the charge as 工作支出 whatever "
+                                           "was bought, so it stays out of her daily budget."},
+                "reimbursable": {"type": "boolean",
+                                 "description": "True when a production will pay it back."},
             },
             "required": ["amount", "merchant"],
+        },
+    },
+    {
+        "name": "tag_project",
+        "description": (
+            "Move charges she ALREADY logged onto a job. Use it when she says something "
+            "she told you about earlier was actually for a shoot, or will be reimbursed. "
+            "They become 工作支出 and stop counting against her daily allowance. "
+            "IMPORTANT: money spent for a production is 工作 whatever it bought — a taxi "
+            "to set is not 交通雜支 and lunch on set is not 食. Ask which job it was."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "which": {"type": "string",
+                          "description": "Merchant name or exact amount to find the charges by."},
+                "project": {"type": "string", "description": "Which job."},
+                "reimbursable": {"type": "boolean",
+                                 "description": "True when the production pays it back."},
+                "days": {"type": "integer", "description": "How far back to look. Default 30."},
+            },
+            "required": ["which", "project"],
         },
     },
     {
@@ -773,10 +805,87 @@ async def set_income_baseline(s, rec, amount):
     return {"ok": True, "summary": rec.summary}
 
 
-async def log_expense(s, rec, amount, merchant, category=None, note=None, date=None):  # noqa: A002
+async def tag_project(s, rec, which, project, reimbursable=None, days=30):
+    """Move charges she has already logged onto a job, and out of her daily allowance.
+
+    This is the repair path for the thing that went wrong: she told 陳會計 a taxi and a
+    meal were for a shoot and would be paid back, and they were filed as 交通雜支 and 食 —
+    the right answer to "what was bought" and the wrong answer to "whose money is it".
+    They then came out of her daily line.
+    """
+    from sqlalchemy import select
+    from . import taxonomy as T
+    from . import period as P
+    from datetime import timedelta as _td
+
+    from . import projects as PJ
+    key = (which or "").strip().lower()
+    if not key:
+        return {"ok": False, "error": "要說是哪一筆（商家名字或金額）"}
+    hit = await PJ.resolve(s, project)
+    if hit["id"] is None:
+        names = "、".join(f"{o['name']}" for o in hit["options"][:4])
+        return {"ok": False, "ambiguous": hit["options"],
+                "error": f"「{project}」對得上好幾個案子：{names}。是哪一個？"}
+    pid = hit["id"]
+    cutoff = now().date() - _td(days=int(days or 30))
+
+    rows = (await s.execute(select(Transaction))).scalars().all()
+    hits = []
+    for t in rows:
+        if t.amount >= 0:
+            continue
+        d = (t.posted_at or t.created_at)
+        if d and d.date() < cutoff:
+            continue
+        hay = f"{t.merchant_desc or ''} {t.note or ''}".lower()
+        amt_match = False
+        try:
+            amt_match = abs(abs(t.amount) - float(key.replace("$", "").replace(",", ""))) < 0.02
+        except ValueError:
+            pass
+        if key in hay or amt_match:
+            hits.append(t)
+    if not hits:
+        return {"ok": False, "error": f"最近 {days} 天找不到「{which}」這筆。"}
+
+    moved, total = [], 0.0
+    for t in hits:
+        before = changelog.snapshot_row(t, ["category", "project", "reimbursable", "status"])
+        was = T.label(t.category)
+        t.category = "work"
+        t.project = pid
+        if reimbursable is not None:
+            t.reimbursable = bool(reimbursable)
+        t.status = "enriched"
+        total += abs(t.amount)
+        moved.append(f"{(t.merchant_desc or '')[:18]} {_money(abs(t.amount))}（本來算 {was}）")
+        rec.row("transactions", t.id, before,
+                changelog.snapshot_row(t, ["category", "project", "reimbursable", "status"]))
+    await s.commit()
+    rec.says(f"{len(moved)} 筆共 {_money(total)} 移到「{project}」，改成工作支出，"
+             f"不再從每天能花的錢裡扣"
+             + ("，標成可以報帳。" if reimbursable else "。")
+             + " " + "；".join(moved[:4]))
+    return {"ok": True, "summary": rec.summary, "moved": len(moved), "total": round(total, 2)}
+
+
+async def log_expense(s, rec, amount, merchant, category=None, note=None, date=None,  # noqa: A002
+                      project=None, reimbursable=None):
     t = await record.record_charge(s, -abs(float(amount)), merchant, "manual")
+    # Spending FOR a job is 工作 whatever it bought. Momo told her about a taxi and a meal a
+    # production would pay back and they were filed as 交通雜支 and 食, so they ate her daily
+    # allowance — the one thing this treatment exists to prevent.
+    if project or reimbursable:
+        category = category if categories_is_work(category) else "work"
     if category:
         t.category = category
+    if project:
+        from . import projects as _PJ
+        r = await _PJ.resolve(s, project)
+        t.project = r["id"] or _PJ.slug(project)
+    if reimbursable is not None:
+        t.reimbursable = bool(reimbursable)
     if note:
         t.note = note
     if date:
@@ -789,7 +898,8 @@ async def log_expense(s, rec, amount, merchant, category=None, note=None, date=N
     await s.commit()
     rec.row("transactions", t.id, None,
             changelog.snapshot_row(t, ["account_id", "amount", "merchant_desc", "posted_at",
-                                       "category", "note", "status", "source"]))
+                                       "category", "note", "status", "source",
+                                       "project", "reimbursable"]))
     rec.says(f"記了一筆支出：{merchant} {_money(amount)}"
              + (f"（{categories.label(category)}）" if category else ""))
     return {"ok": True, "summary": rec.summary, "id": t.id}
@@ -905,6 +1015,7 @@ HANDLERS = {
     "close_session": close_session,
     "set_income_baseline": set_income_baseline,
     "log_expense": log_expense,
+    "tag_project": tag_project,
     "log_income": log_income,
     "remember_merchant": remember_merchant,
 }

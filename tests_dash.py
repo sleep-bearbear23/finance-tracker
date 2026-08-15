@@ -657,6 +657,35 @@ async def main():
           all(all((c["rates"][i]["when"] or "") <= (c["rates"][i+1]["when"] or "")
                   for i in range(len(c["rates"]) - 1)) for c in pj["clients"]))
 
+    print("\n[16] money spent FOR a job never eats her daily allowance")
+    # Momo: "I note that these are expenses that will get reimbursed cuz it's work related,
+    # she kept note of it but she categorize them into the normal category (food and
+    # transportation), which causes my daily allow to spend budget for the session to
+    # reflect that which shouldn't."
+    from app import taxonomy as _tx
+    from app import projects as _pj
+    check("工作 is outside the allowance, whatever it bought",
+          not _tx.in_allowance("work") and _tx.treatment("work") == _tx.WORK)
+    check("the category is defined by whose money it is, not by the item",
+          "車錢" in _tx.note("work") and "飯錢" in _tx.note("work"),
+          _tx.note("work"))
+    check("食 and 交通雜支 still DO eat the allowance — that part was never wrong",
+          _tx.in_allowance("food") and _tx.in_allowance("transit"))
+    # A Chinese-only job name used to slug to the literal string "project", so every one
+    # of them would have shared a single record.
+    check("a Chinese-only job name keeps its own identity",
+          _pj.slug("藍衣女子") != _pj.slug("春日限定") != "project",
+          f'{_pj.slug("藍衣女子")} / {_pj.slug("春日限定")}')
+    # One shared word is the CLIENT. 「AVIA 八月拍攝」 matches five Avia gigs equally and
+    # picking one silently files a taxi fare against the wrong shoot.
+    check("one shared word alone is too weak to identify a job",
+          _pj._score("AVIA 八月拍攝", "Avia 02/28–03/10") < 30,
+          str(_pj._score("AVIA 八月拍攝", "Avia 02/28–03/10")))
+    check("a real name match still wins outright",
+          _pj._score("Woman in Blue Dress", "The Lady in the Blue Dress 07/07–07/11") >= 30)
+    check("an unrelated name matches nothing",
+          _pj._score("沒聽過的新案子", "Prince In Workboots 05/10–05/17") == 0)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

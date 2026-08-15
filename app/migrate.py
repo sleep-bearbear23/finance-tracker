@@ -16,12 +16,14 @@ _COLUMNS: dict[str, dict[str, str]] = {
         "reimbursable": "BOOLEAN",
         "nets_txn_id": "VARCHAR(128)",
         "effective_at": "TIMESTAMP WITH TIME ZONE",
+        "project": "VARCHAR(64)",
     },
 }
 
 _INDEXES: list[tuple[str, str, str]] = [
     ("ix_transactions_inflow_kind", "transactions", "inflow_kind"),
     ("ix_transactions_nets_txn_id", "transactions", "nets_txn_id"),
+    ("ix_transactions_project", "transactions", "project"),
 ]
 
 

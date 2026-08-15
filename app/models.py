@@ -51,6 +51,10 @@ class Transaction(Base):
     inflow_kind: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
     # For a work purchase: will a production pay this back? None = not asked yet.
     reimbursable: Mapped[bool | None] = mapped_column(nullable=True)
+    # Which job this was spent on. Money spent FOR a production is not Momo's grocery
+    # money even when it buys groceries, so it hangs off the project rather than the
+    # fortnight — see projects.py and taxonomy's 工作 note.
+    project: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # For a refund/reimbursement: the id of the charge it reverses, when we found it.
     nets_txn_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # The date the budget should count this on. Only ever set for a refund: a return

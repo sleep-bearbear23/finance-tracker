@@ -60,7 +60,13 @@ CATEGORIES: dict[str, tuple[str, str, str]] = {
     "shopping":   ("購物未分類", WANT,  "Amazon/Target 這種一次買一堆的，先當想要，等你分"),
 
     # ── 工作 ──────────────────────────────────────────────────────────
-    "work":       ("工作用品",   WORK,  "美術用品、器材；要標可不可報帳"),
+    # Defined by WHOSE money it is, not by what got bought. Momo told 陳會計 about a
+    # taxi and a meal that a production would pay back, and 陳會計 filed them under 食 and
+    # 交通雜支 — correctly, by the old wording, which said 「美術用品、器材」. They then ate
+    # her daily allowance, which is the one thing 工作 exists to prevent. A $12 lunch on
+    # set is 工作; the same lunch on a day off is 食.
+    "work":       ("工作支出",   WORK,  "為了案子花的錢——道具、器材，也包括車錢、飯錢、"
+                                        "停車費。看的是誰的錢，不是買了什麼；要標可不可報帳"),
 
     # ── 不規則 ────────────────────────────────────────────────────────
     "travel":     ("旅行",       IRREGULAR, "要標誰付錢"),

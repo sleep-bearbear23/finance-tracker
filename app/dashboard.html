@@ -1636,6 +1636,9 @@ async function loadProjects(){
     ['開出去的錢', F0(d.billed), `拍攝費 ${F0(d.day_fees)}＋前製加班 ${F0(d.extras)}`],
     ['還沒收到', F0(d.owed_total), d.owed_n?`${d.owed_n} 筆`:'都收齊了'],
     ['平均日薪', d.avg_rate?F0(d.avg_rate):'—', '拍攝費 ÷ 拍攝天數'],
+    ['為案子花的', F0(d.spent_on_jobs||0),
+      (d.claimable>0?`可報帳 ${F0(d.claimable)}`:'沒有可報帳的')
+      + (d.own_cost>0?`・自己吸收 ${F0(d.own_cost)}`:'')],
   ].map(([k,v,x])=>`<div class="stat"><div class="k">${esc(k)}</div><div class="v">${v}</div>
       <div class="sub">${esc(x)}</div></div>`).join('');
 
@@ -1649,6 +1652,8 @@ async function loadProjects(){
     if(p.invoice) bits.push(esc(p.invoice));
     if(p.owed && p.lands) bits.push(p.late_days>0?`晚了 ${p.late_days} 天`:`預計 ${md(p.lands)} 入帳`);
     if(p.paid_on) bits.push(`${md(p.paid_on)} 入帳`);
+    if(p.cost_total) bits.push(`為它花了 ${F0(p.cost_total)}`
+        + (p.cost_reimbursable>0?`（可報 ${F0(p.cost_reimbursable)}）`:''));
     return `<div class="pj ${cls}">
       <span class="d">${esc((p.invoiced_on||p.when||'').slice(0,10)||'—')}</span>
       <span class="w"><b>${esc(p.name||'—')}</b><span class="s">${bits.join('・')}</span></span>

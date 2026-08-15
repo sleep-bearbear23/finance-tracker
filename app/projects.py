@@ -46,8 +46,10 @@ MATCH_WINDOW = 120
 
 
 def slug(text: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
-    return s[:40] or "project"
+    """Keep CJK. Stripping it collapsed 「藍衣女子」 and every other Chinese-only name to the
+    literal string "project", so they would all have shared one record."""
+    s = re.sub(r"[^a-z0-9一-鿿ぁ-ゟ゠-ヿ]+", "-", (text or "").lower()).strip("-")
+    return s[:48] or "project"
 
 
 async def overlay(session) -> dict[str, dict]:
@@ -73,18 +75,80 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9一-鿿]+", "", (s or "").lower())
 
 
-def _pairs(a: str, b: str) -> bool:
-    """Do these two describe the same job? Names drift between an invoice and the note she
-    typed into LINE — 「The Lady in the Blue Dress」 vs 「Woman in Blue Dress (Verticals)」 —
-    so this compares on the distinctive words rather than the whole string."""
+#: below this a candidate is not the same job, and a fresh record is the honest answer
+MATCH_FLOOR = 20
+#: how far ahead the winner has to be before we believe it rather than asking her. Under
+#: this, several jobs are equally plausible and picking one silently files a taxi fare
+#: against the wrong shoot — which is worse than a question.
+MATCH_MARGIN = 10
+
+
+def _score(a: str, b: str) -> int:
+    """How strongly these two name the same job. Scored rather than boolean, because a
+    boolean cannot choose between five jobs for the same client: 「AVIA 八月拍攝」 matched
+    every Avia gig she has ever done, and one taxi fare showed up on all five of them."""
     na, nb = _norm(a), _norm(b)
     if not na or not nb:
-        return False
+        return 0
+    if na == nb:
+        return 100
     if na in nb or nb in na:
-        return True
+        return 60 + min(30, min(len(na), len(nb)))
     wa = {w for w in re.split(r"[^a-z0-9一-鿿]+", (a or "").lower()) if len(w) > 3}
     wb = {w for w in re.split(r"[^a-z0-9一-鿿]+", (b or "").lower()) if len(w) > 3}
-    return len(wa & wb) >= 2
+    shared = wa & wb
+    if len(shared) >= 2:
+        return 50 + 5 * len(shared)
+    if shared:
+        # One shared word is usually the CLIENT, not the job — 「AVIA 八月拍攝」 shares
+        # exactly "avia" with all five Avia gigs and tells them apart not at all. Weak on
+        # purpose, so it can never outrank a real name match.
+        return 25
+    # one distinctive token is a prefix of the other — 「AVIA」 inside 「AviaGames」. Real,
+    # but weak: it identifies the CLIENT far more often than the job, so it scores below
+    # anything else and only wins when nothing else matches at all.
+    if any(len(x) >= 4 and len(y) >= 4 and (x.startswith(y) or y.startswith(x))
+           for x in wa for y in wb):
+        return 20
+    return 0
+
+
+def _pairs(a: str, b: str) -> bool:
+    return _score(a, b) >= MATCH_FLOOR
+
+
+async def resolve(session, text: str, f: F.Facts | None = None) -> str:
+    """Turn whatever Momo called the job into the id the record is filed under.
+
+    She says 「AVIA 八月拍攝」 in LINE; the invoice calls it 「AviaGames — August 2026」. If a
+    charge is stored under her phrasing it hangs off nothing, so the cost never appears on
+    the job and the whole point of tagging it is lost. Falls back to a slug of what she
+    said, which at least groups her own charges together consistently.
+
+    Returns ``{"id", "new", "options"}``. ``id`` is None when several jobs are equally
+    plausible — 「AVIA 八月拍攝」 against five Avia gigs — and then ``options`` is the
+    shortlist for 陳會計 to read back, because filing a taxi fare against the wrong shoot
+    is worse than one more question."""
+    want = (text or "").strip()
+    if not want:
+        return ""
+    rows = await build(session, f)
+    scored = []
+    for p in rows:                      # newest first, so ties keep the current job
+        sc = max(_score(want, p["id"]), _score(want, p.get("name") or ""),
+                 _score(want, p.get("client") or "") - 10)
+        if sc >= MATCH_FLOOR:
+            scored.append((sc, p))
+    scored.sort(key=lambda x: -x[0])
+    if not scored:
+        return {"id": slug(want), "new": True, "score": 0, "options": []}
+    top, runner = scored[0], (scored[1] if len(scored) > 1 else None)
+    if runner and top[0] - runner[0] < MATCH_MARGIN:
+        return {"id": None, "new": False, "score": top[0],
+                "options": [{"id": p["id"], "name": p.get("name"), "client": p.get("client"),
+                             "when": p.get("invoiced_on") or p.get("when")}
+                            for _sc, p in scored[:5]]}
+    return {"id": top[1]["id"], "new": False, "score": top[0], "options": []}
 
 
 async def build(session, f: F.Facts | None = None) -> list[dict]:
@@ -94,6 +158,21 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
     invoices = await SI.invoices(session)
     pend = await prefs.pending_invoices(session)
     over = await overlay(session)
+
+    # Money she spent FOR a job. Kept off the fortnight entirely — 工作 is not in
+    # `in_allowance` — and reported here instead, because a production's taxi fare is not
+    # a fact about how she is living.
+    costs: dict[str, list] = {}
+    for t in f.txns:
+        if t.amount >= 0 or not getattr(t, "project", None):
+            continue
+        d = budget.eff_date(t)
+        costs.setdefault(t.project, []).append({
+            "date": d.isoformat() if d else None,
+            "amount": round(abs(t.amount), 2),
+            "merchant": (t.merchant_desc or "")[:40],
+            "reimbursable": getattr(t, "reimbursable", None),
+        })
 
     # deposits that could be someone paying an invoice
     income = []
@@ -180,6 +259,16 @@ async def build(session, f: F.Facts | None = None) -> list[dict]:
         })
 
     for p in out:
+        # Exact id only. Fuzzy matching here put one taxi fare on all five Avia jobs —
+        # tools.resolve() canonicalises the name when the charge is written, which is the
+        # one place a human is present to be asked.
+        rows = costs.get(p["id"]) or []
+        if rows:
+            back = round(sum(c["amount"] for c in rows if c["reimbursable"]), 2)
+            p["costs"] = sorted(rows, key=lambda c: c["date"] or "", reverse=True)
+            p["cost_total"] = round(sum(c["amount"] for c in rows), 2)
+            p["cost_reimbursable"] = back
+            p["cost_own"] = round(p["cost_total"] - back, 2)
         p.update({k: v for k, v in (over.get(p["id"]) or {}).items() if k != "id"})
     out.sort(key=lambda p: (p.get("invoiced_on") or p.get("wrapped_on")
                             or p.get("when") or ""), reverse=True)
@@ -210,15 +299,20 @@ async def summary(session, f: F.Facts | None = None) -> dict:
         row["rates"].sort(key=lambda x: x["when"] or "")
         row["total"] = round(row["total"], 2)
         row["day_rate"] = (round(row["total"] / row["days"], 2) if row["days"] else None)
+    spent = round(sum(float(p.get("cost_total") or 0) for p in rows), 2)
+    claimable = round(sum(float(p.get("cost_reimbursable") or 0) for p in rows), 2)
     return {
         "projects": rows,
         "n": len(rows), "shoot_days": days,
+        "spent_on_jobs": spent, "claimable": claimable,
+        "own_cost": round(spent - claimable, 2),
         "day_fees": round(fees, 2), "extras": round(extras, 2),
         "billed": round(sum(float(p.get("total") or 0) for p in rows), 2),
         "owed_total": round(sum(float(p["owed"]) for p in owed), 2),
         "owed_n": len(owed),
         "avg_rate": round(fees / days, 2) if days else None,
         "clients": sorted(clients.values(), key=lambda c: -c["days"]),
-        "note": ("每個案子只有一筆紀錄，發票、待收、入帳都掛在上面。日薪、要接多少、"
-                 "該催的錢都是從這裡讀出來的，所以不會有三份對不起來的名單。"),
+        "note": ("每個案子只有一筆紀錄，發票、待收、入帳、為了它花的錢都掛在上面。"
+                 "為了案子花的錢算工作支出，不會從你每天能花的錢裡扣——買的是什麼不重要，"
+                 "重要的是那是誰的錢。"),
     }
