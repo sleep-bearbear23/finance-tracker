@@ -498,7 +498,7 @@ async def compute(session, key: str | None = None) -> dict:
     # 15-day period, so she gets a third of the period's number — not all of it.
     lenses = [_scale(L, frac) for L in (
         _plan(income_after_tax, fixed_p, savings_p),
-        _cushion(pool, sf["total"], periods_out, held_label="有主的錢"),
+        _cushion(pool, sf["total"], periods_out, held_label="罐裡的錢"),
         _trajectory(recent_med, drift, observations=len(recent_rows)),
     )]
     plan_l, cush_l, traj_l = lenses
@@ -793,7 +793,7 @@ def explain(a: dict) -> list[str]:
         out.append(f"　{L['name']}：${L['value']:,.0f}　{L['why']} {mark}".rstrip())
     sfx = a.get("spoken_for")
     if sfx and sfx.get("total") and not (sfx["jars"][1:] and sfx["jars"][1].get("legacy")):
-        out.append(f"有主的錢一共 ${sfx['total']:,.0f}——稅、地板、預備金這些各自守著，"
+        out.append(f"罐子裡一共 ${sfx['total']:,.0f}——稅、地板、預備金這些各自守著，"
                    f"能動的水剩 ${max(0.0, a.get('available') or 0.0):,.0f}。")
     if a.get("jar_breach"):
         b = a["jar_breach"]

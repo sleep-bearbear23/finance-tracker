@@ -150,8 +150,8 @@ async def main() -> int:
         check("compute() carries the spoken_for block",
               near(res["spoken_for"]["total"], sf_now["total"]))
         cush = next(L for L in res["lenses"] if L["name"] == "水位")
-        check("水位 why-string names 有主的錢, not the old rung",
-              "有主的錢" in cush["why"], cush["why"])
+        check("水位 why-string names 罐裡的錢, not the old rung",
+              "罐裡的錢" in cush["why"], cush["why"])
         check("available = pool − spoken_for",
               near(res["available"],
                    round(res["reserve_total"] - sf_now["reserve"], 2)), str(res["available"]))
@@ -182,8 +182,8 @@ async def main() -> int:
         print("\n[11] explain() says the spoken-for sentence")
         res = await allowance.compute(s)
         lines = allowance.explain(res)
-        check("one sentence names 有主的錢 and the water that's left",
-              any("有主的錢" in ln for ln in lines))
+        check("one sentence names the jars and the water that's left",
+              any("罐子裡一共" in ln for ln in lines))
 
         print("\n[12] the dip points at the pot the diagnosis picked")
         from app.analytics import _dip_pot, dip_view

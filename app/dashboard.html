@@ -953,7 +953,7 @@
 
 
       <section class="card" data-pane="jars">
-        <h2>有主的錢 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="jars"></i>
+        <h2>罐 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="jars"></i>
           <span class="more" id="jarsMeta"></span></h2>
         <div class="body" id="jarsBox"><div class="empty">載入中…</div></div>
       </section>
@@ -1246,7 +1246,7 @@ const SEGS = {
   home:   [['toearn','這一期'],['lever','能做的事'],['cats','花在哪']],
   plan:   [['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
            ['iexp','接下來三個月'],['iperf','收入節奏'],['ipay','誰付錢']],
-  acct:   [['nw','淨資產'],['jars','有主的錢'],['alist','帳戶'],['callist','接下來'],
+  acct:   [['nw','淨資產'],['jars','罐'],['alist','帳戶'],['callist','接下來'],
            ['flows','半月收支'],['arecent','最近的帳']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   proj:   [['plist','每一個案子'],['pclient','客戶']],
@@ -1297,12 +1297,12 @@ const INFO={
     do:'沒花完的不會不見，會掉進「本期口袋」。要一次花多一點，跟阿姨說一聲，她從口袋裡撥。'},
 
   jars:{
-    t:'有主的錢',
+    t:'罐',
     lede:'你的錢，但已經有名字了：稅、地板、緊急預備金、應急、DMV、修車、季目標、實驗。引擎把這個總和從水裡扣掉一次——就一次，一塊錢不會被守兩次，也不會漏掉。罐子是虛擬的，錢還在原本的戶頭裡，沒有真的轉帳。',
     how(c){ const j=c.jars; if(!j) return '';
       return j.jars.map(x=>_r(x.name, F(x.balance||0)+(x.target?`（目標 ${F0(x.target)}）`:''))).join('')
         + _r('一共', F(j.total), true)
-        + _r('現金 − 卡債 − 有主的錢 = 能動的水', F(Math.max(0,j.available)), true); },
+        + _r('現金 − 卡債 − 罐裡的錢 = 能動的水', F(Math.max(0,j.available)), true); },
     do:'放錢進罐子跟阿姨說（「放 $200 進應急」）。拿出來也是跟她說，但地板要這期真的撐不住、錢又在路上才開；預備金要收入真的斷了、而且講好每期拿多少撐幾期。稅的不能動。每一筆都有紀錄、都能還原。'},
 
   pool:{
@@ -1610,11 +1610,17 @@ async function loadHome(){
     const span=Math.round((new Date(last.day)-new Date(base.day))/86400000);
     el('nwDelta').textContent=(d>=0?'▲ ':'▼ ')+F0(Math.abs(d))+` (${Math.abs(pct).toFixed(1)}%) ${span}天`;
     el('nwDelta').style.color=d>=0?'var(--accent)':'var(--bad)';
+    /* Time-proportional x. With `labels:` every point got equal width, so the 18
+       sparse seed snapshots (gaps up to two months) and the dense daily tail drew at
+       the same rhythm — the shape lied about time. A linear axis on epoch-days keeps
+       every gap as wide as it really was. */
     chart('sparkChart',{type:'line',
-      data:{labels:ns.map(p=>p.day),datasets:[{data:ns.map(p=>p.net),borderColor:'#9CC9F5',
+      data:{datasets:[{data:ns.map(p=>({x:new Date(p.day).getTime()/86400000,y:p.net,day:p.day})),
+        borderColor:'#9CC9F5',
         backgroundColor:'rgba(156,201,245,.10)',borderWidth:2,tension:.3,pointRadius:0,pointHoverRadius:4,fill:true}]},
-      options:{plugins:{tooltip:{intersect:false,mode:'index',callbacks:{label:c=>F(c.parsed.y)}}},
-        scales:{x:{display:false},y:{display:false}}}});
+      options:{parsing:false,plugins:{tooltip:{intersect:false,mode:'nearest',axis:'x',
+        callbacks:{title:c=>c[0].raw.day,label:c=>F(c.raw.y)}}},
+        scales:{x:{type:'linear',display:false},y:{display:false}}}});
   }
 
   el('acctTotals').textContent=`現金 ${F0(acc.cash_total)}`
@@ -1630,11 +1636,23 @@ async function loadHome(){
   /* 花在哪 → 計畫頁, 最近的帳 → 帳戶頁, 待收款 → 行事曆頁. The overview keeps only the
      six-month rhythm, which is the one thing you read at a glance and act on. */
   const fl=t.flows||[];
+  /* 支出 is NET (gross purchases − refunds/回款 booked into this period). A settle-up
+     can exceed a fresh period's own purchases, so a net bar can go below zero — that is
+     money coming back, not a bug. It renders in the good-news blue and the tooltip
+     shows the split instead of leaving a mystery bar. */
   if(fl.length) chart('flowChart',{type:'bar',
     data:{labels:fl.map(x=>x.label),datasets:[
       {label:'收入',data:fl.map(x=>x.income),backgroundColor:'#9CC9F5',borderRadius:4,maxBarThickness:18},
-      {label:'支出',data:fl.map(x=>x.spend),backgroundColor:'rgba(255,255,255,.30)',borderRadius:4,maxBarThickness:18}]},
-    options:{plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,label:c=>c.dataset.label+'  '+F(c.parsed.y)}}},
+      {label:'支出',data:fl.map(x=>x.spend),
+       backgroundColor:fl.map(x=>x.spend<0?'rgba(156,201,245,.55)':'rgba(255,255,255,.30)'),
+       borderRadius:4,maxBarThickness:18}]},
+    options:{plugins:{tooltip:{callbacks:{title:c=>fl[c[0].dataIndex].key,
+      label:c=>{const x=fl[c.dataIndex];
+        if(c.dataset.label!=='支出') return c.dataset.label+'  '+F(c.parsed.y);
+        const parts=['支出（淨） '+F(x.spend)];
+        if(x.back>0){ parts.push('　毛支出 '+F(x.spend_gross)); parts.push('　退款／回款沖回 −'+F(x.back)); }
+        if(x.spend<0) parts.push('　回來的比花掉的多——不是bug');
+        return parts; }}}},
       scales:halfMonthScales(fl)}});
 }
 

@@ -273,7 +273,7 @@ async def run_maintenance() -> list[str]:
                             or "gs savings" in (a.get("name") or "").lower())), 0.0)
             sp_old = float(await get_kv(s, "cfg_season_pot") or 0)
             async with changelog.watching(s, tool="jars_seed", actor="maintenance",
-                                          source_text="重掃歷史：建立有主的錢"):
+                                          source_text="重掃歷史：建罐子"):
                 for line in await jars.seed(
                         s, floor_amount=res["defended_floor"], gs_balance=gs,
                         tax_outstanding=res["tax"]["outstanding"],

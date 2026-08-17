@@ -80,7 +80,8 @@ class Facts:
         lo, _ = P.key_bounds(keys[0])
         _, hi = P.key_bounds(keys[-1])
         out = {k: {"key": k, "label": P.label(k), "month_start": P.is_month_start(k),
-                   "income": 0.0, "spend": 0.0} for k in keys}
+                   "income": 0.0, "spend": 0.0, "spend_gross": 0.0, "back": 0.0}
+               for k in keys}
         for t in self.rows_for(account_id):
             d = budget.eff_date(t)
             if not d or d < lo or d > hi:
@@ -89,11 +90,21 @@ class Facts:
             if k not in out:
                 continue
             if budget.is_spend(t):
-                out[k]["spend"] += budget.spend_amount(t)
+                amt = budget.spend_amount(t)
+                out[k]["spend"] += amt
+                # keep the two directions visible: a 媽媽回款 or refund can exceed a
+                # period's own purchases (it nets a bucket, not a matched charge), and a
+                # negative NET bar with no explanation reads as a bug rather than as
+                # money coming back. The chart shows net; the tooltip shows this split.
+                if amt >= 0:
+                    out[k]["spend_gross"] += amt
+                else:
+                    out[k]["back"] += -amt
             elif budget.is_income(t):
                 out[k]["income"] += t.amount
         for v in out.values():
-            v["income"], v["spend"] = round(v["income"], 2), round(v["spend"], 2)
+            for f_ in ("income", "spend", "spend_gross", "back"):
+                v[f_] = round(v[f_], 2)
         return [out[k] for k in keys]
 
     def monthly(self, n: int = 6, account_id: str | None = None) -> list[dict]:
