@@ -13,6 +13,7 @@ from . import (
     agent,
     alerts,
     allowance,
+    analytics as AN,
     budget,
     changelog,
     cleanup,
@@ -20,6 +21,7 @@ from . import (
     enrichment,
     jars,
     line_client,
+    period as P,
     llm,
     memory,
     migrate,
@@ -32,10 +34,11 @@ from . import (
     retag,
     seed_applecard,
     seed_history,
+    season as SE,
     seed_invoices,
     simplefin,
 )
-from .config import now, settings
+from .config import now, public_url, settings
 from .db import Session, engine, get_kv, init_db, set_kv
 
 scheduler = AsyncIOScheduler(timezone=settings.TIMEZONE)
@@ -179,6 +182,75 @@ async def _snapshot_job():
             print(f"[jars] accrue error: {e!r}")
 
 
+async def _boundary_job():
+    """The ritual's clock. Two things, once each per period:
+
+    - a period ended and hasn't been settled → send the 結算 link (once)
+    - the settlement landed → open the new period with a heading (once)
+
+    Deliberately separate from the budget itself: this job only ever SENDS. Whether the
+    numbers are frozen is decided by settle.state(), which every surface reads.
+    """
+    from . import settle as ST
+    async with Session() as s:
+        try:
+            owner = await get_kv(s, enrichment.OWNER_KEY)
+            if not owner:
+                return
+            base = public_url()
+            st = await ST.state(s)
+            if st["awaiting"]:
+                key = st["oldest"]
+                if await get_kv(s, f"settle_notice:{key}") == "1":
+                    return                      # already asked; nagging is not the design
+                clo = await allowance.closure(s, key)
+                await line_client.push(owner, ST.close_notice(clo, base))
+                await memory.remember(s, "assistant", ST.close_notice(clo, base))
+                await set_kv(s, f"settle_notice:{key}", "1")
+                return
+            cur = budget.current_key()
+            if await get_kv(s, f"period_open:{cur}") == "1":
+                return
+            lo, _ = P.key_bounds(cur)
+            if (now().date() - lo).days > 2:
+                await set_kv(s, f"period_open:{cur}", "1")   # mid-period deploy: don't shout
+                return
+            q = None
+            try:
+                te = await AN.to_earn(s, 3)
+                sb = await SE.progress(s, te["tiers"])
+                q = {"target": sb.get("target"), "secured": sb.get("secured"),
+                     "days_needed": sb.get("days_needed")}
+            except Exception:
+                q = None
+            msg = await ST.open_message(s, cur, q)
+            await line_client.push(owner, msg)
+            await memory.remember(s, "assistant", msg)
+            await set_kv(s, f"period_open:{cur}", "1")
+        except Exception as e:
+            print(f"[boundary] error: {e!r}")
+
+
+async def _backup_job():
+    """Weekly, and only when it's actually due. Same words every time — Momo asked for
+    the instruction to be clear enough that doing it never requires thinking."""
+    from . import settle as ST
+    async with Session() as s:
+        try:
+            owner = await get_kv(s, enrichment.OWNER_KEY)
+            if not owner:
+                return
+            bs = await ST.backup_state(s)
+            if not bs["stale"]:
+                return
+            msg = ST.backup_message(bs, public_url())
+            await line_client.push(owner, msg)
+            await memory.remember(s, "assistant", msg)
+            await set_kv(s, "last_run:backup_nudge", now().isoformat())
+        except Exception as e:
+            print(f"[backup] error: {e!r}")
+
+
 async def _reminder_job():
     async with Session() as s:
         try:
@@ -309,6 +381,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_reconcile_job, "cron", day=5, hour=9, id="reconcile")
     scheduler.add_job(_reminder_job, "cron", hour=settings.REMINDER_HOUR, id="reminder")
     scheduler.add_job(_snapshot_job, "cron", hour=23, minute=45, id="snapshot")  # daily net-worth point
+    scheduler.add_job(_boundary_job, "cron", hour=9, minute=30, id="boundary")   # 結算 / 開期
+    scheduler.add_job(_backup_job, "cron", day_of_week="sun", hour=19, id="backup")
     scheduler.start()
     try:
         async with Session() as s:

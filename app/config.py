@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Secret that unlocks the web dashboard (empty = dashboard disabled)
     DASHBOARD_TOKEN: str = ""
 
+    # Where she is on the internet, for the links she sends (結算頁、備份).
+    # Railway sets RAILWAY_PUBLIC_DOMAIN itself, so this is usually left empty.
+    PUBLIC_URL: str = ""
+
     TIMEZONE: str = "America/Los_Angeles"
     POLL_INTERVAL_MIN: int = 15
     DEBOUNCE_MINUTES: int = 5
@@ -34,6 +38,16 @@ class Settings(BaseSettings):
 
 
 settings = Settings()  # reads env / .env
+
+
+def public_url() -> str:
+    """The base URL for links Momo taps from LINE. Railway hands us the domain; the
+    setting is the override for anywhere else."""
+    import os as _os
+    if settings.PUBLIC_URL:
+        return settings.PUBLIC_URL.rstrip("/")
+    dom = _os.environ.get("RAILWAY_PUBLIC_DOMAIN") or ""
+    return f"https://{dom}" if dom else ""
 TZ = ZoneInfo(settings.TIMEZONE)
 
 

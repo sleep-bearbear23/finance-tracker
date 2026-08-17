@@ -126,6 +126,15 @@ async def build_context(session) -> str:
 
     try:
         a = await AL.compute(session)
+        if a.get("awaiting_settlement"):
+            aw = a["awaiting_settlement"]
+            # She must not quote a budget the ritual hasn't produced yet. The write
+            # channel is the one place being wrong costs trust fastest.
+            lines.append(
+                f"⚠ {aw['label']} 還沒結算，所以這一期【沒有額度可以講】。"
+                "默默問還能花多少，就說還沒結算、要先決定口袋那筆錢去哪，"
+                "叫他去結算頁面（她會拿到連結）。不要自己估一個數字給他，也不要"
+                "拿上一期的數字充數。記帳、問這筆是什麼、他自己報的花費，全部照常。")
         lines.append(
             f"本期預算（{a['period_start']}~{a['period_end']}，{a['period_label']}，"
             f"共 {a['days_in_period']} 天）：可花 ${a['allowance']:.0f}，已花 ${a['spent']:.0f}，"

@@ -603,7 +603,22 @@ async def compute(session, key: str | None = None) -> dict:
 
         "deficit": deficit,
         "deficit_kind": kind,
+        # A period whose predecessor was never settled has no honest budget yet: the
+        # allocation decision moves money into jars, and jars set the water. The number
+        # below is still computed (nothing downstream should crash, and the settlement
+        # page needs it), but every surface must render 等結算 instead of quoting it.
+        "awaiting_settlement": await _awaiting(session),
     }
+
+
+async def _awaiting(session) -> dict | None:
+    try:
+        from . import settle as ST
+        st = await ST.state(session)
+        return st if st["awaiting"] else None
+    except Exception as e:   # a broken ritual must never take the engine down
+        print(f"[settle] state error: {e!r}")
+        return None
 
 
 async def _spent(session, key: str, from_day: date, hi: date) -> float:
@@ -778,6 +793,10 @@ async def closure(session, key: str | None = None) -> dict:
 def explain(a: dict) -> list[str]:
     """Her actual reasoning, in order, in words. If she can't say it she shouldn't use it."""
     out = []
+    if a.get("awaiting_settlement"):
+        aw = a["awaiting_settlement"]
+        return [f"{aw['label']} 還沒結算，所以這期的額度我先不給你數字——"
+                "錢要分去哪還沒決定，分完才算得準。帳我照記，你有空來結算一下。"]
     if a["partial"]:
         out.append(f"這期我從 {a['budget_from']} 才開始算（{a['period_label']} 只管得到 "
                    f"{int(a['coverage'] * 100)}%），之前的我只記帳，沒算你頭上。")

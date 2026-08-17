@@ -133,6 +133,23 @@ class SavingsPlan(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Settlement(Base):
+    """One period's closing meeting. One row per period, ever — the submit button on a
+    page is exactly the shape of bug that double-credits a pot, so the write is idempotent
+    on the period key rather than trusting the caller."""
+    __tablename__ = "settlements"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    period_key: Mapped[str] = mapped_column(String(16), index=True, unique=True)
+    kind: Mapped[str] = mapped_column(String(16), default="session")  # session | quarter
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    pocket: Mapped[float] = mapped_column(Float, default=0.0)
+    destination: Mapped[str] = mapped_column(String(24), default="carry")
+    reflection: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
+    allocations: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON (Batch B)
+    objective: Mapped[str | None] = mapped_column(Text, nullable=True)    # JSON (Batch B)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class Snapshot(Base):
     """A daily point so the dashboard can draw a net-worth / budget trend over time."""
     __tablename__ = "snapshots"

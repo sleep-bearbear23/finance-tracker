@@ -32,6 +32,7 @@ from .models import Account, MerchantMemory, Message, Snapshot, Transaction
 router = APIRouter()
 _HTML = (Path(__file__).parent / "dashboard.html")
 _LABEL_HTML = (Path(__file__).parent / "label.html")
+_SETTLE_HTML = (Path(__file__).parent / "settle.html")
 
 
 def _cat_labels_json() -> str:
@@ -649,6 +650,70 @@ async def api_allowance(request: Request):
         return a
 
 
+@router.get("/settle", response_class=HTMLResponse)
+async def settle_page(request: Request):
+    if not _authorized(request):
+        return _deny()
+    return HTMLResponse(_SETTLE_HTML.read_text(encoding="utf-8"))
+
+
+@router.get("/api/settle")
+async def api_settle_get(request: Request):
+    """Everything the settlement page needs: which period, how it went, her own last
+    words, and whether the backup is stale."""
+    if not _authorized(request):
+        return _deny()
+    from . import settle as ST
+    async with Session() as s:
+        st = await ST.state(s)
+        key = request.query_params.get("key") or st.get("oldest")
+        if not key:
+            return {"awaiting": False, "backup": await ST.backup_state(s)}
+        clo = await allowance.closure(s, key)
+        return {
+            "awaiting": True, "key": key, "label": P.label(key),
+            "closure": clo,
+            "questions": [{"id": k, "q": q} for k, q in ST.REFLECTION],
+            "noticed": await ST.noticed_question(s, key),
+            "last": await ST.last_reflection(s, before_key=key),
+            "backup": await ST.backup_state(s),
+            "jars": (await allowance.compute(s))["spoken_for"]["jars"],
+            "more": st["periods"][1:],
+        }
+
+
+@router.post("/api/settle")
+async def api_settle_post(request: Request):
+    """Submit one period's settlement. Idempotent on the period key."""
+    if not _authorized(request):
+        return _deny()
+    from . import jars as J
+    from . import settle as ST
+    body = await request.json()
+    key = (body.get("key") or "").strip()
+    dest = (body.get("destination") or "carry").strip()
+    jar_id = (body.get("jar") or "").strip()
+    reflection = body.get("reflection") or {}
+    async with Session() as s:
+        if await ST.get_one(s, key) is not None:
+            return {"ok": False, "error": "這一期已經結算過了。"}
+        clo = await allowance.closure(s, key)
+        pocket = float(clo.get("pool") or 0.0)
+        moved = None
+        async with CL.watching(s, tool="settle", args={"key": key, "destination": dest},
+                                      source_text=f"{P.label(key)} 結算", actor="settle"):
+            if pocket > 0 and dest == "jar" and jar_id:
+                out = await J.allocate(s, jar_id, pocket)
+                moved = out.get("receipt") if out.get("ok") else None
+            elif pocket > 0 and dest == "quarter":
+                out = await J.allocate(s, "season", pocket)
+                moved = out.get("receipt") if out.get("ok") else None
+            await ST.record(s, key, pocket=pocket, destination=dest,
+                            reflection=reflection, kind=body.get("kind") or "session")
+        st = await ST.state(s)
+        return {"ok": True, "moved": moved, "still_awaiting": st["periods"]}
+
+
 @router.get("/api/jars")
 async def api_jars(request: Request):
     """有主的錢 — the pots, the one spoken-for total, and whether cash still covers it.
@@ -678,6 +743,9 @@ async def api_export(request: Request):
     want_txns = (request.query_params.get("txns") or "1") != "0"
     async with Session() as s:
         data = await EX.build(s, include_txns=want_txns)
+        # so 「上次備份 X 天前」 is measured, not guessed — the reminder needs a real number
+        from . import settle as ST
+        await ST.stamp_export(s)
     stamp = now().strftime("%Y%m%d-%H%M")
     return JSONResponse(data, headers={
         "Content-Disposition": f'attachment; filename="chen-state-{stamp}.json"'})

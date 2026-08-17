@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>期末結算 · 陳會計</title>
+<style>
+  :root{
+    --bg:#f4efe7; --card:#fffaf3; --ink:#3d3630; --sub:#8a7f72; --line:#e6dccd;
+    --accent:#c8783e; --accent-soft:#f3e2d1; --good:#5a7d5a; --bad:#b4553f;
+    --shadow:0 1px 2px rgba(90,70,50,.06),0 8px 24px rgba(90,70,50,.06);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC",sans-serif;
+    font-size:15px;line-height:1.55}
+  .wrap{max-width:640px;margin:0 auto;padding:22px 16px 120px}
+  header{text-align:center;margin:6px 0 18px}
+  header .badge{display:inline-flex;background:var(--accent-soft);color:var(--accent);
+    font-weight:600;font-size:13px;padding:6px 14px;border-radius:999px}
+  header h1{font-size:22px;margin:10px 0 4px}
+  header p{color:var(--sub);font-size:13px;margin:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:15px;margin:12px 0;box-shadow:var(--shadow)}
+  .card h2{font-size:14px;margin:0 0 10px;color:var(--sub);font-weight:650;
+    letter-spacing:.02em}
+  /* 2×2 on a phone, one row on a laptop — four flex items in 430px left the fourth
+     stranded on its own full-width line, which read as an error rather than a stat. */
+  .statrow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  @media(max-width:520px){.statrow{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--bg);border:1px solid var(--line);
+    border-radius:11px;padding:9px 12px;text-align:center}
+  .stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:11px;color:var(--sub)}
+  .stat.good b{color:var(--good)} .stat.bad b{color:var(--bad)}
+  .pocket{text-align:center;padding:6px 0 2px}
+  .pocket b{display:block;font-size:34px;font-weight:750;letter-spacing:-1px;
+    font-variant-numeric:tabular-nums}
+  .pocket span{font-size:12.5px;color:var(--sub)}
+  .opts{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  label.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);
+    border-radius:11px;padding:11px 13px;background:var(--bg);cursor:pointer}
+  label.opt.on{border-color:var(--accent);background:var(--accent-soft)}
+  label.opt input{margin:3px 0 0}
+  label.opt .t{display:block;font-weight:640;font-size:14px}
+  label.opt .d{display:block;font-size:12px;color:var(--sub);margin-top:2px}
+  select,textarea{width:100%;font:inherit;color:inherit;background:var(--bg);
+    border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-top:8px}
+  textarea{min-height:62px;resize:vertical}
+  .q{margin:12px 0}
+  .q .qt{font-size:13.5px;font-weight:620}
+  .q.noticed .qt{color:var(--accent)}
+  .hint{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.6}
+  .last{font-size:12.5px;color:var(--sub);background:var(--bg);border:1px dashed var(--line);
+    border-radius:10px;padding:10px 12px;margin-top:10px}
+  .backup{font-size:13px}
+  .backup.stale{color:var(--bad)}
+  .backup a{color:var(--accent);font-weight:640}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);
+    border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    display:flex;gap:10px;align-items:center;justify-content:center}
+  button{font:inherit;font-weight:680;border:none;border-radius:12px;padding:13px 22px;
+    background:var(--accent);color:#fff;cursor:pointer;min-width:220px}
+  button[disabled]{opacity:.45;cursor:default}
+  .done{text-align:center;padding:40px 10px}
+  .done h2{font-size:19px;color:var(--good)}
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"><div class="card">載入中…</div></div>
+<div class="bar" id="bar" style="display:none">
+  <button id="go" onclick="submit()">結算，開下一期</button>
+</div>
+<script>
+const el=i=>document.getElementById(i);
+const F=n=>'$'+Math.round(n).toLocaleString();
+let D=null, dest='quarter', jar='';
+
+async function load(){
+  const r = await fetch('/api/settle'+location.search, {credentials:'same-origin'});
+  if(!r.ok){ el('wrap').innerHTML='<div class="card">看不到資料，回去點一次連結。</div>'; return; }
+  D = await r.json();
+  if(!D.awaiting){ el('wrap').innerHTML =
+    '<div class="done"><h2>沒有要結算的期</h2><p>都結算完了，去看看今天還能花多少。</p></div>'; return; }
+  render();
+  el('bar').style.display='flex';
+}
+
+function render(){
+  const c=D.closure, pocket=c.pool||0, b=D.backup||{};
+  const opts=[
+    ['quarter','放進這一季的目標','存起來，累積成這一季自己談下來的成果'],
+    ['carry','留著下一期用','不分配，錢留在水裡，下一期的線會鬆一點'],
+    ['jar','分進某個罐子','指定一罐——應急、預備金、實驗都可以'],
+  ];
+  el('wrap').innerHTML = `
+    <header>
+      <span class="badge">期末結算</span>
+      <h1>${D.label}</h1>
+      <p>${c.start} ~ ${c.end}　結算完才會開下一期的額度</p>
+    </header>
+
+    <div class="card">
+      <h2>這一期怎麼過的</h2>
+      <div class="statrow">
+        <div class="stat good"><b>${c.days_under}</b><span>守住的天數</span></div>
+        <div class="stat ${c.days_over?'bad':''}"><b>${c.days_over}</b><span>超過的天數</span></div>
+        <div class="stat"><b>${F(c.spent)}</b><span>花掉</span></div>
+        <div class="stat"><b>${F(c.line)}</b><span>這期的線</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>口袋裡剩下的</h2>
+      <div class="pocket"><b>${F(pocket)}</b>
+        <span>${pocket>0?'每天沒花完的錢累積起來的——這是你省下來的，不是意外剩的'
+                        :'這一期口袋是空的，沒有錢要分配'}</span></div>
+      ${pocket>0?`<div class="opts">${opts.map(([v,t,d])=>`
+        <label class="opt${dest===v?' on':''}" onclick="pick('${v}')">
+          <input type="radio" name="dest" ${dest===v?'checked':''}>
+          <span><span class="t">${t}</span><span class="d">${d}</span></span></label>`).join('')}
+        </div>
+        <select id="jarsel" style="display:${dest==='jar'?'block':'none'}">
+          ${(D.jars||[]).filter(j=>j.id!=='tax').map(j=>
+            `<option value="${j.id}">${j.name}　${F(j.balance||0)}${j.target?' / '+F(j.target):''}</option>`).join('')}
+        </select>`:''}
+    </div>
+
+    <div class="card">
+      <h2>回顧一下（可以跳過）</h2>
+      ${(D.questions||[]).map(q=>`
+        <div class="q"><div class="qt">${q.q}</div>
+          <textarea id="r_${q.id}" placeholder="想到什麼寫什麼，沒有也可以空著"></textarea></div>`).join('')}
+      ${D.noticed?`<div class="q noticed"><div class="qt">${D.noticed}</div>
+          <textarea id="r_noticed" placeholder="阿姨從這一期的帳看出來的，隨便聊聊"></textarea></div>`:''}
+      ${D.last?`<div class="last"><b>上一次你自己說的（${D.last.label}）</b><br>
+        ${Object.values(D.last.answers).filter(Boolean).map(v=>'「'+v+'」').join('<br>')}</div>`:''}
+    </div>
+
+    <div class="card">
+      <h2>備份</h2>
+      <div class="backup ${b.stale?'stale':''}">
+        ${b.last?`上次備份：${b.last}（${b.days} 天前）`:'還沒備份過'}
+        ${b.stale?'　該備份了':''}
+      </div>
+      <div class="hint">
+        <a href="/api/export" target="_blank">點這裡下載</a>，存到 <b>${b.folder||''}</b><br>
+        這個檔案是你全部的帳、商家記憶跟罐子。Railway 上那份不算備份，要有一份在你自己電腦裡。
+      </div>
+    </div>`;
+  const js=el('jarsel'); if(js){ jar=js.value; js.onchange=()=>jar=js.value; }
+}
+
+function pick(v){ dest=v; render(); }
+
+async function submit(){
+  el('go').disabled=true; el('go').textContent='結算中…';
+  const reflection={};
+  for(const q of (D.questions||[])){ const t=el('r_'+q.id); if(t&&t.value.trim()) reflection[q.id]=t.value.trim(); }
+  const nt=el('r_noticed'); if(nt&&nt.value.trim()) reflection.noticed=nt.value.trim();
+  if(D.noticed) reflection.noticed_q=D.noticed;
+  const r=await fetch('/api/settle',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({key:D.key,destination:dest,jar:jar,reflection})});
+  const out=await r.json();
+  if(!out.ok){ el('go').disabled=false; el('go').textContent='結算，開下一期';
+    alert(out.error||'結算失敗'); return; }
+  if(out.still_awaiting && out.still_awaiting.length){ location.reload(); return; }
+  el('bar').style.display='none';
+  el('wrap').innerHTML=`<div class="done"><h2>結算好了</h2>
+    <p>${out.moved?out.moved+'<br>':''}下一期的額度開了，回去看看。</p></div>`;
+}
+load();
+</script>
+</body>
+</html>
