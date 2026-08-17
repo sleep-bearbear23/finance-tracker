@@ -216,8 +216,8 @@ async def _boundary_job(dry: bool = False) -> dict:
                         out["why"] = f"{q['key']} 的結算連結已經傳過了"
                         return out
                     msg = (f"這一季（{q['start']} ~ {q['end']}）結束了。"
-                           "來把季目標存款分一分、定下一季的目標："
-                           f"\n{base}/settle")
+                           "要結算嗎？說一聲我就開起來——季目標存款要分一分、"
+                           "下一季的目標也要定，在電腦上弄比較順。")
                     out.update(action="quarter_notice", text=msg, key=q["key"])
                     if dry:
                         return out

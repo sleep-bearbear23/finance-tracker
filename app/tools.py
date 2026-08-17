@@ -1653,24 +1653,35 @@ async def h_jar_remove(s, rec, jar: str):
 
 
 async def h_start_settlement(s, rec, scope: str = "session"):
-    from .config import public_url
+    """Momo says yes → arm the survey so it opens itself on the dashboard.
+
+    The form is not a chat thing and not a phone thing: three free-text answers plus an
+    editable allocation is keyboard work. This gets it ready and says where it is.
+    """
     from . import settle as ST
+    from .config import public_url
     base = public_url() or ""
     st = await ST.state(s)
     if scope == "quarter":
         q = await ST.quarter_pending(s)
         if q:
+            await ST.arm(s, q["key"])
+            rec.says(f"季結算（{q['start']}~{q['end']}）開好了，在儀表板上等你。")
             return {"ok": True, "due": True,
-                    "reply": f"這一季（{q['start']}~{q['end']}）可以結算了：{base}/settle"}
+                    "reply": ("好，季結算我開好了。去電腦上打開儀表板就會自己跳出來，"
+                              "打字比較好打。")}
         return {"ok": True, "due": False,
-                "reply": ("這一季還沒結束，先給你看預覽（按了不會寫進去）："
-                          f"{base}/settle?preview=quarter")}
+                "reply": ("這一季還沒結束，還不能結算。想先看看長怎樣的話："
+                          f"{base}/settle?preview=quarter（不會寫進去）")}
     if st["awaiting"]:
+        await ST.arm(s, st["oldest"])
+        rec.says(f"{st['label']} 的結算開好了，在儀表板上等你。")
         return {"ok": True, "due": True,
-                "reply": f"{st['label']} 還沒結算，這就是連結：{base}/settle"}
+                "reply": (f"好，{st['label']} 的結算我開好了。去電腦上打開儀表板就會"
+                          "自己跳出來——三個回顧的問題用鍵盤打比較不折磨人。")}
     return {"ok": True, "due": False,
-            "reply": ("現在沒有要結算的期。想先看看長怎樣的話，這是預覽（不會寫進去）："
-                      f"{base}/settle?preview=session")}
+            "reply": ("現在沒有要結算的期。想先看看長怎樣的話："
+                      f"{base}/settle?preview=session（不會寫進去）")}
 
 
 async def h_rehearse(s, rec, kind: str = "all"):

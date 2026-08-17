@@ -338,6 +338,7 @@ async function submit(){
     alert(out.error||'結算失敗'); return; }
   if(out.still_awaiting && out.still_awaiting.length){ location.reload(); return; }
   el('bar').style.display='none';
+  try{ if(window.parent!==window) window.parent.postMessage({settled:true},'*'); }catch(e){}
   el('wrap').innerHTML=`<div class="done"><h2>${D.kind==='quarter'?'這一季結算好了':'結算好了'}</h2>
     <p>${out.moved?out.moved+'<br>':''}下一期的額度開了，回去看看。</p></div>`;
 }

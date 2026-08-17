@@ -121,8 +121,8 @@ async def main() -> int:
         print("\n[9] the two messages")
         clo = await allowance.closure(s, prev)
         note = settle.close_notice(clo, "https://x.test")
-        check("the close notice carries the link and promises記帳 continues",
-              "/settle" in note and "帳還是照記" in note, note[:60])
+        check("the close notice asks rather than handing over a form",
+              "要結算嗎" in note and "帳我照記" in note, note[:60])
         om = await settle.open_message(s, cur, {"target": 9000.0, "secured": 6000.0,
                                                 "days_needed": 8.6})
         check("the open message leads with this period's line",
@@ -279,7 +279,7 @@ async def main() -> int:
         after_msgs = len((await s.execute(select(Message))).scalars().all())
 
         check("the rehearsal renders the REAL message",
-              res["action"] == "session_notice" and "/settle" in (res["text"] or ""),
+              res["action"] == "session_notice" and "要結算嗎" in (res["text"] or ""),
               str(res.get("action")))
         check("the idempotency key is NOT burned — the real notice still fires later",
               before_notice == after_notice and after_notice != "1",
@@ -316,6 +316,36 @@ async def main() -> int:
               res["action"] == "backup_nudge" and settle.BACKUP_FOLDER in res["text"])
         check("…and STILL writes nothing",
               await get_kv(s, "last_run:backup_nudge") == before)
+
+    async with Session() as s:
+        print("\n[21] the survey lives on the dashboard; LINE just asks")
+        from app import settle as ST, tools
+        far = budget.current_key()
+        for _ in range(7):
+            far = P.prev_key(far)
+        await set_kv(s, ST.FROM_KEY, far)
+        st = await ST.state(s)
+        owed = st["oldest"]
+        check("a period is owed", bool(owed), str(st["periods"]))
+
+        clo = await allowance.closure(s, owed)
+        note = ST.close_notice(clo, "https://x.test")
+        check("the notice ASKS instead of handing over a link",
+              "要結算嗎" in note and "/settle" not in note, note[:70])
+        check("…and still promises the記帳 continues", "帳我照記" in note)
+
+        check("nothing is armed to begin with", await ST.is_armed(s, owed) is False)
+        out = await tools.run(s, "start_settlement", {"scope": "session"})
+        check("saying yes arms it and points at the keyboard",
+              out["due"] is True and "儀表板" in out["reply"], out["reply"][:50])
+        check("…and the flag is set for THAT period", await ST.is_armed(s, owed) is True)
+        check("a different period is not armed by it",
+              await ST.is_armed(s, "1999-01A") is False)
+
+        await ST.record(s, owed, pocket=0.0, destination="carry")
+        await ST.disarm(s)
+        check("settling disarms it, so it stops popping up",
+              await ST.is_armed(s, owed) is False)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

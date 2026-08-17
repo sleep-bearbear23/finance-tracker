@@ -535,6 +535,27 @@
   .row.cat{cursor:pointer}
   .row.cat:hover .nm{color:var(--accent)}
   .row.cat:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:8px}
+  /* the settlement survey, embedded. It is its own page (/settle) rendered in place —
+     one implementation, two ways in, so the phone link and the dashboard can never
+     drift apart. */
+  .wrapover{position:fixed;inset:0;z-index:90;display:none;flex-direction:column;
+    background:rgba(5,5,8,.9);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px)}
+  .wrapover.on{display:flex}
+  .wrapover .wbar{display:flex;justify-content:space-between;align-items:center;
+    padding:12px 18px;color:var(--ink2);font-size:13px;border-bottom:1px solid var(--border)}
+  .wrapover .wclose{background:none;border:1px solid var(--border);color:var(--muted);
+    font-family:inherit;font-size:12px;border-radius:999px;padding:5px 12px;cursor:pointer}
+  .wrapover iframe{flex:1;width:100%;border:0;background:#f4efe7}
+  /* the standing notice — visible whenever a period is owed, so a frozen number is
+     never a dead end */
+  .wrapnote{display:none;align-items:center;gap:12px;flex-wrap:wrap;
+    background:rgba(232,198,106,.10);border:1px solid rgba(232,198,106,.4);
+    border-radius:14px;padding:11px 15px;margin-bottom:var(--gap)}
+  .wrapnote.on{display:flex}
+  .wrapnote b{color:var(--warn);font-size:13.5px}
+  .wrapnote span{color:var(--ink2);font-size:12.5px;flex:1;min-width:180px}
+  .wrapnote button{background:var(--warn);color:#161018;border:0;border-radius:999px;
+    font-family:inherit;font-weight:700;font-size:12.5px;padding:8px 16px;cursor:pointer}
   .drill{position:fixed;inset:0;z-index:70;display:none;padding:38px 44px;
     background:rgba(5,5,8,.86);
     -webkit-backdrop-filter:blur(34px) saturate(180%);backdrop-filter:blur(34px) saturate(180%)}
@@ -1133,6 +1154,16 @@
     </div>
   </div>
 
+  <!-- 期末結算 — the survey lives here, not on her phone. Typing three reflection
+       answers with a thumb is the reason this moved to the dashboard. -->
+  <div class="wrapover" id="wrapover" role="dialog" aria-label="期末結算">
+    <div class="wbar">
+      <span id="wrapTitle">期末結算</span>
+      <button class="wclose" onclick="closeWrap()">關掉，等一下再說</button>
+    </div>
+    <iframe id="wrapFrame" title="期末結算"></iframe>
+  </div>
+
   <!-- one category, full screen, scrubbable -->
   <div class="drill" id="drill" role="dialog" aria-label="分類細節">
     <button class="dback" onclick="closeDrill()">← 回花在哪</button>
@@ -1195,6 +1226,40 @@ function toggleWhy(){
 // and letting Momo work out which one lied.
 const stamp = t => el('asof').textContent =
   '更新於 '+new Date(t||Date.now()).toLocaleString('zh-TW',{hour12:false});
+/* ── 期末結算 ─────────────────────────────────────────────────────────────
+   A period that has ended and not been settled has no budget — the numbers say
+   等結算 rather than guessing. So the way to fix that must be visible from every
+   screen, always, not only after she says yes in LINE. Saying yes is what makes it
+   OPEN by itself; the notice is what makes sure a frozen number is never a dead end. */
+let wrapState=null;
+async function checkWrap(){
+  try{ wrapState = await getJSON('/api/settle'); }catch(e){ return; }
+  const need = wrapState && wrapState.awaiting && !wrapState.preview;
+  let n=document.getElementById('wrapNote');
+  if(!need){ if(n) n.classList.remove('on'); return; }
+  if(!n){
+    n=document.createElement('div'); n.id='wrapNote'; n.className='wrapnote';
+    document.querySelector('.app').insertBefore(n, document.querySelector('.screen'));
+  }
+  const isQ = wrapState.kind==='quarter';
+  n.innerHTML=`<b>${isQ?'這一季結束了':wrapState.label+' 還沒結算'}</b>
+    <span>${isQ?'把季目標存款分一分、定下一季的目標。':'決定口袋那筆錢去哪，順便回顧兩句。'}
+    結算完這一期的額度才會開。</span>
+    <button onclick="openWrap()">${isQ?'開始季結算':'開始結算'}</button>`;
+  n.classList.add('on');
+  if(wrapState.armed) openWrap();     // she already said yes in LINE
+}
+function openWrap(){
+  const f=el('wrapFrame');
+  if(f.src.indexOf('/settle')<0) f.src='/settle';
+  el('wrapTitle').textContent = wrapState && wrapState.kind==='quarter' ? '這一季結算' : '期末結算';
+  el('wrapover').classList.add('on');
+}
+function closeWrap(){ el('wrapover').classList.remove('on'); }
+window.addEventListener('message', e=>{
+  if(e.data && e.data.settled){ closeWrap(); location.reload(); }
+});
+
 function showAudit(problems){
   const seen=[...new Set((problems||[]).filter(Boolean))];
   let bar=document.getElementById('auditBar');
@@ -1488,7 +1553,7 @@ addEventListener('click', e=>{
   if(!(e.target.closest && e.target.closest('.pop'))) closePop();
 });
 addEventListener('keydown', e=>{
-  if(e.key==='Escape'){ closePop(); closeDrill(); }
+  if(e.key==='Escape'){ closePop(); closeDrill(); closeWrap(); }
   if((e.key==='Enter'||e.key===' ') && document.activeElement
      && document.activeElement.classList.contains('i')){
     e.preventDefault(); document.activeElement.click(); }
@@ -1528,7 +1593,7 @@ async function route(){
   else if(h.startsWith('#/brain')) view='brain';
   if(view==='home')  { backTo='#/';      el('aBack').textContent='← 回今天'; }
   if(view==='acct')  { backTo='#/money'; el('aBack').textContent='← 回錢'; }
-  closeDrill(); closePop();
+  closeDrill(); closePop(); checkWrap();
   for(const v of VIEWS) el('s-'+v).classList.toggle('on', v===view);
   setNav(view); buildSeg(view);
   try{

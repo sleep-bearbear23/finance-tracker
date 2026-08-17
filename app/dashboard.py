@@ -810,6 +810,7 @@ async def api_settle_post(request: Request):
                                 allocations=allocs,
                                 objective=(body.get("objectives")
                                            or ([body["objective"]] if body.get("objective") else [])))
+            await ST.disarm(s)
             return {"ok": True, "moved": "；".join(receipts) or None, "still_awaiting": []}
 
         clo = await allowance.closure(s, key)
@@ -825,6 +826,7 @@ async def api_settle_post(request: Request):
                 moved = out.get("receipt") if out.get("ok") else None
             await ST.record(s, key, pocket=pocket, destination=dest,
                             reflection=reflection, kind=body.get("kind") or "session")
+        await ST.disarm(s)
         st = await ST.state(s)
         return {"ok": True, "moved": moved, "still_awaiting": st["periods"]}
 

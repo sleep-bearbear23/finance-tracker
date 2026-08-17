@@ -58,6 +58,24 @@ async def settle_from(session) -> str:
     return key
 
 
+ARMED_KEY = "settle_armed"
+
+
+async def arm(session, key: str) -> None:
+    """Momo said yes in LINE. That doesn't perform anything — it just means the survey
+    should open by itself next time she loads the dashboard, on the machine where typing
+    three answers isn't a chore."""
+    await set_kv(session, ARMED_KEY, key)
+
+
+async def is_armed(session, key: str) -> bool:
+    return (await get_kv(session, ARMED_KEY)) == key
+
+
+async def disarm(session) -> None:
+    await set_kv(session, ARMED_KEY, "")
+
+
 async def get_one(session, key: str) -> Settlement | None:
     return (await session.execute(
         select(Settlement).where(Settlement.period_key == key))).scalars().first()
@@ -474,12 +492,17 @@ def backup_message(bs: dict, base_url: str) -> str:
 # ── the two messages around the boundary ─────────────────────────────────────
 
 def close_notice(clo: dict, base_url: str) -> str:
+    """The notice ASKS; it doesn't hand over a form.
+
+    Momo found the survey much easier at a keyboard than on her phone — three free-text
+    answers and an editable allocation is not thumb work. So LINE does what LINE is good
+    at (noticing, and getting a yes) and the dashboard does the form.
+    """
     pocket = clo.get("pool") or 0.0
     head = (f"{clo['label']} 結束了。守住 {clo['days_under']} 天、超過 {clo['days_over']} 天，"
             f"口袋 ${pocket:,.0f}。")
-    return (head + "\n來結算一下，決定這筆錢去哪、順便回顧兩句："
-            f"\n{base_url}/settle"
-            "\n（結算完才會開下一期的額度，帳還是照記，不用擔心。）")
+    return (head + "\n要結算嗎？說一聲我就開起來，到電腦上打開儀表板就會自己跳出來。"
+            "\n（結算完才會開下一期的額度。帳我照記，不用擔心。）")
 
 
 async def current_objectives(session) -> list[dict]:
