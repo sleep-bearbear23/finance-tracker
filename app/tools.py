@@ -612,7 +612,8 @@ SCHEMAS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "kind": {"type": "string", "enum": ["boundary", "backup"]},
+                "kind": {"type": "string", "enum": ["all", "boundary", "backup"],
+                         "description": "Default all — runs both and reports both links."},
             },
         },
     },
@@ -1672,7 +1673,7 @@ async def h_start_settlement(s, rec, scope: str = "session"):
                       f"{base}/settle?preview=session")}
 
 
-async def h_rehearse(s, rec, kind: str = "boundary"):
+async def h_rehearse(s, rec, kind: str = "all"):
     from . import main as M
     text = await M.rehearse(kind)
     rec.says(f"彩排跑完了（{kind}），結果送到機房，沒有寄給你、也沒有寫任何紀錄。")

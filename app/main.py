@@ -304,6 +304,27 @@ async def _backup_job(dry: bool = False) -> dict:
             return out
 
 
+async def _links() -> str:
+    """Both settlement links, every time. The control room has no model in it — nobody
+    is going to ask a follow-up question there — so a rehearsal report that mentions one
+    flow and not the other just means opening this app to find the other URL."""
+    from . import settle as ST
+    base = public_url() or ""
+    lines = ["—— 連結 ——"]
+    async with Session() as s:
+        st = await ST.state(s)
+        q = await ST.quarter_pending(s)
+    if st["awaiting"]:
+        lines.append(f"期末結算（真的，{st['label']}）：{base}/settle")
+    else:
+        lines.append(f"期末結算（預覽，不會寫入）：{base}/settle?preview=session")
+    if q:
+        lines.append(f"季結算（真的，{q['start']}~{q['end']}）：{base}/settle")
+    else:
+        lines.append(f"季結算（預覽，不會寫入）：{base}/settle?preview=quarter")
+    return "\n".join(lines)
+
+
 async def rehearse(kind: str = "boundary") -> str:
     """Run a publish path for real-but-not-really and report it to the 機房.
 
@@ -312,20 +333,34 @@ async def rehearse(kind: str = "boundary") -> str:
     control room isn't configured, it falls back to Momo's own chat rather than vanishing:
     the split is an upgrade, never a dependency.
     """
-    job = {"boundary": _boundary_job, "backup": _backup_job}.get(kind)
-    if job is None:
+    jobs = {"boundary": _boundary_job, "backup": _backup_job}
+    if kind == "all":
+        chosen = list(jobs.items())
+    elif kind in jobs:
+        chosen = [(kind, jobs[kind])]
+    else:
         return f"沒有 {kind} 這個彩排"
-    res = await job(dry=True)
-    head = f"🎬 彩排 · {kind} · {res.get('action') or '不會送任何東西'}\n（沒有寄出、沒有寫入任何紀錄）"
-    body = res.get("text") or ""
-    why = f"\n理由：{res['why']}" if res.get("why") else ""
-    report = f"{head}{why}\n————\n{body}".strip()
-    sent = await opsroom.say(report)
-    if not sent:
-        async with Session() as s:
-            owner = await get_kv(s, enrichment.OWNER_KEY)
-        if owner:
-            await line_client.push(owner, report)
+
+    parts = []
+    for name, job in chosen:
+        res = await job(dry=True)
+        head = (f"🎬 彩排 · {name} · {res.get('action') or '不會送任何東西'}"
+                "\n（沒有寄出、沒有寫入任何紀錄）")
+        why = f"\n理由：{res['why']}" if res.get("why") else ""
+        body = res.get("text") or ""
+        parts.append(f"{head}{why}\n————\n{body}".strip())
+    report = ("\n\n".join(parts) + "\n\n" + await _links()).strip()
+    try:
+        sent = await opsroom.say(report)
+        if not sent:
+            async with Session() as s:
+                owner = await get_kv(s, enrichment.OWNER_KEY)
+            if owner:
+                await line_client.push(owner, report)
+    except Exception as e:
+        # delivery is best-effort; the report itself is the deliverable and the caller
+        # still gets it. A rehearsal that fails to post is not a rehearsal that failed.
+        print(f"[rehearse] delivery failed: {e!r}")
     return report
 
 

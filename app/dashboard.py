@@ -799,7 +799,8 @@ async def api_settle_post(request: Request):
 
 @router.get("/debug")
 async def debug_run(request: Request):
-    """Fire a publish path in rehearsal mode: /debug?which=boundary|backup
+    """Fire the scheduled messages in rehearsal mode. /debug on its own runs everything
+    and reports both settlement links; ?which=boundary|backup narrows it.
 
     Same auth as the dashboard, so no new secret exists. Always dry — there is no
     parameter that makes this send for real, because a debug URL that can push to her
@@ -807,7 +808,7 @@ async def debug_run(request: Request):
     """
     if not _authorized(request):
         return _deny()
-    which = (request.query_params.get("which") or "boundary").strip()
+    which = (request.query_params.get("which") or "all").strip()
     from . import main as M
     return {"ok": True, "which": which, "report": await M.rehearse(which)}
 
