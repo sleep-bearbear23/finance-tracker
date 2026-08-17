@@ -204,6 +204,49 @@ async def main() -> int:
         check("an underfunded pot admits it can't cover the whole dip",
               "只剩" in dv["dip_note"], dv["dip_note"][-60:])
 
+        print("\n[13] the 繁中 gate — simplified never reaches her phone")
+        from app import line_client as LC
+        clean = "罐子裡一共 $7,470——稅、地板、預備金各自守著。待收款、證件規費、工作支出。"
+        out, conv = LC.zh_tw(clean)
+        check("clean Taiwanese traditional passes through byte for byte",
+              out == clean and conv is False)
+        dirty = "大项目多归多，钱有算清楚就好"
+        out, conv = LC.zh_tw(dirty)
+        check("a simplified slip is converted, and reported as converted",
+              conv is True and "项" not in out and "钱" not in out, out)
+        out, _ = LC.zh_tw("软件 视频")
+        check("…and mainland vocabulary becomes Taiwanese", out == "軟體 影片", out)
+
+        print("\n[14] the weekly report keeps her money apart from money passing through")
+        from app import reports as RP
+        from app.config import aware as _aware
+        from datetime import timedelta as _td
+        t_work = Transaction(id="rp-work", account_id="chase", amount=-917.0,
+                             merchant_desc="BLOOM CONNECTION", category="work",
+                             status="enriched", posted_at=now())
+        t_fee = Transaction(id="rp-fee", account_id="chase", amount=-340.0,
+                            merchant_desc="DMV", category="fees",
+                            status="enriched", posted_at=now())
+        t_mine = Transaction(id="rp-mine", account_id="chase", amount=-17.0,
+                             merchant_desc="UBER EATS", category="food",
+                             status="enriched", posted_at=now())
+        for t_ in (t_work, t_fee, t_mine):
+            s.add(t_)
+        await s.commit()
+        d = await RP.gather(s, now() - _td(days=7), now() + _td(days=1))
+        check("her own spending is only the discretionary part",
+              near(d["mine"], 17.0), str(d["mine"]))
+        check("fronted production money is reported separately",
+              near(d["work"], 917.0), str(d["work"]))
+        check("a one-off fee is neither hers nor the crew's",
+              near(d["irregular"], 340.0), str(d["irregular"]))
+        txt = RP._fmt(d, None)
+        check("the report speaks Chinese labels, never taxonomy ids",
+              "工作支出" in txt and "證件規費" in txt
+              and "work $" not in txt and "fees $" not in txt, txt[:80])
+        check("…and says out loud that fronted money isn't overspending",
+              "不要算在" in txt)
+
     # legacy window: a second, unseeded database — the engine must read tax + rung only
     print("\n[9] the deploy→重掃歷史 window behaves like the old engine")
     import sqlalchemy

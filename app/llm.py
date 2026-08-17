@@ -121,10 +121,20 @@ async def greet() -> str:
 
 async def report(kind: str, data_text: str) -> str:
     label = {"weekly": "這禮拜", "monthly": "這個月", "quarterly": "這一季"}.get(kind, "這段時間")
+    # The old instruction was 「點出花太兇的地方，該唸就唸」 — it manufactured a verdict
+    # every week whether the data supported one or not, and pointed it at money that
+    # often wasn't even hers (fronted production costs, a DMV bill). Momo's spec:
+    # situation, both levers, no verdict. Scolding her for a slow month is scolding her
+    # for the weather, and she'll correctly stop believing the numbers.
     instr = (
         f"這是{label}的財務數據（金額都是真的）：\n{data_text}\n\n"
-        f"用你的口氣幫默默做一份{label}的理財報告：先講重點，點出花太兇的地方，該唸就唸，"
-        "最後一句總結或給個建議。可以分行，但不要落落長。"
+        f"用你的口氣跟默默講{label}過得怎麼樣。規則：\n"
+        "- 只有「自己花的」那筆才是他的花費。替劇組墊的錢、規費那種一次性的，"
+        "講可以，但不准拿來說他花太多。\n"
+        "- 不要每週硬擠一個結論出來罵人。數字好就說好，看到他守住了就講出來。\n"
+        "- 真的有值得問的（某筆特別大、不知道是什麼）就問一句，問完就好。\n"
+        "- 收入低的那種週，那是接案的節奏，不是他亂花——不要把兩件事混在一起唸。\n"
+        "- 三四句話，像傳 LINE，不要條列、不要小標題。"
     )
     return await _say(instr, max_tokens=900)
 
