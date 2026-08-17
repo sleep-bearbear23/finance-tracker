@@ -347,6 +347,46 @@ async def main() -> int:
         check("settling disarms it, so it stops popping up",
               await ST.is_armed(s, owed) is False)
 
+    async with Session() as s:
+        print("\n[22] the voice — a positive spec, not a wall of don'ts")
+        import re as _re
+        from app.agent import RULES
+        from app.persona import PERSONA_SYSTEM as PZ
+        pat = r"不要|不准|絕不|不可以|不能|別[^人]"
+        n_pro = len(_re.findall(pat, PZ)) + len(_re.findall(pat, RULES))
+        check("prohibitions are down from 43 to something a model can hold",
+              n_pro <= 25, f"{n_pro} prohibitions")
+        check("she is shown what a good reply looks like, not just what isn't",
+              PZ.count("例：") >= 3, f"{PZ.count('例：')} examples")
+        check("an example demonstrates prose for a multi-item reply",
+              "1. 2. 3." in PZ or "不要寫成" in PZ)
+        check("scolding is gated on a real spending story",
+              "資料真的講得出" in PZ and "罵他等於罵天氣" in PZ)
+        check("all four good-news triggers are named",
+              all(k in PZ for k in ("守住了", "接到案子", "存到目標", "上次結算"))
+              or ("守住" in PZ and "罐子" in PZ and "結算" in PZ))
+        check("…and good news never turns into an instruction",
+              "不要接著叫他" in PZ)
+        check("the hard rules survive the cut",
+              "簡體" in PZ and "系統給你的數字" in PZ)
+
+        print("\n[23] she can look things up instead of being handed everything")
+        from app import tools
+        check("look_up is registered", "look_up" in tools.NAMES)
+        out = await tools.run(s, "look_up", {"what": "jars"})
+        check("jars can be fetched on demand", out["ok"] and isinstance(out["jars"], list))
+        out = await tools.run(s, "look_up", {"what": "category", "which": "食", "days": 400})
+        check("a category total is a lookup, not a guess",
+              out["ok"] and "total" in out, str(out.get("error")))
+        out = await tools.run(s, "look_up", {"what": "category", "which": "不存在的分類"})
+        check("an unknown category is refused, not invented", out["ok"] is False)
+        out = await tools.run(s, "look_up", {"what": "pending"})
+        check("待收款 comes back sorted by how late it is", out["ok"] and "items" in out)
+        from app.queries import build_context
+        ctx = await build_context(s)
+        check("the standing context now points at the tool instead of pre-loading everything",
+              "look_up" in ctx)
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

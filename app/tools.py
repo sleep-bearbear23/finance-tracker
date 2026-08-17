@@ -603,6 +603,29 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "look_up",
+        "description": (
+            "Look something up instead of guessing or asking her to repeat it. Use when a "
+            "question needs a figure that is NOT already in your standing context, or when "
+            "you want to check before saying a number out loud.\n"
+            "  pending  — 待收款: every invoice waiting, amount, expected date, how late\n"
+            "  category — 某個分類這期／近三個月花多少（需要 which=分類 id 或名字）\n"
+            "  merchant — 某家店的歷史（需要 which=店名）\n"
+            "  jars     — 每個罐子的餘額、目標、動用規則\n"
+            "  recent   — 最近的帳，比標準脈絡給的更多筆\n"
+            "This reads only; it never changes anything."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "what": {"type": "string",
+                         "enum": ["pending", "category", "merchant", "jars", "recent"]},
+                "which": {"type": "string", "description": "分類 id／名字，或店名。"},
+                "days": {"type": "integer", "description": "回看幾天，預設 90。"},
+            },
+            "required": ["what"],
+        },
+    },
+    {
         "name": "rehearse",
         "description": (
             "Run a scheduled message for rehearsal and report it to the 機房 (control "
@@ -1691,7 +1714,85 @@ async def h_rehearse(s, rec, kind: str = "all"):
     return {"ok": True, "rehearsal": text}
 
 
+async def h_look_up(s, rec, what: str, which: str | None = None, days: int = 90):
+    """Reads. The standing context is enormous precisely BECAUSE she had no way to ask —
+    everything anyone might need had to be pre-loaded. With this she can fetch, which is
+    both fresher and shorter."""
+    from datetime import timedelta
+
+    from sqlalchemy import select as _sel
+
+    from . import budget as B
+    from . import jars as JR
+    from . import prefs as PR
+    from . import taxonomy as _T
+    from .config import now as _now
+    from .models import MerchantMemory, Transaction
+
+    if what == "jars":
+        js = await JR.load(s)
+        return {"ok": True, "jars": [
+            {"name": j.get("name"), "balance": j.get("balance"), "target": j.get("target"),
+             "release": j.get("release"), "by_date": j.get("by_date"),
+             "advice": (JR.rate_advice(j) or {}).get("text")} for j in js]}
+
+    if what == "pending":
+        today = _now().date()
+        out = []
+        for u in await PR.pending_invoices(s):
+            land = PR.landing(u)
+            out.append({"note": u.get("note"), "amount": u.get("amount"),
+                        "expected": land.isoformat() if land else None,
+                        "days_late": (today - land).days if land and land < today else 0,
+                        "stage": u.get("stage")})
+        out.sort(key=lambda r: -(r["days_late"] or 0))
+        return {"ok": True, "total": round(sum(float(r["amount"] or 0) for r in out), 2),
+                "count": len(out), "items": out}
+
+    lo = _now().date() - timedelta(days=max(1, days))
+    rows = (await s.execute(_sel(Transaction))).scalars().all()
+
+    if what == "category":
+        if not which:
+            return {"ok": False, "error": "要指定哪一個分類。"}
+        cid = which if which in _T.CATEGORIES else next(
+            (k for k, v in _T.CATEGORIES.items() if v[0] == which), None)
+        if cid is None:
+            return {"ok": False, "error": f"沒有「{which}」這個分類。"}
+        hits = [t for t in rows if t.category == cid and B.is_spend(t)
+                and (d := B.eff_date(t)) and d >= lo]
+        return {"ok": True, "category": _T.label(cid), "days": days,
+                "total": round(sum(B.spend_amount(t) for t in hits), 2), "count": len(hits),
+                "top": sorted(({"merchant": t.merchant_desc,
+                                "amount": round(B.spend_amount(t), 2),
+                                "date": str(B.eff_date(t))} for t in hits),
+                              key=lambda r: -r["amount"])[:8]}
+
+    if what == "merchant":
+        if not which:
+            return {"ok": False, "error": "要指定哪一家店。"}
+        key = categories.merchant_key(which)
+        hits = [t for t in rows
+                if key and key in categories.merchant_key(t.merchant_desc or "")
+                and (d := B.eff_date(t)) and d >= lo]
+        mem = await s.get(MerchantMemory, key)
+        return {"ok": True, "merchant": which, "days": days, "count": len(hits),
+                "total": round(sum(B.spend_amount(t) for t in hits if B.is_spend(t)), 2),
+                "learned_as": _T.label(mem.category) if mem and mem.category else None,
+                "rows": [{"date": str(B.eff_date(t)), "amount": t.amount,
+                          "desc": t.merchant_desc, "cat": _T.label(t.category)}
+                         for t in sorted(hits, key=lambda t: B.eff_date(t) or lo,
+                                         reverse=True)[:12]]}
+
+    hits = [t for t in rows if (d := B.eff_date(t)) and d >= lo]
+    hits.sort(key=lambda t: B.eff_date(t) or lo, reverse=True)
+    return {"ok": True, "days": days, "rows": [
+        {"date": str(B.eff_date(t)), "amount": t.amount, "desc": t.merchant_desc,
+         "cat": _T.label(t.category), "status": t.status} for t in hits[:40]]}
+
+
 HANDLERS = {
+    "look_up": h_look_up,
     "rehearse": h_rehearse,
     "start_settlement": h_start_settlement,
     "jar_create": h_jar_create,

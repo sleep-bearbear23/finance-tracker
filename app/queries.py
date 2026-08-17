@@ -124,6 +124,34 @@ async def build_context(session) -> str:
     except Exception:
         pass
 
+    try:  # 罐子：小，但這是她能主動看到「某個罐子存滿了」的唯一途徑
+        from . import jars as JR
+        js = await JR.load(session)
+        if js:
+            bits = []
+            for j in js:
+                bal, tgt = float(j.get("balance") or 0), j.get("target")
+                mark = "（滿了）" if tgt and bal >= float(tgt) - 0.01 else ""
+                bits.append(f"{j.get('name')} ${bal:,.0f}"
+                            + (f"/${float(tgt):,.0f}{mark}" if tgt else ""))
+            lines.append("罐子（有主的錢，已經從可花的錢裡扣掉了）：" + "、".join(bits))
+            lines.append("（罐子是他自己設的目標，不是帳單。有罐子存到目標了就講一聲，"
+                         "但不要接著叫他拿去做什麼。）")
+    except Exception:
+        pass
+
+    try:  # 他自己說過的話——結算時寫的回顧
+        from . import settle as ST
+        last = await ST.last_reflection(session)
+        if last and last.get("answers"):
+            said = "；".join(f"{v}" for v in last["answers"].values() if v)
+            if said:
+                lines.append(f"他上次結算（{last['label']}）自己寫的：{said}")
+                lines.append("（如果這期的數字真的顯示他做到了他說要改的事，講出來。"
+                             "數字沒顯示就不要說他做到了。）")
+    except Exception:
+        pass
+
     try:
         a = await AL.compute(session)
         if a.get("awaiting_settlement"):
@@ -198,7 +226,10 @@ async def build_context(session) -> str:
     except Exception:
         pass
 
-    recent = sorted(spend, key=lambda t: budget.eff_date(t) or now().date(), reverse=True)[:40]
+    # 12, not 40. The standing block was enormous because she had no way to ASK; with
+    # look_up she can fetch more the moment a question needs it, which is both shorter
+    # and fresher than pre-loading four dozen rows into every single turn.
+    recent = sorted(spend, key=lambda t: budget.eff_date(t) or now().date(), reverse=True)[:12]
     if recent:
         lines.append("最近的交易：")
         for t in recent:
@@ -206,5 +237,7 @@ async def build_context(session) -> str:
             ds = d.strftime("%m/%d") if d else "??"
             note = f"（{t.note}）" if t.note else ""
             lines.append(f"  {ds} ${abs(t.amount):.2f} {t.merchant_desc} [{taxonomy.label(t.category) if t.category else '未分類'}]{note}")
+        lines.append("（只列最近 12 筆。要更多、要某家店的歷史、某個分類花多少、"
+                     "待收款明細、罐子細節——用 look_up 查，不要用猜的，也不要叫他重講一次。）")
 
     return "\n".join(lines)
