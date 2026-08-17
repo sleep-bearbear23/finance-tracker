@@ -602,6 +602,57 @@ SCHEMAS: list[dict] = [
             "required": ["merchant"],
         },
     },
+    {
+        "name": "jar_allocate",
+        "description": (
+            "Put money INTO one of the jars (有主的錢): 短期應急 / 地板 / 緊急預備金 / "
+            "DMV / 修車 / 季目標 / 實驗. Use when she allocates surplus — at 期末結算 or "
+            "any time she says so. Money in a jar is spoken for and leaves the spending "
+            "water."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "jar": {"type": "string", "description": "Which jar, by name — e.g. 應急, 地板, 預備金, 實驗."},
+                "amount": {"type": "number"},
+            },
+            "required": ["jar", "amount"],
+        },
+    },
+    {
+        "name": "jar_draw",
+        "description": (
+            "Take money OUT of a jar. Rules are enforced server-side: 應急/實驗/季目標 open "
+            "anytime; 地板 only when the current period is genuinely underwater on timing "
+            "(money is on the way); 緊急預備金 only for a structural income stop AND with a "
+            "stated plan (per-period amount × periods) in `plan`. 稅 never. If refused, "
+            "relay the reason honestly — do not look for a way around it."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "jar": {"type": "string"},
+                "amount": {"type": "number"},
+                "plan": {"type": "string",
+                         "description": "For 緊急預備金 only: 每期拿多少、撐幾期."},
+            },
+            "required": ["jar", "amount"],
+        },
+    },
+    {
+        "name": "jar_set",
+        "description": (
+            "Change a jar's target, or a sinking jar's yearly amount (annual). "
+            "Does not move any money."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "jar": {"type": "string"},
+                "target": {"type": "number"},
+                "annual": {"type": "number",
+                           "description": "For DMV/修車: the yearly cost the drip works toward."},
+            },
+            "required": ["jar"],
+        },
+    },
 ]
 
 NAMES = [s["name"] for s in SCHEMAS]
@@ -1391,7 +1442,104 @@ def _install_category_enums():
 _install_category_enums()
 
 
+# ── 有主的錢 ──────────────────────────────────────────────────────────
+_JAR_ALIASES: dict[str, tuple[str, ...]] = {
+    "contingency": ("短期應急", "應急", "急用"),
+    "floor": ("地板",),
+    "emergency": ("緊急預備金", "預備金", "備用金", "救命錢"),
+    "dmv": ("dmv", "牌照", "規費"),
+    "car": ("修車", "車子"),
+    "season": ("季目標", "這一季", "季"),
+    "experiment": ("實驗", "ai", "實驗罐", "學ai"),
+    "tax": ("稅", "tax"),
+}
+
+
+def _jar_resolve(which: str) -> tuple[str | None, list[str]]:
+    """Which jar does she mean? Ambiguity returns candidates and writes nothing (C-8)."""
+    q = (which or "").strip().lower()
+    if not q:
+        return None, []
+    if q in _JAR_ALIASES:
+        return q, []
+    hits = [jid for jid, names in _JAR_ALIASES.items()
+            if any(q == n or q in n or n in q for n in names)]
+    if len(hits) == 1:
+        return hits[0], []
+    return None, hits
+
+
+_JAR_NAME = {"contingency": "短期應急", "floor": "地板", "emergency": "緊急預備金",
+             "dmv": "DMV", "car": "修車", "season": "季目標", "experiment": "實驗（AI）",
+             "tax": "預留的稅"}
+
+
+def _jar_pick_error(which: str, hits: list[str]) -> dict:
+    if hits:
+        opts = "\n".join(f"{i + 1}. {_JAR_NAME[h]}" for i, h in enumerate(hits))
+        return {"ok": False, "needs_pick": True,
+                "error": f"「{which}」可能是這幾罐，問她是哪一個，先不要動：\n{opts}"}
+    names = "、".join(_JAR_NAME[k] for k in _JAR_ALIASES if k != "tax")
+    return {"ok": False, "error": f"沒有叫「{which}」的罐子。現有的：{names}。"}
+
+
+async def h_jar_allocate(s, rec, jar: str, amount: float):
+    from . import jars as JR
+    jid, hits = _jar_resolve(jar)
+    if jid is None:
+        return _jar_pick_error(jar, hits)
+    out = await JR.allocate(s, jid, float(amount))
+    if out.get("ok"):
+        rec.says(out["receipt"])
+    return out
+
+
+async def h_jar_draw(s, rec, jar: str, amount: float, plan: str | None = None):
+    from . import allowance as _AL
+    from . import jars as JR
+    jid, hits = _jar_resolve(jar)
+    if jid is None:
+        return _jar_pick_error(jar, hits)
+    # the dip context is the ENGINE's, not the model's — the caller can't talk her way
+    # into a bridge draw by describing the situation generously
+    ctx = await _AL.compute(s)
+    out = await JR.draw(s, jid, float(amount), deficit_kind=ctx.get("deficit_kind"),
+                        dip_active=bool(ctx.get("deficit")), plan=plan)
+    if out.get("ok"):
+        rec.says(out["receipt"])
+    return out
+
+
+async def h_jar_set(s, rec, jar: str, target: float | None = None,
+                    annual: float | None = None):
+    from . import jars as JR
+    jid, hits = _jar_resolve(jar)
+    if jid is None:
+        return _jar_pick_error(jar, hits)
+    if jid == "tax":
+        return {"ok": False, "error": "稅的目標是算出來的，不是設定的。"}
+    js = await JR.load(s)
+    j = JR.get(js, jid)
+    if j is None:
+        return {"ok": False, "error": "罐子還沒建——先去訓練輪按一次重掃歷史。"}
+    said = []
+    if target is not None:
+        j["target"] = round(float(target), 2)
+        said.append(f"目標 ${j['target']:,.2f}")
+    if annual is not None and j.get("fill") == "drip":
+        j["annual"] = round(float(annual), 2)
+        said.append(f"一年 ${j['annual']:,.2f}（每期滴 ${j['annual'] / 24:,.2f}）")
+    if not said:
+        return {"ok": False, "error": "要改什麼？target 或 annual 至少給一個。"}
+    await JR.save(s, js)
+    rec.says(f"{j['name']}：" + "、".join(said))
+    return {"ok": True, "jar": j["name"]}
+
+
 HANDLERS = {
+    "jar_allocate": h_jar_allocate,
+    "jar_draw": h_jar_draw,
+    "jar_set": h_jar_set,
     "answer_pending_charges": answer_pending_charges,
     "start_new_season": start_new_season,
     "add_expected_payment": add_expected_payment,

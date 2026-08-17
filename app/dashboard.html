@@ -333,7 +333,8 @@
     grid-template-rows:minmax(0,1fr) minmax(0,1.05fr);
     grid-template-areas:
       "nw     alist   callist"
-      "flows  flows   arecent";}
+      "jars   flows   arecent";}
+  [data-pane=jars]{grid-area:jars}
   [data-pane=alist]{grid-area:alist} [data-pane=acomp]{grid-area:acomp}
   [data-pane=arecent]{grid-area:arecent}
 
@@ -674,8 +675,7 @@
 
   /* ── BRAIN screen ── */
   #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.3fr 1.05fr .95fr;
-    grid-template-rows:minmax(0,1.05fr) minmax(0,1fr) minmax(0,1fr);
+    grid-template-columns:1.3fr 1.05fr .95fr;grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
     grid-template-areas:"bmath binfo bchg" "bnw   binfo bmem" "bchat binfo bmem";}
   [data-pane=bmath]{grid-area:bmath} [data-pane=binfo]{grid-area:binfo} [data-pane=bnw]{grid-area:bnw}
   [data-pane=bmem]{grid-area:bmem} [data-pane=bchat]{grid-area:bchat}
@@ -776,6 +776,7 @@
     #s-plan > .grid.sel-iexp > [data-pane=iexp],
     #s-plan > .grid.sel-ipay > [data-pane=ipay],
     #s-acct > .grid.sel-nw > [data-pane=nw],
+    #s-acct > .grid.sel-jars > [data-pane=jars],
     #s-acct > .grid.sel-alist > [data-pane=alist],
     #s-acct > .grid.sel-callist > [data-pane=callist],
     #s-acct > .grid.sel-flows > [data-pane=flows],
@@ -950,6 +951,12 @@
         </div>
       </section>
 
+
+      <section class="card" data-pane="jars">
+        <h2>有主的錢 <i class="i" tabindex="0" role="button" aria-label="怎麼算的" data-info="jars"></i>
+          <span class="more" id="jarsMeta"></span></h2>
+        <div class="body" id="jarsBox"><div class="empty">載入中…</div></div>
+      </section>
 
       <section class="card" data-pane="alist">
         <h2>所有帳戶 <span class="more" id="alistMeta"></span></h2>
@@ -1239,7 +1246,7 @@ const SEGS = {
   home:   [['toearn','這一期'],['lever','能做的事'],['cats','花在哪']],
   plan:   [['book','要接多少'],['runway','撐多久'],['ssn','這一季'],
            ['iexp','接下來三個月'],['iperf','收入節奏'],['ipay','誰付錢']],
-  acct:   [['nw','淨資產'],['alist','帳戶'],['callist','接下來'],
+  acct:   [['nw','淨資產'],['jars','有主的錢'],['alist','帳戶'],['callist','接下來'],
            ['flows','半月收支'],['arecent','最近的帳']],
   account:[['aled','完整紀錄'],['acurve','走勢'],['aflow','半月進出'],['acats','分類']],
   proj:   [['plist','每一個案子'],['pclient','客戶']],
@@ -1288,6 +1295,15 @@ const INFO={
         + _r('今天已經花掉', '−'+F(dy.today_spent))
         + _r('剩下', F0(dy.today_left), true); },
     do:'沒花完的不會不見，會掉進「本期口袋」。要一次花多一點，跟阿姨說一聲，她從口袋裡撥。'},
+
+  jars:{
+    t:'有主的錢',
+    lede:'你的錢，但已經有名字了：稅、地板、緊急預備金、應急、DMV、修車、季目標、實驗。引擎把這個總和從水裡扣掉一次——就一次，一塊錢不會被守兩次，也不會漏掉。罐子是虛擬的，錢還在原本的戶頭裡，沒有真的轉帳。',
+    how(c){ const j=c.jars; if(!j) return '';
+      return j.jars.map(x=>_r(x.name, F(x.balance||0)+(x.target?`（目標 ${F0(x.target)}）`:''))).join('')
+        + _r('一共', F(j.total), true)
+        + _r('現金 − 卡債 − 有主的錢 = 能動的水', F(Math.max(0,j.available)), true); },
+    do:'放錢進罐子跟阿姨說（「放 $200 進應急」）。拿出來也是跟她說，但地板要這期真的撐不住、錢又在路上才開；預備金要收入真的斷了、而且講好每期拿多少撐幾期。稅的不能動。每一筆都有紀錄、都能還原。'},
 
   pool:{
     t:'本期口袋',
@@ -1395,7 +1411,7 @@ const INFO={
 /* 訓練輪 renders every entry expanded, in the order they appear across the four tabs.
    The point of hiding the arithmetic is that Momo can choose when to read it — not that
    she has to go hunting for it one tap at a time when she does want the whole picture. */
-const INFO_ORDER=['daily','pool','line','owed','tobook','dayrate','runway','season','floor','nw','trend','flows'];
+const INFO_ORDER=['daily','pool','line','owed','tobook','dayrate','runway','season','floor','jars','nw','trend','flows'];
 function renderInfoIndex(){
   const box=el('infoIndex'); if(!box) return;
   box.innerHTML = INFO_ORDER.filter(k=>INFO[k])
@@ -1949,8 +1965,28 @@ async function loadPlan(){
 let acctsLoaded=false;
 async function loadAccounts(){
   if(acctsLoaded) return; acctsLoaded=true;
-  const [acc, rec] = await Promise.all([getJSON('/api/accounts'), getJSON('/api/ledger?limit=40')]);
+  const [acc, rec, jj] = await Promise.all([getJSON('/api/accounts'), getJSON('/api/ledger?limit=40'),
+    getJSON('/api/jars').catch(()=>null)]);
   stamp(); showAudit(acc.audit||[]);
+
+  /* 有主的錢 — the pots. Money with a name on it is not spending water. */
+  if(jj){
+    Object.assign(INFOCTX,{jars:jj});
+    el('jarsMeta').textContent = `一共 ${F0(jj.total)} · 能動的水 ${F0(Math.max(0,jj.available))}`;
+    const ruleTxt = {ask:'隨時可動', dip:'這期撐不住而且錢在路上才動', plan:'收入斷掉、講好計畫才動',
+                     cost:'那筆帳真的來了才動', close:'期末結算才分'};
+    el('jarsBox').innerHTML =
+      (jj.breach ? `<div class="cover warn">⚠️ 現金比罐子總和少 ${F(jj.breach.short)}——帳面上已經吃到
+        ${jj.breach.eaten.map(e=>({contingency:'短期應急',floor:'地板',emergency:'緊急預備金',tax:'稅'}[e.kind]||e.kind)).join('、')}${jj.breach.tax_breached?'，連稅都吃到了':''}</div>` : '') +
+      (jj.seeded===false ? `<div class="empty">罐子還沒建——去訓練輪按一次「重掃歷史」。</div>` :
+      jj.jars.map(j=>{
+        const tgt=j.target, bal=j.balance||0, pct=tgt?Math.min(100,Math.round(100*bal/tgt)):null;
+        return `<div class="arow" style="cursor:default">
+          <i class="dot" style="background:${j.kind==='tax'?'var(--s3)':j.kind==='sinking'?'var(--s5)':bal>0?'var(--s1)':'rgba(255,255,255,.2)'}"></i>
+          <span class="an">${esc(j.name)}<span class="sub">${esc(j.purpose||'')}${j.purpose?' · ':''}${esc(ruleTxt[j.release]||(j.computed?'算出來的，不能動':''))}</span></span>
+          <span class="av">${F(bal)}${tgt?`<span class="sub" style="display:block;text-align:right">目標 ${F0(tgt)}${pct!==null?` · ${pct}%`:''}</span>`:''}</span></div>`;
+      }).join(''));
+  }
 
   el('alistMeta').textContent =
     `現金 ${F0(acc.cash_total)}${acc.invest_total?` · 投資 ${F0(acc.invest_total)}`:''} · 卡債 ${F0(acc.debt_total)}`;

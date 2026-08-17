@@ -158,6 +158,33 @@ async def main() -> int:
         check("defended_floor now reports the 地板 jar",
               near(res["defended_floor"], jars.get(await jars.load(s), "floor")["balance"]))
 
+        print("\n[10] the LINE tools — receipts, rules, and disambiguation")
+        from app import tools
+        check("three jar tools registered",
+              all(n in tools.NAMES for n in ("jar_allocate", "jar_draw", "jar_set")))
+        out = await tools.run(s, "jar_allocate", {"jar": "應急", "amount": 40.0},
+                              source_text="放 $40 進應急")
+        check("allocate lands with a receipt", out["ok"] is True and "短期應急" in out["receipt"])
+        out = await tools.run(s, "jar_draw", {"jar": "稅", "amount": 10.0})
+        check("稅 refuses through the tool too", out["ok"] is False)
+        out = await tools.run(s, "jar_allocate", {"jar": "急", "amount": 5.0})
+        check("an ambiguous name returns a numbered list and writes nothing",
+              out["ok"] is False and out.get("needs_pick") is True, out.get("error", "")[:60])
+        out = await tools.run(s, "jar_set", {"jar": "dmv", "annual": 400.0})
+        check("jar_set retunes a drip", out["ok"] is True)
+        js = await jars.load(s)
+        check("…and the annual actually changed", near(jars.get(js, "dmv")["annual"], 400.0))
+        from sqlalchemy import select as _sel
+        n_changes = len((await s.execute(
+            _sel(Change).where(Change.tool.in_(("jar_allocate", "jar_set"))))).scalars().all())
+        check("every tool write is a Change row", n_changes >= 2, str(n_changes))
+
+        print("\n[11] explain() says the spoken-for sentence")
+        res = await allowance.compute(s)
+        lines = allowance.explain(res)
+        check("one sentence names 有主的錢 and the water that's left",
+              any("有主的錢" in ln for ln in lines))
+
     # legacy window: a second, unseeded database — the engine must read tax + rung only
     print("\n[9] the deploy→重掃歷史 window behaves like the old engine")
     import sqlalchemy

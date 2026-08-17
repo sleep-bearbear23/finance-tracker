@@ -649,6 +649,23 @@ async def api_allowance(request: Request):
         return a
 
 
+@router.get("/api/jars")
+async def api_jars(request: Request):
+    """有主的錢 — the pots, the one spoken-for total, and whether cash still covers it.
+    Derived from allowance.compute() so this can never disagree with the engine."""
+    if not _authorized(request):
+        return _deny()
+    async with Session() as s:
+        a = await allowance.compute(s)
+        from . import jars as J
+        return {"seeded": await J.seeded(s),
+                "jars": a["spoken_for"]["jars"],
+                "total": a["spoken_for"]["total"],
+                "reserve": a["spoken_for"]["reserve"],
+                "available": a["available"],
+                "breach": a["jar_breach"]}
+
+
 @router.get("/api/export")
 async def api_export(request: Request):
     """The whole internal state as one JSON file, secrets stripped.

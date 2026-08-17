@@ -791,6 +791,16 @@ def explain(a: dict) -> list[str]:
     for L in a["lenses"]:
         mark = "←可以花是照這個算的" if L["name"] == a["binding"] else ""
         out.append(f"　{L['name']}：${L['value']:,.0f}　{L['why']} {mark}".rstrip())
+    sfx = a.get("spoken_for")
+    if sfx and sfx.get("total") and not (sfx["jars"][1:] and sfx["jars"][1].get("legacy")):
+        out.append(f"有主的錢一共 ${sfx['total']:,.0f}——稅、地板、預備金這些各自守著，"
+                   f"能動的水剩 ${max(0.0, a.get('available') or 0.0):,.0f}。")
+    if a.get("jar_breach"):
+        b = a["jar_breach"]
+        _nm = {"contingency": "短期應急", "floor": "地板", "emergency": "緊急預備金", "tax": "稅"}
+        eaten = "、".join(_nm.get(e["kind"], e["kind"]) for e in b["eaten"])
+        out.append(f"⚠️ 現金比罐子的總和少 ${b['short']:,.0f}——帳面上已經吃到 {eaten}。"
+                   + ("連稅的錢都吃到了，這件事要最先處理。" if b.get("tax_breached") else ""))
     if a.get("trend_warning") and a["lenses"][2]["value"] < 0:
         out.append(f"趨勢上要提醒你：最近每期花 ${a['recent_median']:,.0f}，"
                    f"但淨值每期掉 ${abs(a['net_drift_per_period']):,.0f}，這個速度撐不久。")
