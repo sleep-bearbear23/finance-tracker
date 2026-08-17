@@ -185,6 +185,25 @@ async def main() -> int:
         check("one sentence names 有主的錢 and the water that's left",
               any("有主的錢" in ln for ln in lines))
 
+        print("\n[12] the dip points at the pot the diagnosis picked")
+        from app.analytics import _dip_pot, dip_view
+        fake = {"deficit_kind": "timing", "spoken_for": {"jars": [
+            {"id": "floor", "balance": 2233.08}, {"id": "emergency", "balance": 3010.89}]}}
+        p, bal = _dip_pot(fake)
+        check("timing → 地板, with its balance", p == "地板" and near(bal, 2233.08))
+        p, bal = _dip_pot({**fake, "deficit_kind": "structural"})
+        check("structural → 緊急預備金", p == "緊急預備金" and near(bal, 3010.89))
+        dv = dip_view(0.0, 16.99, 16, 16, 660.0, "水位", pot="地板", pot_balance=2233.08)
+        check("a timing dip's note sends her to the 地板, not the emergency fund",
+              dv["mode"] == "dip" and "地板" in dv["dip_note"]
+              and "緊急預備金" not in dv["dip_note"], dv["dip_note"][:60])
+        dv = dip_view(0.0, 16.99, 16, 16, 660.0, "水位", pot="緊急預備金", pot_balance=3010.89)
+        check("a structural dip asks for the plan before the money",
+              "緊急預備金" in dv["dip_note"] and "撐幾期" in dv["dip_note"])
+        dv = dip_view(0.0, 0.0, 16, 16, 660.0, "水位", pot="地板", pot_balance=100.0)
+        check("an underfunded pot admits it can't cover the whole dip",
+              "只剩" in dv["dip_note"], dv["dip_note"][-60:])
+
     # legacy window: a second, unseeded database — the engine must read tax + rung only
     print("\n[9] the deploy→重掃歷史 window behaves like the old engine")
     import sqlalchemy

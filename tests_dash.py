@@ -440,8 +440,8 @@ async def main():
     check("the dip is exactly what the line cannot cover",
           near(hers["dip"], hers["survival_need"] - hers["line_left"]),
           f'{hers["dip"]} = {hers["survival_need"]} − {hers["line_left"]}')
-    check("the dip is named as a draw on the emergency fund",
-          "緊急預備金" in hers["dip_note"] and f'{hers["dip"]:,.0f}' in hers["dip_note"],
+    check("the dip is named as a draw on the 地板 (timing is the default diagnosis)",
+          "地板" in hers["dip_note"] and f'{hers["dip"]:,.0f}' in hers["dip_note"],
           hers["dip_note"])
     check("a comfortable period is left alone",
           dip_view(1200.0, 300.0, 7, 15, LEAN)["mode"] == "normal")

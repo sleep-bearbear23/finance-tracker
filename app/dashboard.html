@@ -1674,7 +1674,7 @@ async function loadPlan(){
             fn.survival_need>0?Math.min(100,100*fn.dip/fn.survival_need):0
            }%;background:var(--bad)"></i></div>
          <div class="kv"><span>${fn.dip_cause==='spent'?'線上還剩（本來夠用）':'線上還剩'}</span><b>${F0(Math.max(0,fn.left))}</b></div>
-         <div class="kv"><span>要從緊急預備金拿</span><b style="color:var(--bad)">${F0(fn.dip)}</b></div>
+         <div class="kv"><span>要從${esc(fn.dip_pot||'地板')}拿</span><b style="color:var(--bad)">${F0(fn.dip)}</b></div>
          <div class="kv"><span>已經花了</span><b>${F(fn.spent)}</b></div>
          <p style="font-size:11.5px;line-height:1.7;margin:10px 0 0">${esc(fn.dip_note)}</p>`
       /* One line per DAY, not one per fortnight. Momo: "if I spend nothing for the first

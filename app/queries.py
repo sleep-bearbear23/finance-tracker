@@ -163,9 +163,11 @@ async def build_context(session) -> str:
             from . import analytics as AN
             from . import period as P
             te2 = await AN.to_earn(session, AN.HORIZON_MONTHS)
+            _pot, _pot_bal = AN._dip_pot(a)
             dv = AN.dip_view(a["allowance"], a["spent"], a["days_left"],
                              P.days_in(a["period_key"]), te2["lean_flex_monthly"],
-                             a.get("binding") or "", coverage=a.get("coverage", 1.0))
+                             a.get("binding") or "", coverage=a.get("coverage", 1.0),
+                             pot=_pot, pot_balance=_pot_bal)
             if dv["mode"] == "dip":
                 lines.append(
                     f"⚠ 這期的線已經低於「最省也要花的錢」了：剩 {a['days_left']} 天最省要 "
@@ -173,6 +175,7 @@ async def build_context(session) -> str:
                     f"線上只剩 ${dv['line_left']:.0f}，差 ${dv['dip']:.0f}。"
                     + ("這條線本來就不夠吃飯，不是他花太兇。" if dv["cause"] == "line"
                        else "這期的線本來夠用，是已經花掉了。")
+                    + f"缺的照規則從{dv['pot']}拿。"
                     + "（這種時候不要跟他講「還能花 $X、一天 $Y」——那個數字他做不到，"
                     "講出來只會像在罵他。要講的是：撐完這幾天大概要多少、差的那筆會從"
                     "緊急預備金出、然後能動的是催款跟壓花費。）")

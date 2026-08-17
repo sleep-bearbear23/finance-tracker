@@ -375,8 +375,24 @@ _DIAGNOSIS = {
 }
 
 
+def _dip_pot(a: dict) -> tuple[str, float | None]:
+    """Which pot the waterfall points at for a line that can't cover eating.
+
+    Momo's own rule, keyed to the engine's diagnosis: a TIMING gap (money is on the way)
+    is exactly what 地板 exists for; only a STRUCTURAL stop reaches 緊急預備金. The old
+    copy pointed every dip at the emergency fund — that predates the three-pot split."""
+    sf = (a.get("spoken_for") or {}).get("jars", [])
+    jars_ = {j.get("id"): j for j in sf}
+    if a.get("deficit_kind") == "structural":
+        j = jars_.get("emergency") or {}
+        return "緊急預備金", j.get("balance")
+    j = jars_.get("floor") or {}
+    return "地板", j.get("balance")
+
+
 def dip_view(line: float, spent: float, days_left: int, days_in: int,
-             lean_flex_monthly: float, binding: str = "", coverage: float = 1.0) -> dict:
+             lean_flex_monthly: float, binding: str = "", coverage: float = 1.0,
+             pot: str = "地板", pot_balance: float | None = None) -> dict:
     """Is this still a budget, or is it an alarm?
 
     Momo's screen said 「還能花 $4 · 一天 $1」 for five remaining days, and she said "wow".
@@ -412,7 +428,8 @@ def dip_view(line: float, spent: float, days_left: int, days_in: int,
     left = max(0.0, line - spent)
     dip = round(max(0.0, survival - left), 2)
     if dip <= 0:
-        return {"mode": "normal", "cause": None, "survival_need": survival, "dip": 0.0,
+        return {"mode": "normal", "cause": None, "pot": pot,
+                "survival_need": survival, "dip": 0.0,
                 "survival_full": round(per_day * days_in
                                        * max(0.0, min(1.0, coverage)), 2),
                 "survival_per_day": round(per_day, 2), "line_left": round(left, 2),
@@ -429,14 +446,23 @@ def dip_view(line: float, spent: float, days_left: int, days_in: int,
     cause = "spent" if line >= full else "line"
     head = (f"剩 {days_left} 天，最省也要 ${survival:,.0f}（一天 ${per_day:,.0f}），"
             f"線上只剩 ${left:,.0f}，差 ${dip:,.0f}。")
-    tail = (("這條線本來就低於吃飯的錢"
-             + ("——不是你花太兇，是水位卡在緊急預備金的邊上，"
-                if binding != "軌跡" else "，是水位卡在緊急預備金的邊上；")
-             + f"剩下這幾天的 ${dip:,.0f} 會直接從那一層拿。")
+    if pot == "地板":
+        why_pot = f"剩下這幾天的 ${dip:,.0f} 從地板拿——它就是為這種期存在的，跟阿姨說一聲就好。"
+        blame = ("——不是你花太兇，是錢在路上還沒到；" if binding != "軌跡"
+                 else "，錢在路上還沒到；")
+    else:
+        why_pot = (f"剩下這幾天的 ${dip:,.0f} 要動緊急預備金——"
+                   "跟阿姨講好每期拿多少、撐幾期，講了才動。")
+        blame = ("——不是你花太兇，是收入斷了；" if binding != "軌跡" else "，收入斷了；")
+    short_note = ""
+    if pot_balance is not None and pot_balance + 0.01 < dip:
+        short_note = f"（{pot}只剩 ${pot_balance:,.0f}，不夠的部分會吃到下一層）"
+    tail = (("這條線本來就低於吃飯的錢" + blame + why_pot + short_note)
             if cause == "line" else
             f"這一期的線 ${line:,.0f} 本來夠用，是已經花掉了；"
-            f"剩下這幾天的 ${dip:,.0f} 會從緊急預備金拿。下一期會重新算，不用把它背過去。")
-    return {"mode": "dip", "cause": cause, "survival_need": survival, "dip": dip,
+            f"剩下這幾天的 ${dip:,.0f} 從{pot}拿{short_note}。下一期會重新算，不用把它背過去。")
+    return {"mode": "dip", "cause": cause, "pot": pot,
+            "survival_need": survival, "dip": dip,
             "survival_full": full,
             "survival_per_day": round(per_day, 2), "line_left": round(left, 2),
             "dip_note": head + tail}
@@ -478,8 +504,9 @@ async def fortnight(session, f: F.Facts | None = None) -> dict:
     # is at her floor, and then reports it in the vocabulary of pocket money.
     te2 = await to_earn(session, HORIZON_MONTHS, f)
     days_in = P.days_in(a["period_key"])
+    _pot, _pot_bal = _dip_pot(a)
     dv = dip_view(line, spent, a["days_left"], days_in, te2["lean_flex_monthly"], binding,
-                  coverage=a.get("coverage", 1.0))
+                  coverage=a.get("coverage", 1.0), pot=_pot, pot_balance=_pot_bal)
 
     return {
         "period": a["period_key"], "label": a["period_label"],
@@ -492,6 +519,7 @@ async def fortnight(session, f: F.Facts | None = None) -> dict:
         # the crisis view, for when the line falls under what living costs
         **{k: dv[k] for k in ("mode", "survival_need", "dip", "survival_per_day")},
         "dip_cause": dv["cause"],
+        "dip_pot": dv["pot"],
         "floor": round(te2["fixed_monthly"] + te2["lean_flex_monthly"], 2),
         # the verdict, and ONLY against the line
         "verdict": "under" if under >= 0 else "over",
