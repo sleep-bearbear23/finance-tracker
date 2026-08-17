@@ -30,6 +30,10 @@ def check(name, cond, detail=""):
     print(f"  {'PASS' if cond else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
 
 
+async def _noop(*_a, **_k):
+    return 0
+
+
 async def main() -> int:
     await init_db()
     await migrate.run(engine)
@@ -386,6 +390,41 @@ async def main() -> int:
         ctx = await build_context(s)
         check("the standing context now points at the tool instead of pre-loading everything",
               "look_up" in ctx)
+
+    async with Session() as s:
+        print("\n[24] she can ask the bank now, and never lies about the answer")
+        from app import simplefin, tools
+        from app.db import get_kv as _get
+
+        real = simplefin.ingest
+        simplefin.ingest = lambda _s: _noop()           # bank returns nothing new
+        out = await tools.run(s, "sync_now", {})
+        check("a sync with nothing new says nothing new, plainly",
+              out["ok"] and out["new"] == 0 and "還沒放出來" in out["note"], str(out))
+        check("…and it still stamps that a poll happened",
+              bool(await _get(s, "last_poll_at")))
+
+        async def _one(sess):
+            sess.add(Transaction(id="sync-avia", account_id="chase", amount=2850.0,
+                                 merchant_desc="ZELLE FROM JUMP DEER MEDIA",
+                                 status="income", posted_at=now()))
+            await sess.commit()
+            return 0
+        simplefin.ingest = _one
+        out = await tools.run(s, "sync_now", {})
+        check("money that lands is reported, with the amount",
+              out["new"] == 1 and out["income"] and out["income"][0]["amount"] == 2850.0,
+              str(out.get("income")))
+        check("…and she's told to go strike the invoice off",
+              "mark_payment_received" in out["note"])
+
+        async def _boom(_s):
+            raise RuntimeError("bank down")
+        simplefin.ingest = _boom
+        out = await tools.run(s, "sync_now", {})
+        check("a bank that won't answer is reported as that, not as 'no money'",
+              out["ok"] is False and "銀行那邊沒回應" in out["error"], str(out))
+        simplefin.ingest = real
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

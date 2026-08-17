@@ -603,6 +603,17 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "sync_now",
+        "description": (
+            "Pull the bank feed RIGHT NOW instead of waiting for the 15-minute timer. Use "
+            "when Momo says money just landed, asks you to check, or asks whether "
+            "something arrived — 「Avia 的錢進來了你去看一下」「你能現在查嗎」. Reports "
+            "what actually came in, including any income. If nothing new appeared, say so "
+            "plainly: the bank may not have released it yet. Never claim money arrived "
+            "that the feed did not show."),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "look_up",
         "description": (
             "Look something up instead of guessing or asking her to repeat it. Use when a "
@@ -1791,7 +1802,46 @@ async def h_look_up(s, rec, what: str, which: str | None = None, days: int = 90)
          "cat": _T.label(t.category), "status": t.status} for t in hits[:40]]}
 
 
+async def h_sync_now(s, rec, **_):
+    """Ask the bank now. The poller runs every 15 minutes, which is fine for a robot and
+    useless for a person standing there refreshing their banking app."""
+    from datetime import timedelta
+
+    from sqlalchemy import select as _sel
+
+    from . import budget as B
+    from . import simplefin
+    from .config import now as _now
+    from .db import set_kv as _set
+    from .models import Transaction
+
+    before = {t.id for t in (await s.execute(_sel(Transaction))).scalars().all()}
+    try:
+        await simplefin.ingest(s)
+    except Exception as e:
+        return {"ok": False, "error": f"銀行那邊沒回應（{type(e).__name__}），等下一次自動同步。"}
+    await _set(s, "last_poll_at", _now().isoformat(timespec="minutes"))
+
+    rows = (await s.execute(_sel(Transaction))).scalars().all()
+    fresh = [t for t in rows if t.id not in before]
+    money_in = [t for t in fresh if t.amount > 0]
+    spend = [t for t in fresh if t.amount < 0]
+    if not fresh:
+        rec.says("跟銀行同步過了，沒有新的帳。")
+        return {"ok": True, "new": 0,
+                "note": "同步完成，銀行那邊還沒有新東西。可能還沒放出來，不是弄丟了。"}
+    rec.says(f"跟銀行同步過了，多了 {len(fresh)} 筆。")
+    return {"ok": True, "new": len(fresh),
+            "income": [{"amount": t.amount, "desc": t.merchant_desc,
+                        "date": str(B.eff_date(t))} for t in money_in],
+            "spend": [{"amount": t.amount, "desc": t.merchant_desc,
+                       "date": str(B.eff_date(t))} for t in spend],
+            "note": ("有錢進來的話，記得看是不是某筆待收款——是的話用 "
+                     "mark_payment_received 把它劃掉。" if money_in else "")}
+
+
 HANDLERS = {
+    "sync_now": h_sync_now,
     "look_up": h_look_up,
     "rehearse": h_rehearse,
     "start_settlement": h_start_settlement,
