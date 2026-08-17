@@ -674,7 +674,8 @@
 
   /* ── BRAIN screen ── */
   #s-brain > .grid{height:100%;display:grid;gap:var(--gap);
-    grid-template-columns:1.3fr 1.05fr .95fr;grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
+    grid-template-columns:1.3fr 1.05fr .95fr;
+    grid-template-rows:minmax(0,1.05fr) minmax(0,1fr) minmax(0,1fr);
     grid-template-areas:"bmath binfo bchg" "bnw   binfo bmem" "bchat binfo bmem";}
   [data-pane=bmath]{grid-area:bmath} [data-pane=binfo]{grid-area:binfo} [data-pane=bnw]{grid-area:bnw}
   [data-pane=bmem]{grid-area:bmem} [data-pane=bchat]{grid-area:bchat}
