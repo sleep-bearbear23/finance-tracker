@@ -56,6 +56,23 @@
   .backup{font-size:13px}
   .backup.stale{color:var(--bad)}
   .backup a{color:var(--accent);font-weight:640}
+  .alloc{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .alloc:last-child{border-bottom:none}
+  .alloc .n{flex:1;min-width:0}
+  .alloc .n b{display:block;font-size:14px;font-weight:640}
+  .alloc .n span{font-size:11.5px;color:var(--sub)}
+  .alloc input{width:96px;text-align:right;font:inherit;color:inherit;background:var(--bg);
+    border:1px solid var(--line);border-radius:9px;padding:7px 9px;
+    font-variant-numeric:tabular-nums}
+  .left{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;
+    padding-top:10px;border-top:1px dashed var(--line);font-size:13.5px}
+  .left b{font-size:17px;font-variant-numeric:tabular-nums}
+  .left.zero b{color:var(--good)} .left.over b{color:var(--bad)}
+  .obj{background:var(--accent-soft);border:1px solid rgba(200,120,62,.3);
+    border-radius:12px;padding:12px 14px}
+  .obj .t{font-weight:700;font-size:15.5px;color:var(--accent)}
+  .obj .w{font-size:12.5px;color:var(--sub);margin-top:4px;line-height:1.6}
+  .board{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:8px}
   .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);
     border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));
     display:flex;gap:10px;align-items:center;justify-content:center}
@@ -74,7 +91,7 @@
 <script>
 const el=i=>document.getElementById(i);
 const F=n=>'$'+Math.round(n).toLocaleString();
-let D=null, dest='quarter', jar='';
+let D=null, dest='quarter', jar='', alloc={};
 
 async function load(){
   const r = await fetch('/api/settle'+location.search, {credentials:'same-origin'});
@@ -86,7 +103,99 @@ async function load(){
   el('bar').style.display='flex';
 }
 
+function money(v){ return (v||0).toLocaleString(undefined,{maximumFractionDigits:0}); }
+
+function renderQuarter(){
+  const b=D.backup||{}, sp=D.spare||{}, pr=D.proposal||[], ob=D.objective, bd=D.board;
+  alloc={}; pr.forEach(p=>alloc[p.id]=p.suggest||0);
+  el('wrap').innerHTML = `
+    <header>
+      <span class="badge">這一季結算</span>
+      <h1>${D.label}</h1>
+      <p>一季結束了。分配、定下一季的目標，然後開新的一季。</p>
+    </header>
+
+    ${bd?`<div class="card">
+      <h2>這一季的成績</h2>
+      <div class="statrow">
+        <div class="stat good"><b>${F(bd.landed||0)}</b><span>已經進帳</span></div>
+        <div class="stat"><b>${F(bd.booked||0)}</b><span>接了還沒進</span></div>
+        <div class="stat"><b>${F(bd.won_this_season||0)}</b><span>這季自己談下來的</span></div>
+        <div class="stat"><b>${bd.days_left||0}</b><span>剩下天數</span></div>
+      </div>
+      <div class="board">${(bd.tiers||[]).map(t=>
+        `<span>${t.name} ${F(t.target||t.need||0)}${t.hit?' ✓':''}</span>`).join('')}</div>
+    </div>`:''}
+
+    <div class="card">
+      <h2>要分配的錢</h2>
+      <div class="pocket"><b>${F(sp.pot||0)}</b>
+        <span>這一季每期存下來的季目標存款${sp.water?`　（另外還有 ${F(sp.water)} 是能動的水，先不動它）`:''}</span></div>
+      ${pr.length?`<div style="margin-top:10px">${pr.map(p=>`
+        <div class="alloc">
+          <span class="n"><b>${p.name}</b>
+            <span>現在 ${F(p.balance)}${p.target?` / 目標 ${F(p.target)}${p.gap>0?`　還差 ${F(p.gap)}`:'　滿了'}`:'　沒設目標'}</span></span>
+          <input type="number" min="0" step="1" id="a_${p.id}" value="${Math.round(p.suggest||0)}"
+                 oninput="setAlloc('${p.id}',this.value)">
+        </div>`).join('')}
+        <div class="left" id="leftRow"><span>還沒分配</span><b id="leftAmt">$0</b></div>
+        <div class="hint">分不完也可以——沒分配的就留在季目標罐裡，下一季繼續用。</div>
+      </div>`:'<div class="hint">還沒有罐子可以分，先去訓練輪按一次重掃歷史。</div>'}
+    </div>
+
+    ${ob?`<div class="card">
+      <h2>下一季的目標</h2>
+      <div class="obj"><div class="t">${ob.text}</div><div class="w">${ob.why}</div></div>
+      <div class="hint">這是照這一期綁住你的那個原因來的——${
+        ob.type==='chase'?'錢卡在別人那，催得動':
+        ob.type==='book'?'缺的是工作，排得進行事曆':
+        '花得比線兇，收得回來'}。想改成別的就直接改：</div>
+      <textarea id="objText" placeholder="不想用這個目標的話，寫你自己的">${ob.text}</textarea>
+    </div>`:''}
+
+    <div class="card">
+      <h2>回顧一下（可以跳過）</h2>
+      ${(D.questions||[]).map(q=>`
+        <div class="q"><div class="qt">${q.q}</div>
+          <textarea id="r_${q.id}" placeholder="想到什麼寫什麼，沒有也可以空著"></textarea></div>`).join('')}
+      ${D.last?`<div class="last"><b>上一次你自己說的（${D.last.label}）</b><br>
+        ${Object.values(D.last.answers).filter(Boolean).map(v=>'「'+v+'」').join('<br>')}</div>`:''}
+    </div>
+
+    ${backupCard(b)}`;
+  el('go').textContent='結算，開新的一季';
+  updateLeft();
+}
+
+function setAlloc(id,v){ alloc[id]=Math.max(0,parseFloat(v)||0); updateLeft(); }
+
+function updateLeft(){
+  const pot=(D.spare||{}).pot||0;
+  const used=Object.values(alloc).reduce((a,b)=>a+(b||0),0);
+  const left=Math.round((pot-used)*100)/100;
+  const row=el('leftRow'), amt=el('leftAmt');
+  if(!row) return;
+  amt.textContent=(left<0?'-':'')+'$'+money(Math.abs(left));
+  row.className='left'+(Math.abs(left)<0.5?' zero':(left<0?' over':''));
+  el('go').disabled = left < -0.5;
+  el('go').textContent = left < -0.5 ? '超過季目標存款了' : '結算，開新的一季';
+}
+
+function backupCard(b){
+  return `<div class="card">
+      <h2>備份</h2>
+      <div class="backup ${b.stale?'stale':''}">
+        ${b.last?`上次備份：${b.last}（${b.days} 天前）`:'還沒備份過'}${b.stale?'　該備份了':''}
+      </div>
+      <div class="hint">
+        <a href="/api/export" target="_blank">點這裡下載</a>，存到 <b>${b.folder||''}</b><br>
+        這個檔案是你全部的帳、商家記憶跟罐子。Railway 上那份不算備份，要有一份在你自己電腦裡。
+      </div>
+    </div>`;
+}
+
 function render(){
+  if(D.kind==='quarter'){ renderQuarter(); return; }
   const c=D.closure, pocket=c.pool||0, b=D.backup||{};
   const opts=[
     ['quarter','放進這一季的目標','存起來，累積成這一季自己談下來的成果'],
@@ -137,17 +246,7 @@ function render(){
         ${Object.values(D.last.answers).filter(Boolean).map(v=>'「'+v+'」').join('<br>')}</div>`:''}
     </div>
 
-    <div class="card">
-      <h2>備份</h2>
-      <div class="backup ${b.stale?'stale':''}">
-        ${b.last?`上次備份：${b.last}（${b.days} 天前）`:'還沒備份過'}
-        ${b.stale?'　該備份了':''}
-      </div>
-      <div class="hint">
-        <a href="/api/export" target="_blank">點這裡下載</a>，存到 <b>${b.folder||''}</b><br>
-        這個檔案是你全部的帳、商家記憶跟罐子。Railway 上那份不算備份，要有一份在你自己電腦裡。
-      </div>
-    </div>`;
+    ${backupCard(b)}`;
   const js=el('jarsel'); if(js){ jar=js.value; js.onchange=()=>jar=js.value; }
 }
 
@@ -159,15 +258,19 @@ async function submit(){
   for(const q of (D.questions||[])){ const t=el('r_'+q.id); if(t&&t.value.trim()) reflection[q.id]=t.value.trim(); }
   const nt=el('r_noticed'); if(nt&&nt.value.trim()) reflection.noticed=nt.value.trim();
   if(D.noticed) reflection.noticed_q=D.noticed;
+  const payload = D.kind==='quarter'
+    ? {key:D.key, kind:'quarter', allocations:alloc, reflection,
+       objective: D.objective ? {...D.objective, text:(el('objText')||{}).value || D.objective.text} : null}
+    : {key:D.key, destination:dest, jar:jar, reflection};
   const r=await fetch('/api/settle',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({key:D.key,destination:dest,jar:jar,reflection})});
+    body:JSON.stringify(payload)});
   const out=await r.json();
   if(!out.ok){ el('go').disabled=false; el('go').textContent='結算，開下一期';
     alert(out.error||'結算失敗'); return; }
   if(out.still_awaiting && out.still_awaiting.length){ location.reload(); return; }
   el('bar').style.display='none';
-  el('wrap').innerHTML=`<div class="done"><h2>結算好了</h2>
+  el('wrap').innerHTML=`<div class="done"><h2>${D.kind==='quarter'?'這一季結算好了':'結算好了'}</h2>
     <p>${out.moved?out.moved+'<br>':''}下一期的額度開了，回去看看。</p></div>`;
 }
 load();

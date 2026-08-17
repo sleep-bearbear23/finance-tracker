@@ -666,6 +666,34 @@ async def api_settle_get(request: Request):
     from . import settle as ST
     async with Session() as s:
         st = await ST.state(s)
+        # The quarter is only offered once every session inside it is settled — closing
+        # a season on top of unfinished periods would allocate money those sessions have
+        # not yet decided about.
+        q = None if st["awaiting"] else await ST.quarter_pending(s)
+        if q is not None and not request.query_params.get("key"):
+            sp = await ST.spare(s)
+            try:
+                te = await AN.to_earn(s, 3)
+                board = await SE.progress(s, te["tiers"])
+            except Exception:
+                board = None
+            return {
+                "awaiting": True, "kind": "quarter", "key": q["key"],
+                "label": f"{q['start']} ~ {q['end']}",
+                "quarter": q, "board": board,
+                "spare": {k: sp[k] for k in ("pot", "water", "total")},
+                "proposal": ST.propose(sp["pot"], sp["jars"]),
+                "objective": await ST.objective(s),
+                # same three questions, same ids (so the answers stay a comparable
+                # series) — only the unit word changes at a season boundary
+                "questions": [{"id": k, "q": qq.replace("這一期", "這一季")}
+                              for k, qq in ST.REFLECTION],
+                "noticed": None,
+                "last": await ST.last_reflection(s),
+                "backup": await ST.backup_state(s),
+                "jars": (await allowance.compute(s))["spoken_for"]["jars"],
+                "more": [],
+            }
         key = request.query_params.get("key") or st.get("oldest")
         if not key:
             return {"awaiting": False, "backup": await ST.backup_state(s)}
@@ -697,6 +725,29 @@ async def api_settle_post(request: Request):
     async with Session() as s:
         if await ST.get_one(s, key) is not None:
             return {"ok": False, "error": "這一期已經結算過了。"}
+        if (body.get("kind") or "session") == "quarter":
+            # The season pot empties INTO the jars Momo picked. Anything she leaves
+            # unallocated simply stays where it is, and is recorded as left.
+            allocs = {k: float(v or 0) for k, v in (body.get("allocations") or {}).items()
+                      if float(v or 0) > 0}
+            receipts = []
+            async with CL.watching(s, tool="settle_quarter", args={"key": key},
+                                   source_text=f"{key} 季結算", actor="settle"):
+                total = round(sum(allocs.values()), 2)
+                if total > 0:
+                    pot = await _season_balance(s)
+                    drawn = await J.draw(s, "season", min(total, pot))
+                    if drawn.get("ok"):
+                        receipts.append(drawn["receipt"])
+                for jid, amt in allocs.items():
+                    out = await J.allocate(s, jid, amt)
+                    if out.get("ok"):
+                        receipts.append(out["receipt"])
+                await ST.record(s, key, pocket=total, destination="allocated",
+                                reflection=reflection, kind="quarter",
+                                allocations=allocs, objective=body.get("objective") or None)
+            return {"ok": True, "moved": "；".join(receipts) or None, "still_awaiting": []}
+
         clo = await allowance.closure(s, key)
         pocket = float(clo.get("pool") or 0.0)
         moved = None
@@ -912,3 +963,9 @@ async def api_income2(request: Request):
         perf["networth"] = f.nw
         perf["audit"] = f.audit()
         return perf
+
+
+async def _season_balance(s) -> float:
+    from . import jars as J
+    js = await J.load(s)
+    return float((J.get(js, "season") or {}).get("balance") or 0.0)

@@ -199,6 +199,16 @@ async def _boundary_job():
                 return
             base = public_url()
             st = await ST.state(s)
+            if not st["awaiting"]:
+                q = await ST.quarter_pending(s)
+                if q and await get_kv(s, f"settle_notice:{q['key']}") != "1":
+                    msg = (f"這一季（{q['start']} ~ {q['end']}）結束了。"
+                           "來把季目標存款分一分、定下一季的目標："
+                           f"\n{base}/settle")
+                    await line_client.push(owner, msg)
+                    await memory.remember(s, "assistant", msg)
+                    await set_kv(s, f"settle_notice:{q['key']}", "1")
+                    return
             if st["awaiting"]:
                 key = st["oldest"]
                 if await get_kv(s, f"settle_notice:{key}") == "1":

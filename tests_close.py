@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("ANTHROPIC_API_KEY", "x")
@@ -127,6 +127,54 @@ async def main() -> int:
               om.startswith(P.label(cur)) and "這期的線" in om, om[:40])
         check("…and hands the quarter gap over as shoot days",
               "還差" in om and "8" in om, om)
+
+    async with Session() as s:
+        print("\n[10] the quarter — bounds, grace, and one row")
+        from app import settle as ST
+        q = ST.prev_quarter(date(2026, 9, 5))
+        check("standing in Q4, the quarter owed is Q3 ending 8/31",
+              q is not None and q[1].isoformat() == "2026-08-31"
+              and q[2] == "Q:2026-08-31", str(q))
+        # Before the tax table starts there is no known previous season. Inventing one
+        # would demand a settlement for a quarter nobody has records of, so None is the
+        # honest answer and the ritual simply doesn't fire.
+        q_mid = ST.prev_quarter(date(2026, 7, 15))
+        check("no known previous season → nothing is demanded", q_mid is None, str(q_mid))
+
+        print("\n[11] the proposal fills the jars that are furthest from doing their job")
+        js = [
+            {"id": "contingency", "name": "短期應急", "balance": 0.0, "target": 600.0},
+            {"id": "dmv", "name": "DMV", "balance": 15.0, "target": 371.0},
+            {"id": "car", "name": "修車", "balance": 50.0, "target": 1200.0},
+            {"id": "floor", "name": "地板", "balance": 2233.0, "target": 2233.0},
+            {"id": "emergency", "name": "緊急預備金", "balance": 3010.0, "target": 13250.0},
+        ]
+        pr = ST.propose(1000.0, js)
+        by = {p["id"]: p for p in pr}
+        check("safety first — the small buffer fills before the big fund",
+              by["contingency"]["suggest"] == 600.0, str(by["contingency"]))
+        check("a full jar is proposed nothing", by["floor"]["suggest"] == 0.0)
+        check("the proposal never exceeds what there is",
+              abs(sum(p["suggest"] for p in pr) - 1000.0) < 0.01,
+              str(sum(p["suggest"] for p in pr)))
+        check("…and the leftover lands on the next jar down, not spread thin",
+              by["dmv"]["suggest"] == 356.0 and by["car"]["suggest"] == 44.0,
+              f"{by['dmv']['suggest']}/{by['car']['suggest']}")
+        check("nothing to give → nothing proposed",
+              all(p["suggest"] == 0.0 for p in ST.propose(0.0, js)))
+
+        print("\n[12] a quarter settlement is a settlement like any other")
+        await ST.record(s, "Q:2026-08-31", pocket=1000.0, destination="allocated",
+                        kind="quarter", allocations={"contingency": 600.0},
+                        objective={"type": "chase", "text": "這一季把 $10,600 催回來"})
+        qp = await ST.quarter_pending(s, date(2026, 9, 5))
+        check("once settled it stops being pending", qp is None, str(qp))
+        obj = await ST.current_objective(s)
+        check("the objective survives, for the next period to open with",
+              obj is not None and "催回來" in obj["text"], str(obj))
+        om = await ST.open_message(s, budget.current_key(), None)
+        check("…and the session-open message says it out loud",
+              "催回來" in om, om)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
