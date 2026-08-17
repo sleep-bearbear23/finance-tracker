@@ -408,6 +408,14 @@ async def main():
         check("…and the event log still sums exactly to the headline",
               near(sb["events"][-1]["running"], sb["secured"]) if sb.get("events") else True)
 
+        print("\n[20] run_maintenance is a plain coroutine, not a context manager")
+        # The passes were lifted out of lifespan; the @asynccontextmanager decorator once
+        # came along for the ride, which made POST /api/maintenance a guaranteed 500.
+        import inspect as _inspect
+        from app import main as _M
+        check("run_maintenance is awaitable (no stray @asynccontextmanager)",
+              _inspect.iscoroutinefunction(_M.run_maintenance))
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)

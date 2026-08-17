@@ -198,7 +198,6 @@ async def announce_deploy():
             print(f"[deploy] error: {e!r}")
 
 
-@asynccontextmanager
 async def run_maintenance() -> list[str]:
     """The eleven data-rewriting passes, run ON PURPOSE instead of on every deploy.
 
