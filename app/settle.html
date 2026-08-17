@@ -20,6 +20,8 @@
     font-weight:600;font-size:13px;padding:6px 14px;border-radius:999px}
   header h1{font-size:22px;margin:10px 0 4px}
   header p{color:var(--sub);font-size:13px;margin:0}
+  header p.prev{margin-top:8px;display:inline-block;background:var(--accent-soft);
+    color:var(--accent);border-radius:999px;padding:5px 12px;font-size:12px;font-weight:640}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
     padding:15px;margin:12px 0;box-shadow:var(--shadow)}
   .card h2{font-size:14px;margin:0 0 10px;color:var(--sub);font-weight:650;
@@ -114,6 +116,12 @@ async function load(){
   if(!D.awaiting){ el('wrap').innerHTML =
     '<div class="done"><h2>沒有要結算的期</h2><p>都結算完了，去看看今天還能花多少。</p></div>'; return; }
   render();
+  if(D.preview){
+    const h=document.querySelector('header');
+    if(h) h.insertAdjacentHTML('beforeend',
+      '<p class="prev">預覽模式——按下去不會真的寫進去，真的結算等期末</p>');
+    el('go').textContent='預覽（不會寫入）';
+  }
   el('bar').style.display='flex';
 }
 
@@ -319,13 +327,14 @@ async function submit(){
       why:`罐裡已經有 $${f.balance||0}，這一季要再放 $${f.add.toLocaleString()}。`});
   }
   const payload = D.kind==='quarter'
-    ? {key:D.key, kind:'quarter', allocations:alloc, reflection, objectives}
-    : {key:D.key, destination:dest, jar:jar, reflection};
+    ? {key:D.key, kind:'quarter', allocations:alloc, reflection, objectives, preview:!!D.preview}
+    : {key:D.key, destination:dest, jar:jar, reflection, preview:!!D.preview};
   const r=await fetch('/api/settle',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify(payload)});
   const out=await r.json();
-  if(!out.ok){ el('go').disabled=false; el('go').textContent='結算，開下一期';
+  if(!out.ok){ el('go').disabled=false;
+    el('go').textContent = D.preview?'預覽（不會寫入）':(D.kind==='quarter'?'結算，開新的一季':'結算，開下一期');
     alert(out.error||'結算失敗'); return; }
   if(out.still_awaiting && out.still_awaiting.length){ location.reload(); return; }
   el('bar').style.display='none';

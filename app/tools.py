@@ -603,6 +603,36 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "rehearse",
+        "description": (
+            "Run a scheduled message for rehearsal and report it to the 機房 (control "
+            "room) — nothing is sent to Momo and nothing is written. Use when she says "
+            "「彩排一下」「測試結算訊息」「跑一次看看」. kind: boundary = the 結算/開期 "
+            "message, backup = the weekly backup nudge."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": ["boundary", "backup"]},
+            },
+        },
+    },
+    {
+        "name": "start_settlement",
+        "description": (
+            "Give Momo the link to the settlement page when she asks to close a period or "
+            "a season, or asks to see one early. Use for 「我要結算」「開結算」「這一季來收尾」"
+            "「給我結算連結」. If nothing is actually due it returns a rehearsal link, which "
+            "is safe — a preview writes nothing. Never claim a settlement happened; only "
+            "the page can do that."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "enum": ["session", "quarter"],
+                          "description": "Which one she means. Default session."},
+            },
+        },
+    },
+    {
         "name": "jar_create",
         "description": (
             "Open a NEW jar when Momo says she wants to save toward something — a trip, "
@@ -1621,7 +1651,37 @@ async def h_jar_remove(s, rec, jar: str):
     return out
 
 
+async def h_start_settlement(s, rec, scope: str = "session"):
+    from .config import public_url
+    from . import settle as ST
+    base = public_url() or ""
+    st = await ST.state(s)
+    if scope == "quarter":
+        q = await ST.quarter_pending(s)
+        if q:
+            return {"ok": True, "due": True,
+                    "reply": f"這一季（{q['start']}~{q['end']}）可以結算了：{base}/settle"}
+        return {"ok": True, "due": False,
+                "reply": ("這一季還沒結束，先給你看預覽（按了不會寫進去）："
+                          f"{base}/settle?preview=quarter")}
+    if st["awaiting"]:
+        return {"ok": True, "due": True,
+                "reply": f"{st['label']} 還沒結算，這就是連結：{base}/settle"}
+    return {"ok": True, "due": False,
+            "reply": ("現在沒有要結算的期。想先看看長怎樣的話，這是預覽（不會寫進去）："
+                      f"{base}/settle?preview=session")}
+
+
+async def h_rehearse(s, rec, kind: str = "boundary"):
+    from . import main as M
+    text = await M.rehearse(kind)
+    rec.says(f"彩排跑完了（{kind}），結果送到機房，沒有寄給你、也沒有寫任何紀錄。")
+    return {"ok": True, "rehearsal": text}
+
+
 HANDLERS = {
+    "rehearse": h_rehearse,
+    "start_settlement": h_start_settlement,
     "jar_create": h_jar_create,
     "jar_remove": h_jar_remove,
     "jar_allocate": h_jar_allocate,

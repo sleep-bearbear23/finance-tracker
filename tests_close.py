@@ -14,6 +14,8 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "x")
 os.environ.setdefault("LINE_CHANNEL_ACCESS_TOKEN", "x")
 os.environ.setdefault("LINE_CHANNEL_SECRET", "x")
 
+from sqlalchemy import select  # noqa: E402
+
 from app import allowance, budget, migrate, settle  # noqa: E402
 from app import period as P  # noqa: E402
 from app.config import now  # noqa: E402
@@ -240,6 +242,80 @@ async def main() -> int:
                               date(2026, 3, 1), date(2026, 5, 31))
         check("what can't be measured says so instead of guessing a grade",
               book[0]["verdict"] == "unknown" and book[0]["detail"], book[0]["detail"])
+
+    async with Session() as s:
+        print("\n[17] rehearsal writes nothing")
+        from app import settle as ST, tools
+        out = await tools.run(s, "start_settlement", {"scope": "quarter"})
+        check("asking early gets a preview link, not a false promise",
+              out["ok"] and "preview=quarter" in out["reply"] and "不會寫進去" in out["reply"],
+              out["reply"][-60:])
+        out = await tools.run(s, "start_settlement", {"scope": "session"})
+        check("nothing due → a session rehearsal link", "preview=session" in out["reply"])
+        # a season that has not ended can never be closed, by any route
+        future = ST.quarter_key(date(2099, 1, 1))
+        got = await ST.get_one(s, future)
+        check("no settlement exists for a future season", got is None)
+
+    async with Session() as s:
+        print("\n[18] a rehearsal touches nothing — every mutation guarded, not just the send")
+        from app import main as M
+        from app import settle as ST
+        from app.models import Message
+        # far enough back that some periods are genuinely unsettled (earlier sections
+        # already settled the two most recent ones)
+        far = budget.current_key()
+        for _ in range(5):
+            far = P.prev_key(far)
+        await set_kv(s, ST.FROM_KEY, far)
+        st = await ST.state(s)
+        owed = st["oldest"]
+        check("a period is owed, so the job has something to say", bool(owed), str(st))
+
+        before_notice = await get_kv(s, f"settle_notice:{owed}")
+        before_msgs = len((await s.execute(select(Message))).scalars().all())
+        res = await M._boundary_job(dry=True)
+        after_notice = await get_kv(s, f"settle_notice:{owed}")
+        after_msgs = len((await s.execute(select(Message))).scalars().all())
+
+        check("the rehearsal renders the REAL message",
+              res["action"] == "session_notice" and "/settle" in (res["text"] or ""),
+              str(res.get("action")))
+        check("the idempotency key is NOT burned — the real notice still fires later",
+              before_notice == after_notice and after_notice != "1",
+              f"{before_notice!r}→{after_notice!r}")
+        check("conversation memory is not polluted by a rehearsal",
+              before_msgs == after_msgs, f"{before_msgs}→{after_msgs}")
+        check("…and it says which mode it ran in", res["mode"] == "rehearsal")
+
+        print("\n[19] a rehearsal ignores the once-only caps, so you can run it twice")
+        for k in await ST.unsettled(s):
+            await ST.record(s, k, pocket=0.0, destination="carry")
+        await set_kv(s, f"period_open:{budget.current_key()}", "1")
+        res = await M._boundary_job(dry=True)
+        # live mode would stop here ("already sent"); a rehearsal is not part of the
+        # day's quota, so it renders anyway — that is the point of being able to rehearse.
+        check("the already-sent guard does not block a rehearsal",
+              res["action"] == "period_open" and res["text"], str(res.get("why")))
+        again = await M._boundary_job(dry=True)
+        check("…and running it twice is identical, because nothing moved",
+              again["text"] == res["text"])
+        check("the live guard is still armed underneath",
+              await get_kv(s, f"period_open:{budget.current_key()}") == "1")
+
+        print("\n[20] the backup rehearsal shows the words without starting the clock")
+        await settle.stamp_export(s)
+        before = await get_kv(s, "last_run:backup_nudge")
+        res = await M._backup_job(dry=True)
+        check("not due → says so, but still shows what it would say",
+              res["action"] is None and "備份" in (res["text"] or ""), str(res["why"]))
+        check("…and never stamps the nudge", await get_kv(s, "last_run:backup_nudge") == before)
+        await set_kv(s, settle.EXPORT_KEY, (now().date() - timedelta(days=20)).isoformat())
+        res = await M._backup_job(dry=True)
+        check("due → the rehearsal renders the real nudge",
+              res["action"] == "backup_nudge" and settle.BACKUP_FOLDER in res["text"])
+        check("…and STILL writes nothing",
+              await get_kv(s, "last_run:backup_nudge") == before)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

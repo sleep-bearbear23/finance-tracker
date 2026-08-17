@@ -15,13 +15,20 @@ OPS_URL = os.environ.get("OPS_URL", "").rstrip("/")
 OPS_KEY = os.environ.get("OPS_KEY", "")
 
 
-async def say(text: str) -> None:
-    """Post one line to the control room. Silent on any failure, by design."""
+async def say(text: str) -> bool:
+    """Post one line to the control room. Silent on any failure, by design.
+
+    Returns whether it actually landed, so a caller that must not lose the message —
+    a rehearsal report, say — can fall back to Momo's own chat. The control room is an
+    upgrade over shouting in her face, never a dependency.
+    """
     if not (OPS_URL and OPS_KEY):
-        return
+        return False
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            await c.post(f"{OPS_URL}/ops_say", params={"key": OPS_KEY},
-                         json={"from": "秀琴阿姨", "text": text})
+            r = await c.post(f"{OPS_URL}/ops_say", params={"key": OPS_KEY},
+                             json={"from": "秀琴阿姨", "text": text})
+        return r.status_code < 300
     except Exception as e:  # never let ops reporting break the finance bot
         print(f"[opsroom] {e!r}")
+        return False

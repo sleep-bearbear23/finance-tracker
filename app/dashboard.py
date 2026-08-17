@@ -12,7 +12,7 @@ from __future__ import annotations
 import hmac
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Response
@@ -669,7 +669,19 @@ async def api_settle_get(request: Request):
         # The quarter is only offered once every session inside it is settled — closing
         # a season on top of unfinished periods would allocate money those sessions have
         # not yet decided about.
+        preview = (request.query_params.get("preview") or "").strip()
         q = None if st["awaiting"] else await ST.quarter_pending(s)
+        if preview == "quarter" and q is None:
+            # Let Momo walk the season close before the season has closed. Real figures,
+            # nothing writable — a rehearsal that wrote a settlement would consume the
+            # real ritual, which is exactly the thing she wants to rehearse.
+            got = ST.prev_quarter() or None
+            lo, hi, _k = (got if got else (None, None, None))
+            if lo is None:
+                from . import season as _SE
+                lo, hi, _d = _SE.bounds(now().date())
+            q = {"start": lo.isoformat(), "end": hi.isoformat(),
+                 "key": ST.quarter_key(hi), "preview": True}
         if q is not None and not request.query_params.get("key"):
             sp = await ST.spare(s)
             try:
@@ -679,6 +691,7 @@ async def api_settle_get(request: Request):
                 board = None
             return {
                 "awaiting": True, "kind": "quarter", "key": q["key"],
+                "preview": bool(q.get("preview")),
                 "label": f"{q['start']} ~ {q['end']}",
                 "quarter": q, "board": board,
                 "spare": {k: sp[k] for k in ("pot", "water", "total")},
@@ -698,11 +711,14 @@ async def api_settle_get(request: Request):
                 "more": [],
             }
         key = request.query_params.get("key") or st.get("oldest")
+        if not key and preview == "session":
+            key = P.prev_key(budget.current_key())   # rehearse on the period just gone
         if not key:
             return {"awaiting": False, "backup": await ST.backup_state(s)}
         clo = await allowance.closure(s, key)
         return {
             "awaiting": True, "key": key, "label": P.label(key),
+            "preview": preview == "session" and key not in st["periods"],
             "closure": clo,
             "questions": [{"id": k, "q": q} for k, q in ST.REFLECTION],
             "noticed": await ST.noticed_question(s, key),
@@ -725,9 +741,20 @@ async def api_settle_post(request: Request):
     dest = (body.get("destination") or "carry").strip()
     jar_id = (body.get("jar") or "").strip()
     reflection = body.get("reflection") or {}
+    if body.get("preview"):
+        return {"ok": False, "preview": True,
+                "error": "這是預覽，不會真的寫進去。真的結算等這一期／這一季結束再來。"}
     async with Session() as s:
         if await ST.get_one(s, key) is not None:
             return {"ok": False, "error": "這一期已經結算過了。"}
+        if key.startswith(ST.QKEY):
+            # never let a season be closed before it has ended
+            try:
+                if date.fromisoformat(key[len(ST.QKEY):]) >= now().date():
+                    return {"ok": False,
+                            "error": "這一季還沒結束，還不能結算。到期了她會傳連結給你。"}
+            except (TypeError, ValueError):
+                pass
         if (body.get("kind") or "session") == "quarter":
             # The season pot empties INTO the jars Momo picked. Anything she leaves
             # unallocated simply stays where it is, and is recorded as left.
@@ -768,6 +795,21 @@ async def api_settle_post(request: Request):
                             reflection=reflection, kind=body.get("kind") or "session")
         st = await ST.state(s)
         return {"ok": True, "moved": moved, "still_awaiting": st["periods"]}
+
+
+@router.get("/debug")
+async def debug_run(request: Request):
+    """Fire a publish path in rehearsal mode: /debug?which=boundary|backup
+
+    Same auth as the dashboard, so no new secret exists. Always dry — there is no
+    parameter that makes this send for real, because a debug URL that can push to her
+    phone is a debug URL that eventually will by accident.
+    """
+    if not _authorized(request):
+        return _deny()
+    which = (request.query_params.get("which") or "boundary").strip()
+    from . import main as M
+    return {"ok": True, "which": which, "report": await M.rehearse(which)}
 
 
 @router.get("/api/jars")

@@ -182,83 +182,151 @@ async def _snapshot_job():
             print(f"[jars] accrue error: {e!r}")
 
 
-async def _boundary_job():
+async def _boundary_job(dry: bool = False) -> dict:
     """The ritual's clock. Two things, once each per period:
 
     - a period ended and hasn't been settled → send the 結算 link (once)
     - the settlement landed → open the new period with a heading (once)
 
-    Deliberately separate from the budget itself: this job only ever SENDS. Whether the
-    numbers are frozen is decided by settle.state(), which every surface reads.
+    ONE code path, two modes. In ``dry`` mode it makes the same decision and renders the
+    same text, then returns BEFORE every mutation and before delivery — including the two
+    idempotency keys, which are the dangerous ones: writing ``settle_notice`` during a
+    rehearsal would silently suppress the real notice later. (Pattern borrowed from the
+    機房 build: guard every write, not just the send.)
+
+    It also reports WHY nothing happened. A silent no-op is indistinguishable from a
+    broken job, which is how a dead scheduler goes unnoticed for a month.
     """
     from . import settle as ST
+    out: dict = {"mode": "rehearsal" if dry else "live", "action": None,
+                 "text": None, "why": None}
     async with Session() as s:
         try:
             owner = await get_kv(s, enrichment.OWNER_KEY)
-            if not owner:
-                return
+            if not owner and not dry:
+                out["why"] = "還不知道默默的 LINE id"
+                return out
             base = public_url()
             st = await ST.state(s)
+
             if not st["awaiting"]:
                 q = await ST.quarter_pending(s)
-                if q and await get_kv(s, f"settle_notice:{q['key']}") != "1":
+                if q:
+                    if await get_kv(s, f"settle_notice:{q['key']}") == "1" and not dry:
+                        out["why"] = f"{q['key']} 的結算連結已經傳過了"
+                        return out
                     msg = (f"這一季（{q['start']} ~ {q['end']}）結束了。"
                            "來把季目標存款分一分、定下一季的目標："
                            f"\n{base}/settle")
+                    out.update(action="quarter_notice", text=msg, key=q["key"])
+                    if dry:
+                        return out
                     await line_client.push(owner, msg)
                     await memory.remember(s, "assistant", msg)
                     await set_kv(s, f"settle_notice:{q['key']}", "1")
-                    return
+                    return out
+
             if st["awaiting"]:
                 key = st["oldest"]
-                if await get_kv(s, f"settle_notice:{key}") == "1":
-                    return                      # already asked; nagging is not the design
+                if await get_kv(s, f"settle_notice:{key}") == "1" and not dry:
+                    out["why"] = f"{P.label(key)} 的結算連結已經傳過了（不重複唸）"
+                    return out
                 clo = await allowance.closure(s, key)
-                await line_client.push(owner, ST.close_notice(clo, base))
-                await memory.remember(s, "assistant", ST.close_notice(clo, base))
+                msg = ST.close_notice(clo, base)
+                out.update(action="session_notice", text=msg, key=key)
+                if dry:
+                    return out
+                await line_client.push(owner, msg)
+                await memory.remember(s, "assistant", msg)
                 await set_kv(s, f"settle_notice:{key}", "1")
-                return
+                return out
+
             cur = budget.current_key()
-            if await get_kv(s, f"period_open:{cur}") == "1":
-                return
+            if await get_kv(s, f"period_open:{cur}") == "1" and not dry:
+                out["why"] = f"{P.label(cur)} 的開場訊息已經傳過了"
+                return out
             lo, _ = P.key_bounds(cur)
             if (now().date() - lo).days > 2:
-                await set_kv(s, f"period_open:{cur}", "1")   # mid-period deploy: don't shout
-                return
+                out["why"] = f"{P.label(cur)} 已經開始 {(now().date() - lo).days} 天了，不補喊"
+                if not dry:
+                    await set_kv(s, f"period_open:{cur}", "1")   # mid-period deploy
+                return out
             q = None
             try:
                 te = await AN.to_earn(s, 3)
                 sb = await SE.progress(s, te["tiers"])
                 q = {"target": sb.get("target"), "secured": sb.get("secured"),
                      "days_needed": sb.get("days_needed")}
-            except Exception:
-                q = None
+            except Exception as e:
+                print(f"[boundary] season read failed: {e!r}")
             msg = await ST.open_message(s, cur, q)
+            out.update(action="period_open", text=msg, key=cur)
+            if dry:
+                return out
             await line_client.push(owner, msg)
             await memory.remember(s, "assistant", msg)
             await set_kv(s, f"period_open:{cur}", "1")
+            return out
         except Exception as e:
             print(f"[boundary] error: {e!r}")
+            out["why"] = f"出錯了：{type(e).__name__}: {e}"
+            return out
 
 
-async def _backup_job():
+async def _backup_job(dry: bool = False) -> dict:
     """Weekly, and only when it's actually due. Same words every time — Momo asked for
     the instruction to be clear enough that doing it never requires thinking."""
     from . import settle as ST
+    out: dict = {"mode": "rehearsal" if dry else "live", "action": None,
+                 "text": None, "why": None}
     async with Session() as s:
         try:
             owner = await get_kv(s, enrichment.OWNER_KEY)
-            if not owner:
-                return
+            if not owner and not dry:
+                out["why"] = "還不知道默默的 LINE id"
+                return out
             bs = await ST.backup_state(s)
-            if not bs["stale"]:
-                return
             msg = ST.backup_message(bs, public_url())
+            if not bs["stale"]:
+                out["why"] = f"{bs['days']} 天前才備份過，還不用唸"
+                out["text"] = msg          # a rehearsal still shows what it WOULD say
+                return out
+            out.update(action="backup_nudge", text=msg)
+            if dry:
+                return out
             await line_client.push(owner, msg)
             await memory.remember(s, "assistant", msg)
             await set_kv(s, "last_run:backup_nudge", now().isoformat())
+            return out
         except Exception as e:
             print(f"[backup] error: {e!r}")
+            out["why"] = f"出錯了：{type(e).__name__}: {e}"
+            return out
+
+
+async def rehearse(kind: str = "boundary") -> str:
+    """Run a publish path for real-but-not-really and report it to the 機房.
+
+    Test output belongs in the control room, not in her voice — a rehearsal landing in
+    陳會計's chat is exactly the pollution the admin channel exists to prevent. If the
+    control room isn't configured, it falls back to Momo's own chat rather than vanishing:
+    the split is an upgrade, never a dependency.
+    """
+    job = {"boundary": _boundary_job, "backup": _backup_job}.get(kind)
+    if job is None:
+        return f"沒有 {kind} 這個彩排"
+    res = await job(dry=True)
+    head = f"🎬 彩排 · {kind} · {res.get('action') or '不會送任何東西'}\n（沒有寄出、沒有寫入任何紀錄）"
+    body = res.get("text") or ""
+    why = f"\n理由：{res['why']}" if res.get("why") else ""
+    report = f"{head}{why}\n————\n{body}".strip()
+    sent = await opsroom.say(report)
+    if not sent:
+        async with Session() as s:
+            owner = await get_kv(s, enrichment.OWNER_KEY)
+        if owner:
+            await line_client.push(owner, report)
+    return report
 
 
 async def _reminder_job():
