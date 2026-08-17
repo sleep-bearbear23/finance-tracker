@@ -28,6 +28,10 @@ async def classify(session, desc: str, amount: float, backfill: bool = False):
         return "ignored", categories.TRANSFER, None, None
 
     mem = await session.get(MerchantMemory, categories.merchant_key(desc))
+    if mem is None:  # retry without the payment-processor prefix (Sq*, TST*, …)
+        loose = T.merchant_key_loose(desc)
+        if loose != categories.merchant_key(desc):
+            mem = await session.get(MerchantMemory, loose)
     if mem is not None:
         if mem.is_income is True:
             return "income", "Income", mem.note, T.PAY

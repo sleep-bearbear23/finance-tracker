@@ -416,6 +416,47 @@ async def main():
         check("run_maintenance is awaitable (no stray @asynccontextmanager)",
               _inspect.iscoroutinefunction(_M.run_maintenance))
 
+        print("\n[21] 帳單代碼的常識 — the patterns /label taught us, generalized")
+        # Fixtures are Momo's real unlabeled descriptors from the 2026-08-11 state.
+        check("brokerage trade language is a transfer, never spending",
+              T.guess("ALTRIA GROUP INC UNSOLICITED WE ARE ACTING AS PRINCIPAL "
+                      "COMMISSION FIELD IS A COMMISSION EQUIVALENT - DETAILS ON REQUEST ROME:") == "transfer"
+              and T.guess("ALTRIA GROUP INC AVG PRICE SHOWN-DETAILS ON REQREINVEST @ 71.803778") == "transfer"
+              and T.guess("ALTRIA GROUP INC RD 06/15 PD 07/10 CDRT .060 DIV ON 22.00000 SHS") == "transfer")
+        check("…and is_transfer agrees, so ingest files it silently",
+              T.is_transfer("ALTRIA GROUP INC AVG PRICE SHOWN-DETAILS ON REQREINVEST @ 71.803778"))
+        check("parking disguises all resolve to 交通雜支",
+              all(T.guess(d) == "transit" for d in (
+                  "Keckprkng* 2025Jul17 1500 San Pablo Street Los Angel",
+                  "Ucla Selfserve Park 555 Westwood Plz #",
+                  "Joes Auto Parks Little", "La Mart Garage",
+                  "IPS:METERS.PKGLOTPAYSTATI",
+                  "Abm Culver Steps 4828 9330 Culver Blvd Culver City 9",
+                  "Impark00270137A 733 Kearmy Street San Francisco94108")))
+        check("vending / kiosk → 零食",
+              T.guess("Nyx*Nayax Vending") == "snacks" and T.guess("Hinbor Kiosk") == "snacks")
+        check("Kindle 電子書 → 娛樂", T.guess("Kindle Svcs*Hp3H06Se3 440 Terry Ave N 888-802-") == "fun")
+        check("法院電話繳費 Sup Crt → 證件規費", T.guess("Monterey Sup Crt Ivrfepo Box") == "fees")
+        check("oil corp → 加油", T.guess("Sinaco Oil Corp 11280 National Blvd Los Angeles 9006") == "gas")
+        check("超市 in any language → 食",
+              all(T.guess(d) == "food" for d in (
+                  "Smart And Final 456 3607 Vermont Avenue Los Angeles ",
+                  "Greenland Market Van N17643 Sherman Way Van Nuys 914",
+                  "大华超级市场")))
+        check("car wash → 車輛維修", T.guess("Quickly Clean Car Wash") == "car")
+        check("SimpleFIN 橋接費 → 訂閱工具", T.guess("LINK.COM* SIMPLEFIN BR") == "subs")
+
+        print("\n[22] processor prefixes can't hide a taught merchant")
+        check("merchant_key_loose strips Sq* but merchant_key is untouched",
+              T.merchant_key_loose("Sq *Cup O Joy") == "cupojoy"
+              and T.merchant_key("Sq *Cup O Joy") == "sqcupojoy")
+        from app.classify import classify as _classify
+        s.add(MerchantMemory(key="cupojoy", category="snacks"))
+        await s.commit()
+        _st, _cat, _note, _ik = await _classify(s, "Sq *Cup O Joy", -14.89)
+        check("a memory taught as 'Cup O Joy' catches the Sq* variant",
+              _st == "auto" and _cat == "snacks", f"{_st}/{_cat}")
+
         print("\n[8] the WATCHED list guards keys that exist")
         check("cfg_budget_from is watched (the old entry was a typo aimed at nothing)",
               "cfg_budget_from" in changelog.WATCHED and "cfg_budget_start" not in changelog.WATCHED)

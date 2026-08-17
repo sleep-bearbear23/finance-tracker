@@ -202,10 +202,11 @@ _RULES: list[tuple[str, str]] = [
     (r"geico|state farm|progressive|allstate|mercury ins", "insurance"),
     (r"adobe|midjourney|\bxai\b|\bgrok\b|openai|chatgpt|anthropic|claude\b|comfy\.org|"
      r"notion labs|usemotion|visualcrossing|pephop|icloud|apple\.com/bill|google one|"
+     r"simplefin|"
      r"google storage|railway|vercel|netlify|github|linear\.app|figma", "subs"),
     (r"netflix|spotify|crunchyroll|lezhin|patreon|youtube|hbo|disney ?\+|hulu", "subs"),
     (r"arco|shell oil|chevron|exxon|sinclair|mobil|speedway|gasoline|\bfuel\b|\b76\b|"
-     r"rocket \d|\bampm\b|circle k", "gas"),
+     r"rocket \d|\bampm\b|circle k|oil corp", "gas"),
     (r"\brent\b|zelle.*(mom|媽)|(mom|媽).*zelle", "rent"),
 
     # 不算支出 — money movement, catch before anything else can claim it
@@ -213,12 +214,14 @@ _RULES: list[tuple[str, str]] = [
      r"\bpymt\b|ach (payment|pmt)|internal transfer|online transfer|acct (transfer|xfer)|"
      r"deposit sweep|intra ?-? ?day|banklink ach|goldman sachs bank|\bgsbank\b", "transfer"),
     (r"\birs\b|usataxpymt|eftps|franchise tax bo|\bca ftb\b|\bftb\b.*(pmt|payment)", "tax"),
+    # 證券成交單的語言 — 買股票、股息再投入。是投資不是消費（Altria 那兩筆教的）。
+    (r"acting as principal|avg price shown|dividend reinvest|div on .+ shs", "transfer"),
 
     # 不規則
-    (r"\bdmv\b|uscis|passport|\bcourt\b|sup ctr|city of |county of |notary", "fees"),
+    (r"\bdmv\b|uscis|passport|\bcourt\b|sup ctr|sup crt|city of |county of |notary", "fees"),
     (r"citation|parking ticket|\bpticket|red light|toll violation|late fee|overdraft", "fines"),
     (r"lexus|toyota|honda|firestone|pep boys|jiffy lube|midas|autozone|o'?reilly|"
-     r"smog|body shop|collision|tire", "car"),
+     r"smog|body shop|collision|tire|car ?wash", "car"),
     (r"\bcvs\b|walgreens|rite aid|pharmacy|urgent care|dental|dentist|optometr|"
      r"medical|clinic|hospital", "health"),
     # Anything bought abroad is trip spending — that's how Momo budgets a trip, as one
@@ -236,7 +239,8 @@ _RULES: list[tuple[str, str]] = [
     # 彈性 — 食
     (r"99 ranch|nijiya|weee|\byami\b|instacart|trader joe|costco|ralphs|vons|albertsons|"
      r"safeway|sprouts|gelsons|marukai|mitsuwa|tokyo central|toyko central|h ?mart|"
-     r"whole ?f(oo)?ds|sheng kee|super ?market|grocer", "food"),
+     r"whole ?f(oo)?ds|sheng kee|super ?market|grocer|smart (and|&) ?final|"
+     r"greenland market|超級市場|超级市场|大華|大华|超市", "food"),
     (r"hungrypanda|uber ?\*?eats|grubhub|doordash|postmates|caviar|seamless", "food"),
     (r"mcdonald|popeyes|jollibee|in-?n-?out|raising canes|chipotle|kfc\b|taco bell|"
      r"wingstop|shake shack|chick-?fil|panda express|jack in the box|churchs chicken|"
@@ -254,15 +258,16 @@ _RULES: list[tuple[str, str]] = [
      r"tp ?tea|machi|tiger sugar|kung fu tea|sunright|meet fresh|chagee|molly tea|chicha|"
      r"wushiland|pot of cha|dessert|ice ?cream|creamery|\btea\b|philz|blue bottle|"
      r"bakery|baguette|85c|jj bakery|portos|beard papa|snack|sencha|matcha|donut|"
-     r"cookie|candy", "snacks"),
+     r"cookie|candy|nayax|vending|kiosk", "snacks"),
 
     # 彈性 — 其他
     (r"petco|petsmart|chewy|pet food|pet center|pet shop", "pets"),
     (r"steam|playstation|nintendo|\bamc\b|regal|cinemark|cinema|cinepolis|laemmle|"
      r"museum|ticketmaster|\btm \*|ticket tailor|eventbrite|axs\b|brewery|brewing|"
-     r"tavern|karaoke|\bktv\b|arcade|bowling|concert", "fun"),
+     r"tavern|karaoke|\bktv\b|arcade|bowling|concert|kindle", "fun"),
     (r"parking|toll ?road|pnm\*tca|frogparking|\blaz \b|metro\b|\blyft\b|\buber\b|"
-     r"youbike|transit|amtrak", "transit"),
+     r"youbike|transit|amtrak|prkng|selfserve park|auto parks|\bgarage\b|\bimpark|"
+     r"\babm\b|ips:meters|paystati|park ?mobile", "transit"),
     (r"public storage|extra space|u-?haul", "household"),
 
     # 想要 — the hobby lever
@@ -318,6 +323,18 @@ def brand_key(desc: str) -> str:
             continue
         return tok
     return merchant_key(desc)
+
+
+def merchant_key_loose(desc: str) -> str:
+    """:func:`merchant_key` with leading processor tokens (Sq*, TST*, UPG*…) and leading
+    store numbers stripped — so a memory taught as「Cup O Joy」still matches a charge that
+    arrives as「Sq *Cup O Joy」. Lookup fallback ONLY: never used as a storage key, so the
+    58 memories Momo has already taught keep their existing keys untouched."""
+    toks = re.split(r"[^a-z0-9一-鿿]+", (desc or "").lower())
+    while toks and (not toks[0] or toks[0] in _BRAND_STOPWORDS or toks[0].isdigit()):
+        toks.pop(0)
+    s = re.sub(r"[^a-z一-鿿]+", "", "".join(toks))
+    return s[:120] or merchant_key(desc)
 
 
 #: the statement literally says so — Apple prints "(RETURN)" on reversed charges
