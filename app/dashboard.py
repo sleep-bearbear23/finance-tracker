@@ -82,6 +82,29 @@ def _deny():
     return JSONResponse({"error": "unauthorized"}, status_code=403)
 
 
+def _locked(what: str = "這一頁"):
+    """A human page, not a JSON blob. This is what Momo actually hits when she taps a
+    link from LINE: its in-app browser has its own cookie jar, so the dashboard session
+    she has in Safari means nothing here. Telling her that, once, beats a dead end."""
+    return HTMLResponse(f"""<!DOCTYPE html><html lang="zh-Hant"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{what} · 要先解鎖</title><style>
+body{{margin:0;background:#f4efe7;color:#3d3630;font-family:-apple-system,"PingFang TC",
+"Noto Sans TC",sans-serif;font-size:15px;line-height:1.7;display:flex;min-height:100vh;
+align-items:center;justify-content:center;padding:24px}}
+.c{{background:#fffaf3;border:1px solid #e6dccd;border-radius:16px;padding:22px;max-width:420px}}
+h1{{font-size:18px;margin:0 0 10px}} p{{margin:0 0 10px;color:#5c5248}}
+b{{color:#c8783e}} .s{{font-size:13px;color:#8a7f72}}
+</style></head><body><div class="c">
+<h1>{what}要先解鎖</h1>
+<p>這個瀏覽器還沒有鑰匙。從 LINE 點進來的話，它跟你平常用的瀏覽器是分開的，
+所以要先帶鑰匙進來一次。</p>
+<p>用你平常開儀表板那個網址（後面有 <b>?t=…</b> 的那個），把 <b>/dash</b> 換成
+<b>/settle</b>，開一次就好——之後這個瀏覽器就會記住三十天。</p>
+<p class="s">鑰匙只會存在這台裝置的 cookie 裡，不會留在網址列。</p>
+</div></body></html>""", status_code=403)
+
+
 # ── the trend snapshot ───────────────────────────────────────────────
 async def write_snapshot(session) -> None:
     """Upsert today's point so the net-worth / budget trend keeps growing."""
@@ -652,9 +675,18 @@ async def api_allowance(request: Request):
 
 @router.get("/settle", response_class=HTMLResponse)
 async def settle_page(request: Request):
+    if not settings.DASHBOARD_TOKEN:
+        return Response("disabled", status_code=503)
     if not _authorized(request):
-        return _deny()
-    return HTMLResponse(_SETTLE_HTML.read_text(encoding="utf-8"))
+        return _locked("結算頁")
+    resp = HTMLResponse(_SETTLE_HTML.read_text(encoding="utf-8"))
+    # Same trick every other page uses: swap ?t=… into a cookie so the token leaves the
+    # URL bar AND the browser remembers. Without this, a link opened inside LINE's
+    # in-app browser (a separate cookie jar from Safari) dead-ends on every visit.
+    if request.query_params.get("t"):
+        resp.set_cookie("dash", settings.DASHBOARD_TOKEN, httponly=True,
+                        samesite="lax", secure=True, max_age=60 * 60 * 24 * 30)
+    return resp
 
 
 @router.get("/api/settle")
@@ -807,7 +839,7 @@ async def debug_run(request: Request):
     phone is a debug URL that eventually will by accident.
     """
     if not _authorized(request):
-        return _deny()
+        return _locked("彩排")
     which = (request.query_params.get("which") or "all").strip()
     from . import main as M
     return {"ok": True, "which": which, "report": await M.rehearse(which)}
