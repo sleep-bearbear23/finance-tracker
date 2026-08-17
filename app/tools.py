@@ -1003,14 +1003,20 @@ async def close_session(s, rec, destination="quarter", note=None):
         return {"ok": False, "error": "destination 只能是 quarter / carry / none"}
 
     if pool > 0 and destination == "quarter":
-        old = await get_kv(s, "cfg_season_pot")
-        try:
-            pot = float(old or 0)
-        except (TypeError, ValueError):
-            pot = 0.0
-        await set_kv(s, "cfg_season_pot", str(round(pot + pool, 2)))
-        rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
-                 f"口袋 {_money(pool)} 放進這一季的目標，季目標存款累計 {_money(pot + pool)}。")
+        from . import jars as JARS
+        if await JARS.seeded(s):
+            out = await JARS.allocate(s, "season", pool)
+            rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
+                     f"口袋 {_money(pool)} 放進季目標罐，累計 {_money(out['balance'])}。")
+        else:
+            old = await get_kv(s, "cfg_season_pot")
+            try:
+                pot = float(old or 0)
+            except (TypeError, ValueError):
+                pot = 0.0
+            await set_kv(s, "cfg_season_pot", str(round(pot + pool, 2)))
+            rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
+                     f"口袋 {_money(pool)} 放進這一季的目標，季目標存款累計 {_money(pot + pool)}。")
     elif pool > 0:
         rec.says(f"{c['label']} 結算：{c['days_under']} 天守住、{c['days_over']} 天超過，"
                  f"口袋 {_money(pool)} " + ("留到下一期。" if destination == "carry" else "先不動。"))

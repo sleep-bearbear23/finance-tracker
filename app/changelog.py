@@ -40,6 +40,8 @@ WATCHED: tuple[str, ...] = (
     # the project overlay: set_project_kind can pull a job out of the day-rate basis,
     # which moves a headline number — that write was invisible and unrecoverable
     "cfg_projects",
+    # 有主的錢 — every jar movement is a Change row with her sentence attached
+    "cfg_jars",
 )
 
 _TABLES = {"transactions": Transaction, "merchant_memory": MerchantMemory}

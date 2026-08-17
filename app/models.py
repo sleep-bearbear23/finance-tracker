@@ -55,6 +55,9 @@ class Transaction(Base):
     # money even when it buys groceries, so it hangs off the project rather than the
     # fortnight — see projects.py and taxonomy's 工作 note.
     project: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Paid from a jar (有主的錢): the pot absorbed this charge, so it does not count
+    # against the fortnight line. The category stays true — a vet bill is still 寵物.
+    jar_id: Mapped[str | None] = mapped_column(String(24), nullable=True)
     # Where a reimbursable cost is in its life. None = not a claim at all.
     #   todo   she fronted it and has not asked for it back yet
     #   sent   it is on an invoice / submitted, now it is someone else's turn

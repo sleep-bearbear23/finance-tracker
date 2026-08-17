@@ -38,6 +38,8 @@ def is_spend(t) -> bool:
     overstated her spending by hundreds of dollars a month."""
     if t.status in STATUS_EXCLUDE or (t.category or "") in NON_SPEND_CATEGORIES:
         return False
+    if getattr(t, "jar_id", None):
+        return False  # a jar absorbed this — the pot went down, the line stays whole
     if t.amount < 0:
         return True
     return getattr(t, "inflow_kind", None) in T.CANCELS_SPEND

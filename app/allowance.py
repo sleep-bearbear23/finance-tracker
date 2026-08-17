@@ -24,6 +24,7 @@ import json
 from datetime import date, timedelta
 
 from . import budget
+from . import jars as JARS
 from . import fixed as FX
 from . import networth
 from . import period as P
@@ -292,13 +293,13 @@ def _plan(income_after_tax: float, fixed_p: float, savings_p: float) -> dict:
 
 
 def _cushion(free: float, floor: float, periods_to_money: int,
-             rung: str | None = None) -> dict:
+             rung: str | None = None, held_label: str = "守住的水位") -> dict:
     """Expected income enters here and ONLY here — as `periods_to_money`, the number of
     half-months the pile has to stretch. A bigger booked gig makes the wait shorter; it
     never makes the pile bigger."""
     n = max(1, periods_to_money)
     val = (free - floor) / n
-    held = f"守住的水位 ${floor:,.0f}" + (f"（{rung}）" if rung else "")
+    held = f"{held_label} ${floor:,.0f}" + (f"（{rung}）" if rung else "")
     return {"name": "水位", "value": round(val, 2),
             "why": f"（可動用 ${free:,.0f} − {held}）÷ 撐 {n} 期"}
 
@@ -458,15 +459,24 @@ async def compute(session, key: str | None = None) -> dict:
     emerg_target = emerg["target"]
     rungs = ladder(survival_monthly, emerg_target)
 
-    # Cash Momo could actually deploy: liquid, minus the card she owes, minus tax that
-    # isn't hers. The emergency fund stays IN — the ladder is what protects it.
-    reserve_total = round(nw["spendable"] - nw["debts"] - tax_st["outstanding"], 2)
-    # WHERE SHE IS versus WHAT SHE DEFENDS. These used to be the same value, which is what
-    # made the allowance a sawtooth — see defended_floor(). Standing is the scoreboard now
-    # and has no effect on the number.
-    standing = rung_below(rungs, reserve_total)
+    # ONE subtraction. Everything spoken for — tax, the three reserve pots, the drips,
+    # the goals — comes off the pile in exactly one place: jars.spoken_for(). Before the
+    # jars are seeded it substitutes the legacy defended rung, so the deploy→重掃歷史
+    # window behaves exactly like the old engine instead of briefly reading richer.
     dm = await defend_months(session)
-    floor = defended_floor(survival_monthly, dm, reserve_total)
+    pool = round(nw["spendable"] - nw["debts"], 2)
+    _legacy_floor = defended_floor(survival_monthly, dm,
+                                   round(pool - tax_st["outstanding"], 2))
+    sf = await JARS.spoken_for(session, tax_outstanding=tax_st["outstanding"],
+                               legacy_floor=_legacy_floor)
+    available = round(pool - sf["total"], 2)
+    jar_breach = JARS.breach(pool, sf)
+    _floor_jar = next((j for j in sf["jars"] if j.get("kind") == "floor"), None)
+    floor = round(float(_floor_jar["balance"]) if _floor_jar else 0.0, 2)
+    # The ladder is a scoreboard of what protects her: the free water plus the three
+    # reserve pots. Tax and goal money is spoken for elsewhere and doesn't defend anyone.
+    reserve_total = round(available + sf["reserve"], 2)
+    standing = rung_below(rungs, reserve_total)
     defended = next((r for r in rungs if abs(r["months"] - dm) < 0.05), None)
 
     periods_out, next_money = await _periods_to_money(session, today)
@@ -488,7 +498,7 @@ async def compute(session, key: str | None = None) -> dict:
     # 15-day period, so she gets a third of the period's number — not all of it.
     lenses = [_scale(L, frac) for L in (
         _plan(income_after_tax, fixed_p, savings_p),
-        _cushion(reserve_total, floor, periods_out, defended["name"] if defended else None),
+        _cushion(pool, sf["total"], periods_out, held_label="有主的錢"),
         _trajectory(recent_med, drift, observations=len(recent_rows)),
     )]
     plan_l, cush_l, traj_l = lenses
@@ -574,6 +584,9 @@ async def compute(session, key: str | None = None) -> dict:
         "pct_used": round(100 * spent / recommended, 1) if recommended > 0 else None,
 
         "reserve_total": reserve_total,
+        "spoken_for": sf,
+        "available": available,
+        "jar_breach": jar_breach,
         "standing_rung": standing,
         "defend_months": dm,
         "defended_rung": defended,

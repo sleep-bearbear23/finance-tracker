@@ -18,6 +18,7 @@ _COLUMNS: dict[str, dict[str, str]] = {
         "effective_at": "TIMESTAMP WITH TIME ZONE",
         "project": "VARCHAR(64)",
         "claim": "VARCHAR(8)",
+        "jar_id": "VARCHAR(24)",
     },
 }
 

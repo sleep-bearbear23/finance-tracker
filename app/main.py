@@ -13,9 +13,12 @@ from . import (
     agent,
     alerts,
     allowance,
+    budget,
+    changelog,
     cleanup,
     dashboard,
     enrichment,
+    jars,
     line_client,
     llm,
     memory,
@@ -167,6 +170,13 @@ async def _snapshot_job():
             await dashboard.write_snapshot(s)
         except Exception as e:
             print(f"[snapshot] error: {e!r}")
+        try:  # sinking-fund drips — once per half-month, no matter how often this runs
+            async with changelog.watching(s, tool="jars_accrue", actor="scheduler",
+                                          source_text="每期自動：預留 DMV／修車"):
+                for line in await jars.accrue(s, budget.current_key()):
+                    print(line)
+        except Exception as e:
+            print(f"[jars] accrue error: {e!r}")
 
 
 async def _reminder_job():
@@ -248,6 +258,34 @@ async def run_maintenance() -> list[str]:
         if iv:
             say(f"[invoices] {iv}")
             await opsroom.say(f"🧾 發票匯入 — {iv}")
+
+        # 有主的錢 — build the jars once, from her real numbers, with the arithmetic in
+        # the receipt. Momo's decisions: 地板 = today's rung, 緊急預備金 = Apple Savings
+        # − 稅 − 地板 (she named the savings account the reserve stack), the rest $0
+        # until 期末結算. See fin/_design-jars-2026-08-17.md.
+        if not await jars.seeded(s):
+            res = await allowance.compute(s)  # read-only; pre-seed = legacy engine
+            from . import accounts as _acct
+            reg = await _acct.registry(s)
+            gs = next((float(a["balance"] or 0) for a in reg.values()
+                       if a.get("kind") == "cash"
+                       and ("goldman" in (a.get("name") or "").lower()
+                            or "gs savings" in (a.get("name") or "").lower())), 0.0)
+            sp_old = float(await get_kv(s, "cfg_season_pot") or 0)
+            async with changelog.watching(s, tool="jars_seed", actor="maintenance",
+                                          source_text="重掃歷史：建立有主的錢"):
+                for line in await jars.seed(
+                        s, floor_amount=res["defended_floor"], gs_balance=gs,
+                        tax_outstanding=res["tax"]["outstanding"],
+                        emergency_target=res["emergency"]["target"], season_pot=sp_old):
+                    say(line)
+            # the $20k question, decided: the target is the volatility model's again
+            if await get_kv(s, "cfg_emergency_target"):
+                async with changelog.watching(s, tool="jars_seed_unpin",
+                                              actor="maintenance",
+                                              source_text="重掃歷史：緊急預備金目標改回自動"):
+                    await set_kv(s, "cfg_emergency_target", "")
+                say("[jars] 緊急預備金目標不再寫死 $20,000，改回用你自己的收入波動算（3–9 個月）")
 
     return log
 
