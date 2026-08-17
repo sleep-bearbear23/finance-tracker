@@ -684,9 +684,12 @@ async def api_settle_get(request: Request):
                 "spare": {k: sp[k] for k in ("pot", "water", "total")},
                 "proposal": ST.propose(sp["pot"], sp["jars"]),
                 "objective": await ST.objective(s),
+                "funds": await ST.fund_options(s),
+                "scored": await ST.last_quarter_objectives(s),
                 # same three questions, same ids (so the answers stay a comparable
                 # series) — only the unit word changes at a season boundary
-                "questions": [{"id": k, "q": qq.replace("這一期", "這一季")}
+                "questions": [{"id": k,
+                               "q": qq.replace("這一期", "這一季").replace("下一期", "下一季")}
                               for k, qq in ST.REFLECTION],
                 "noticed": None,
                 "last": await ST.last_reflection(s),
@@ -745,7 +748,9 @@ async def api_settle_post(request: Request):
                         receipts.append(out["receipt"])
                 await ST.record(s, key, pocket=total, destination="allocated",
                                 reflection=reflection, kind="quarter",
-                                allocations=allocs, objective=body.get("objective") or None)
+                                allocations=allocs,
+                                objective=(body.get("objectives")
+                                           or ([body["objective"]] if body.get("objective") else [])))
             return {"ok": True, "moved": "；".join(receipts) or None, "still_awaiting": []}
 
         clo = await allowance.closure(s, key)

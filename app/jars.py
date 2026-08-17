@@ -22,6 +22,7 @@ Design decisions on record (fin/_design-jars-2026-08-17.md):
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from .db import get_kv, set_kv
 
@@ -31,7 +32,7 @@ SEED_FLAG = "jars_seeded_v1"
 #: reserve pots protect survival; goal pots hold plans. The ladder scoreboard counts
 #: reserves as part of the pile she's standing on; goals are already-spoken-for money.
 RESERVE_KINDS = ("contingency", "floor", "emergency")
-GOAL_KINDS = ("sinking", "season", "experiment")
+GOAL_KINDS = ("sinking", "season", "experiment", "goal")
 
 #: display/breach order — which pot is effectively being eaten first when cash dips
 #: below the spoken-for total. Tax deliberately last: that was never her money.
@@ -176,6 +177,105 @@ async def seed(session, *, floor_amount: float, gs_balance: float,
     log.append("[jars] 短期應急、DMV、修車、實驗都從 $0 開始——結算的時候由你分配；"
                "DMV 跟修車從這期開始每期自動滴 $15.46 / $50.00")
     return log
+
+
+# ── making a new jar ─────────────────────────────────────────────────────────
+
+def _slug(name: str, taken: set[str] | None = None) -> str:
+    """A readable id. CJK is kept — stripping it turned 「台灣旅費」 into the id "jar",
+    and the next Chinese-named jar would have collided with it."""
+    import re as _re
+    s = _re.sub(r"[^a-z0-9一-鿿]+", "-", (name or "").lower()).strip("-") or "jar"
+    if taken and s in taken:
+        n = 2
+        while f"{s}-{n}" in taken:
+            n += 1
+        s = f"{s}-{n}"
+    return s
+
+
+async def create(session, name: str, *, target: float | None = None,
+                 by_date: str | None = None, purpose: str | None = None) -> dict:
+    """Open a new jar by name — a declared intention, not a new bill.
+
+    Momo's rule, and it changes the shape of the thing: **a jar that exists is not money
+    that must be set aside.** A goal jar therefore never drips. It opens at $0, so it
+    subtracts nothing from the spending line, and stays that way until she deliberately
+    funds it at a settlement. Its target and date produce ADVICE — 「要在六月前存到
+    $2,500，等於每期 $125」 — which lives on the quarter page as an objective she can
+    choose, never as a deduction that happens to her.
+    """
+    jars = await load(session)
+    if not (name or "").strip():
+        return {"ok": False, "error": "罐子要有名字。"}
+    if any((j.get("name") or "").strip() == name.strip() for j in jars):
+        return {"ok": False, "error": f"已經有一個叫「{name}」的罐子了。"}
+    jid = _slug(name, {j.get("id") for j in jars})
+    if by_date:
+        try:
+            date.fromisoformat(by_date)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "日期要寫成 YYYY-MM-DD。"}
+    jar = {"id": jid, "name": name.strip(), "kind": "goal",
+           "purpose": purpose or "", "balance": 0.0,
+           "target": round(float(target), 2) if target else None,
+           "by_date": by_date or None,
+           "fill": "allocate",     # never a drip — see the docstring
+           "release": "ask"}
+    jars.append(jar)
+    await save(session, jars)
+    return {"ok": True, "jar": jar,
+            "receipt": (f"開了新罐子「{jar['name']}」"
+                        + (f"，目標 ${jar['target']:,.0f}" if jar.get("target") else "")
+                        + (f"，{by_date} 前" if by_date else "")
+                        + "。現在是 $0，不會動到你的額度——要放錢進去，結算的時候分配。")}
+
+
+async def remove(session, jid: str) -> dict:
+    jars = await load(session)
+    j = get(jars, jid)
+    if j is None:
+        return {"ok": False, "error": "沒有這個罐子。"}
+    if float(j.get("balance") or 0) > 0.01:
+        return {"ok": False, "error": f"「{j['name']}」裡面還有 ${j['balance']:,.2f}，"
+                                      "先把錢拿出來或分掉再刪。"}
+    jars = [x for x in jars if x.get("id") != jid]
+    await save(session, jars)
+    return {"ok": True, "receipt": f"刪掉了空罐子「{j['name']}」。"}
+
+
+def periods_until(by_date: str, today: date | None = None) -> int | None:
+    """How many half-months are left before a dated goal comes due."""
+    from . import period as P
+    try:
+        end = date.fromisoformat(by_date)
+    except (TypeError, ValueError):
+        return None
+    today = today or _today()
+    if end <= today:
+        return 0
+    return max(1, len(P.series(P.key_for(today), P.key_for(end))) - 1)
+
+
+def _today() -> date:
+    from .config import now
+    return now().date()
+
+
+def rate_advice(jar: dict, today: date | None = None) -> dict | None:
+    """What a dated goal would cost per period. ADVICE ONLY — nothing reads this into
+    the allowance. Returns None when the jar has no target or no date."""
+    tgt, by = jar.get("target"), jar.get("by_date")
+    if not tgt or not by:
+        return None
+    n = periods_until(by, today)
+    if n is None:
+        return None
+    gap = round(max(0.0, float(tgt) - float(jar.get("balance") or 0.0)), 2)
+    per = round(gap / n, 2) if n else gap
+    return {"periods": n, "gap": gap, "per_period": per, "by_date": by,
+            "text": (f"{by} 前要存到 ${float(tgt):,.0f}，還差 ${gap:,.0f}；"
+                     + (f"剩 {n} 期，等於每期 ${per:,.0f}。" if n else "已經到期了。"))}
 
 
 # ── sinking drips (idempotent per period key) ─────────────────────────────────

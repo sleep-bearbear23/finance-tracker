@@ -176,6 +176,71 @@ async def main() -> int:
         check("…and the session-open message says it out loud",
               "催回來" in om, om)
 
+    async with Session() as s:
+        print("\n[13] a jar Momo makes herself")
+        from app import jars, tools
+        from app import settle as ST
+        await jars.seed(s, floor_amount=0.0, gs_balance=0.0, tax_outstanding=0.0,
+                        emergency_target=0.0, season_pot=0.0)
+        r = await tools.run(s, "jar_create", {"name": "台灣旅費", "target": 2500,
+                                              "by_date": "2027-06-01"})
+        check("she can open one by talking", r.get("ok") is True, str(r.get("error")))
+        check("a CJK name keeps a usable id, not a collision magnet",
+              r["jar"]["id"] == "台灣旅費")
+        check("a goal jar never drips", r["jar"]["fill"] == "allocate")
+        check("…and starts empty, so it changes no number",
+              r["jar"]["balance"] == 0.0)
+        sf_before = await jars.spoken_for(s, tax_outstanding=0.0)
+        check("spoken_for is untouched by an unfunded goal",
+              abs(sf_before["total"]) < 0.01, str(sf_before["total"]))
+        check("the deadline becomes advice, with the arithmetic shown",
+              "每期" in (r.get("advice") or ""), r.get("advice"))
+
+        print("\n[14] she can be addressed by her own name")
+        out = await tools.run(s, "jar_allocate", {"jar": "台灣旅費", "amount": 300})
+        check("a jar Momo named is reachable in conversation", out.get("ok") is True)
+        out = await tools.run(s, "jar_allocate", {"jar": "台灣", "amount": 50})
+        check("…and by part of the name", out.get("ok") is True)
+        sf_after = await jars.spoken_for(s, tax_outstanding=0.0)
+        check("only money actually moved is spoken for",
+              abs(sf_after["total"] - 350.0) < 0.01, str(sf_after["total"]))
+
+        print("\n[15] funding a jar is an OBJECTIVE, not an obligation")
+        opts = await ST.fund_options(s)
+        tw = next((o for o in opts if o["id"] == "台灣旅費"), None)
+        check("the jar is offered as a quarter objective", tw is not None)
+        js = await jars.load(s)
+        fo = ST.fund_objective(jars.get(js, "台灣旅費"), 70)
+        check("70% is of the FULL target", abs(fo["target_balance"] - 1750.0) < 0.01,
+              str(fo["target_balance"]))
+        check("…and the hint says what that means from here",
+              abs(fo["add"] - 1400.0) < 0.01 and "已經有" in fo["why"], fo["why"])
+
+        print("\n[16] objectives carry rank, and get graded later")
+        objs = [{"type": "chase", "rank": "primary", "amount": 7200.0, "text": "催回 $7,200"},
+                {**fo, "rank": "secondary"}]
+        await ST.record(s, "Q:2026-05-31", pocket=0.0, destination="allocated",
+                        kind="quarter", objective=objs)
+        cur = await ST.current_objectives(s)
+        check("the primary comes back first", cur and cur[0]["rank"] == "primary", str(len(cur)))
+        om = await ST.open_message(s, budget.current_key(), None)
+        check("the period opens with the primary, secondaries quietly listed",
+              "主目標" in om and "次要的" in om, om)
+        scored = await ST.score(s, objs, date(2026, 3, 1), date(2026, 5, 31))
+        fund_row = next(o for o in scored if o["type"] == "fund")
+        check("a fund objective is graded from the jar itself",
+              fund_row["verdict"] == "missed" and "350" in fund_row["detail"],
+              fund_row["detail"])
+        await jars.allocate(s, "台灣旅費", 1400.0)
+        scored = await ST.score(s, objs, date(2026, 3, 1), date(2026, 5, 31))
+        fund_row = next(o for o in scored if o["type"] == "fund")
+        check("…and reads as done once the money is actually in",
+              fund_row["verdict"] == "hit", fund_row["detail"])
+        book = await ST.score(s, [{"type": "book", "text": "接 15 天"}],
+                              date(2026, 3, 1), date(2026, 5, 31))
+        check("what can't be measured says so instead of guessing a grade",
+              book[0]["verdict"] == "unknown" and book[0]["detail"], book[0]["detail"])
+
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         print("FAILED: " + ", ".join(FAIL))

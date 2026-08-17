@@ -603,6 +603,35 @@ SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "jar_create",
+        "description": (
+            "Open a NEW jar when Momo says she wants to save toward something — a trip, "
+            "a lens, a course, a deposit. A jar is a declared intention, NOT a bill: it "
+            "opens at $0, changes nothing about her spending allowance, and only holds "
+            "money she deliberately allocates at a settlement. If she names a date, pass "
+            "by_date; the tool reports what that implies per period as ADVICE. Do not "
+            "invent a target she didn't say — ask her instead."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "What she calls it, e.g. 台灣旅費."},
+                "target": {"type": "number", "description": "Total she wants in it, if she said."},
+                "by_date": {"type": "string", "description": "YYYY-MM-DD, if she named a deadline."},
+                "purpose": {"type": "string", "description": "One line, in her words."},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "jar_remove",
+        "description": "Delete an empty jar she no longer wants. Refuses if it holds money.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"jar": {"type": "string"}},
+            "required": ["jar"],
+        },
+    },
+    {
         "name": "jar_allocate",
         "description": (
             "Put money INTO one of the jars (有主的錢): 短期應急 / 地板 / 緊急預備金 / "
@@ -649,6 +678,8 @@ SCHEMAS: list[dict] = [
                 "target": {"type": "number"},
                 "annual": {"type": "number",
                            "description": "For DMV/修車: the yearly cost the drip works toward."},
+                "by_date": {"type": "string",
+                            "description": "YYYY-MM-DD deadline for a goal jar; empty string clears it."},
             },
             "required": ["jar"],
         },
@@ -1455,18 +1486,36 @@ _JAR_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _jar_resolve(which: str) -> tuple[str | None, list[str]]:
-    """Which jar does she mean? Ambiguity returns candidates and writes nothing (C-8)."""
+def _jar_resolve(which: str, stored: list[dict] | None = None) -> tuple[str | None, list[str]]:
+    """Which jar does she mean? Ambiguity returns candidates and writes nothing (C-8).
+
+    The STORED jars are the source of truth — a jar Momo made herself has to be
+    addressable by its own name, which a hard-coded alias table can never know about.
+    The table survives only as extra nicknames for the seeded seven.
+    """
     q = (which or "").strip().lower()
     if not q:
         return None, []
-    if q in _JAR_ALIASES:
+    names: dict[str, set[str]] = {}
+    for j in stored or []:
+        jid = j.get("id")
+        if not jid:
+            continue
+        names.setdefault(jid, set()).update(
+            {jid.lower(), (j.get("name") or "").strip().lower()} - {""})
+    for jid, extra in _JAR_ALIASES.items():
+        if stored is None or jid in names or jid == "tax":
+            names.setdefault(jid, set()).update({jid.lower(), *extra})
+    if q in names:
         return q, []
-    hits = [jid for jid, names in _JAR_ALIASES.items()
-            if any(q == n or q in n or n in q for n in names)]
+    exact = [jid for jid, ns in names.items() if q in ns]
+    if len(exact) == 1:
+        return exact[0], []
+    hits = [jid for jid, ns in names.items()
+            if any(q == n or q in n or n in q for n in ns)]
     if len(hits) == 1:
         return hits[0], []
-    return None, hits
+    return None, sorted(set(exact or hits))
 
 
 _JAR_NAME = {"contingency": "短期應急", "floor": "地板", "emergency": "緊急預備金",
@@ -1474,20 +1523,24 @@ _JAR_NAME = {"contingency": "短期應急", "floor": "地板", "emergency": "緊
              "tax": "預留的稅"}
 
 
-def _jar_pick_error(which: str, hits: list[str]) -> dict:
+def _jar_pick_error(which: str, hits: list[str], stored: list[dict] | None = None) -> dict:
+    look = {j.get("id"): (j.get("name") or j.get("id")) for j in (stored or [])}
+    nm = lambda k: look.get(k) or _JAR_NAME.get(k) or k          # noqa: E731
     if hits:
-        opts = "\n".join(f"{i + 1}. {_JAR_NAME[h]}" for i, h in enumerate(hits))
+        opts = "\n".join(f"{i + 1}. {nm(h)}" for i, h in enumerate(hits))
         return {"ok": False, "needs_pick": True,
                 "error": f"「{which}」可能是這幾罐，問她是哪一個，先不要動：\n{opts}"}
-    names = "、".join(_JAR_NAME[k] for k in _JAR_ALIASES if k != "tax")
-    return {"ok": False, "error": f"沒有叫「{which}」的罐子。現有的：{names}。"}
+    have = [nm(j.get("id")) for j in (stored or [])] or [
+        _JAR_NAME[k] for k in _JAR_ALIASES if k != "tax"]
+    return {"ok": False, "error": f"沒有叫「{which}」的罐子。現有的：{'、'.join(have)}。"}
 
 
 async def h_jar_allocate(s, rec, jar: str, amount: float):
     from . import jars as JR
-    jid, hits = _jar_resolve(jar)
+    stored = await JR.load(s)
+    jid, hits = _jar_resolve(jar, stored)
     if jid is None:
-        return _jar_pick_error(jar, hits)
+        return _jar_pick_error(jar, hits, stored)
     out = await JR.allocate(s, jid, float(amount))
     if out.get("ok"):
         rec.says(out["receipt"])
@@ -1497,9 +1550,10 @@ async def h_jar_allocate(s, rec, jar: str, amount: float):
 async def h_jar_draw(s, rec, jar: str, amount: float, plan: str | None = None):
     from . import allowance as _AL
     from . import jars as JR
-    jid, hits = _jar_resolve(jar)
+    stored = await JR.load(s)
+    jid, hits = _jar_resolve(jar, stored)
     if jid is None:
-        return _jar_pick_error(jar, hits)
+        return _jar_pick_error(jar, hits, stored)
     # the dip context is the ENGINE's, not the model's — the caller can't talk her way
     # into a bridge draw by describing the situation generously
     ctx = await _AL.compute(s)
@@ -1511,11 +1565,12 @@ async def h_jar_draw(s, rec, jar: str, amount: float, plan: str | None = None):
 
 
 async def h_jar_set(s, rec, jar: str, target: float | None = None,
-                    annual: float | None = None):
+                    annual: float | None = None, by_date: str | None = None):
     from . import jars as JR
-    jid, hits = _jar_resolve(jar)
+    stored = await JR.load(s)
+    jid, hits = _jar_resolve(jar, stored)
     if jid is None:
-        return _jar_pick_error(jar, hits)
+        return _jar_pick_error(jar, hits, stored)
     if jid == "tax":
         return {"ok": False, "error": "稅的目標是算出來的，不是設定的。"}
     js = await JR.load(s)
@@ -1529,6 +1584,10 @@ async def h_jar_set(s, rec, jar: str, target: float | None = None,
     if annual is not None and j.get("fill") == "drip":
         j["annual"] = round(float(annual), 2)
         said.append(f"一年 ${j['annual']:,.2f}（每期滴 ${j['annual'] / 24:,.2f}）")
+    if by_date is not None:
+        j["by_date"] = by_date or None
+        adv = JR.rate_advice(j)
+        said.append(f"期限 {by_date}" + (f"（{adv['text']}）" if adv else ""))
     if not said:
         return {"ok": False, "error": "要改什麼？target 或 annual 至少給一個。"}
     await JR.save(s, js)
@@ -1536,7 +1595,35 @@ async def h_jar_set(s, rec, jar: str, target: float | None = None,
     return {"ok": True, "jar": j["name"]}
 
 
+async def h_jar_create(s, rec, name: str, target: float | None = None,
+                       by_date: str | None = None, purpose: str | None = None):
+    from . import jars as JR
+    out = await JR.create(s, name, target=target, by_date=by_date, purpose=purpose)
+    if out.get("ok"):
+        rec.says(out["receipt"])
+        adv = JR.rate_advice(out["jar"])
+        if adv:
+            out["advice"] = adv["text"]
+    return out
+
+
+async def h_jar_remove(s, rec, jar: str):
+    from . import jars as JR
+    stored = await JR.load(s)
+    jid, hits = _jar_resolve(jar, stored)
+    if jid is None:
+        return _jar_pick_error(jar, hits, stored)
+    if jid in ("tax", "floor", "emergency", "contingency", "season"):
+        return {"ok": False, "error": "這是基本的罐子，不能刪。目標設 0 就好。"}
+    out = await JR.remove(s, jid)
+    if out.get("ok"):
+        rec.says(out["receipt"])
+    return out
+
+
 HANDLERS = {
+    "jar_create": h_jar_create,
+    "jar_remove": h_jar_remove,
     "jar_allocate": h_jar_allocate,
     "jar_draw": h_jar_draw,
     "jar_set": h_jar_set,

@@ -73,6 +73,20 @@
   .obj .t{font-weight:700;font-size:15.5px;color:var(--accent)}
   .obj .w{font-size:12.5px;color:var(--sub);margin-top:4px;line-height:1.6}
   .board{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:8px}
+  .fund{border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-top:8px;background:var(--bg)}
+  .fund .fl{display:flex;gap:8px;align-items:center;font-size:14px}
+  .fund .fs{font-size:11.5px;color:var(--sub);margin-top:3px;line-height:1.55}
+  .frow{display:flex;gap:10px;align-items:center;margin-top:8px}
+  .frow input[type=range]{flex:1}
+  .ftxt{font-size:12px;color:var(--accent);font-weight:640;white-space:nowrap}
+  .scored{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line)}
+  .scored:last-child{border-bottom:none}
+  .scored .v{flex:0 0 auto;font-size:11px;padding:3px 9px;border-radius:999px;
+    background:var(--bg);border:1px solid var(--line);color:var(--sub)}
+  .scored .v.hit{color:var(--good);border-color:rgba(90,125,90,.45)}
+  .scored .v.missed{color:var(--bad);border-color:rgba(180,85,63,.4)}
+  .scored .s{flex:1;min-width:0;font-size:13px}
+  .scored .s span{display:block;font-size:11.5px;color:var(--sub);margin-top:2px}
   .bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);
     border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));
     display:flex;gap:10px;align-items:center;justify-content:center}
@@ -91,7 +105,7 @@
 <script>
 const el=i=>document.getElementById(i);
 const F=n=>'$'+Math.round(n).toLocaleString();
-let D=null, dest='quarter', jar='', alloc={};
+let D=null, dest='quarter', jar='', alloc={}, funds={};
 
 async function load(){
   const r = await fetch('/api/settle'+location.search, {credentials:'same-origin'});
@@ -143,15 +157,39 @@ function renderQuarter(){
       </div>`:'<div class="hint">還沒有罐子可以分，先去訓練輪按一次重掃歷史。</div>'}
     </div>
 
-    ${ob?`<div class="card">
+    ${(D.scored&&D.scored.scored&&D.scored.scored.length)?`<div class="card">
+      <h2>上一季定的目標，後來呢</h2>
+      ${D.scored.scored.map(o=>`<div class="scored">
+        <span class="v ${o.verdict}">${{hit:'做到了',partial:'做到一半',missed:'沒做到',unknown:'沒打分數'}[o.verdict]||''}</span>
+        <span class="s"><b>${o.text||''}</b><span>${o.detail||''}</span></span></div>`).join('')}
+    </div>`:''}
+
+    <div class="card">
       <h2>下一季的目標</h2>
-      <div class="obj"><div class="t">${ob.text}</div><div class="w">${ob.why}</div></div>
-      <div class="hint">這是照這一期綁住你的那個原因來的——${
+      ${ob?`<div class="obj"><div class="t">${ob.text}</div><div class="w">${ob.why}</div></div>
+      <div class="hint">阿姨提的主目標，是照這一期綁住你的原因來的——${
         ob.type==='chase'?'錢卡在別人那，催得動':
         ob.type==='book'?'缺的是工作，排得進行事曆':
-        '花得比線兇，收得回來'}。想改成別的就直接改：</div>
-      <textarea id="objText" placeholder="不想用這個目標的話，寫你自己的">${ob.text}</textarea>
-    </div>`:''}
+        '花得比線兇，收得回來'}。不想用就直接改寫：</div>
+      <textarea id="objText">${ob.text}</textarea>`:'<div class="hint">這一季沒有明顯的主目標，自己寫一個：</div><textarea id="objText" placeholder="這一季最想達成的一件事"></textarea>'}
+
+      ${(D.funds||[]).length?`<div style="margin-top:14px">
+        <div class="qt">要不要順便把某個罐子當成目標？（次要的）</div>
+        <div class="hint">罐子放著不會扣你的錢；設成目標才代表這一季想補到那個程度。</div>
+        ${D.funds.map(f=>`
+          <div class="fund">
+            <label class="fl"><input type="checkbox" id="f_${f.id}" onchange="fundToggle('${f.id}')">
+              <b>${f.name}</b></label>
+            <div class="fs">現在 ${F(f.balance)} / 目標 ${F(f.target)}（${f.pct_now}%）${
+              f.advice?`<br>${f.advice}`:''}</div>
+            <div class="frow" id="fr_${f.id}" style="display:none">
+              <input type="range" min="10" max="100" step="5" value="${Math.min(100,Math.max(10,Math.round(f.pct_now/5)*5+30))}"
+                     id="fp_${f.id}" oninput="fundPct('${f.id}')">
+              <span id="ft_${f.id}" class="ftxt"></span>
+            </div>
+          </div>`).join('')}
+      </div>`:''}
+    </div>
 
     <div class="card">
       <h2>回顧一下（可以跳過）</h2>
@@ -165,6 +203,19 @@ function renderQuarter(){
     ${backupCard(b)}`;
   el('go').textContent='結算，開新的一季';
   updateLeft();
+}
+
+function fundToggle(id){
+  const on=el('f_'+id).checked;
+  el('fr_'+id).style.display = on?'flex':'none';
+  if(on) fundPct(id); else delete funds[id];
+}
+function fundPct(id){
+  const f=(D.funds||[]).find(x=>x.id===id); if(!f) return;
+  const pct=parseFloat(el('fp_'+id).value)||0;
+  const want=Math.round(f.target*pct/100), add=Math.max(0,want-f.balance);
+  el('ft_'+id).textContent=`${pct}%　要再放 ${F(add)}`;
+  funds[id]={pct, want, add, name:f.name};
 }
 
 function setAlloc(id,v){ alloc[id]=Math.max(0,parseFloat(v)||0); updateLeft(); }
@@ -258,9 +309,17 @@ async function submit(){
   for(const q of (D.questions||[])){ const t=el('r_'+q.id); if(t&&t.value.trim()) reflection[q.id]=t.value.trim(); }
   const nt=el('r_noticed'); if(nt&&nt.value.trim()) reflection.noticed=nt.value.trim();
   if(D.noticed) reflection.noticed_q=D.noticed;
+  let objectives=[];
+  const pt=(el('objText')||{}).value;
+  if(pt && pt.trim()) objectives.push({...(D.objective||{type:'custom'}), rank:'primary', text:pt.trim()});
+  for(const [id,f] of Object.entries(funds)){
+    objectives.push({type:'fund', rank:'secondary', jar:id, jar_name:f.name, pct:f.pct,
+      target_balance:f.want, add:f.add,
+      text:`這一季把「${f.name}」補到 ${f.pct}%（$${f.want.toLocaleString()}）`,
+      why:`罐裡已經有 $${f.balance||0}，這一季要再放 $${f.add.toLocaleString()}。`});
+  }
   const payload = D.kind==='quarter'
-    ? {key:D.key, kind:'quarter', allocations:alloc, reflection,
-       objective: D.objective ? {...D.objective, text:(el('objText')||{}).value || D.objective.text} : null}
+    ? {key:D.key, kind:'quarter', allocations:alloc, reflection, objectives}
     : {key:D.key, destination:dest, jar:jar, reflection};
   const r=await fetch('/api/settle',{method:'POST',credentials:'same-origin',
     headers:{'Content-Type':'application/json'},

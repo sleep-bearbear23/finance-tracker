@@ -108,7 +108,7 @@ async def record(session, key: str, *, pocket: float, destination: str,
         destination=destination or "carry",
         reflection=json.dumps(reflection or {}, ensure_ascii=False),
         allocations=json.dumps(allocations or {}, ensure_ascii=False),
-        objective=json.dumps(objective or {}, ensure_ascii=False),
+        objective=json.dumps(objective if objective is not None else [], ensure_ascii=False),
         note=note,
     )
     session.add(row)
@@ -292,6 +292,115 @@ async def objective(session) -> dict | None:
     return None
 
 
+async def fund_options(session) -> list[dict]:
+    """Goal jars Momo could aim at this quarter. A jar is an intention until she picks
+    it here — this is the only place a savings goal turns into an obligation, and she is
+    the one who does the turning."""
+    from . import jars as J
+    out = []
+    for j in await J.load(session):
+        if j.get("kind") not in ("goal", "experiment") or not j.get("target"):
+            continue
+        tgt = float(j["target"])
+        bal = float(j.get("balance") or 0.0)
+        row = {"id": j["id"], "name": j.get("name") or j["id"],
+               "target": round(tgt, 2), "balance": round(bal, 2),
+               "pct_now": round(100 * bal / tgt, 1) if tgt else 0.0,
+               "by_date": j.get("by_date")}
+        adv = J.rate_advice(j)
+        if adv:
+            row["advice"] = adv["text"]
+            row["per_period"] = adv["per_period"]
+        out.append(row)
+    return out
+
+
+def fund_objective(jar: dict, pct: float) -> dict:
+    """「這一季補到 70%」 — a percentage of the FULL target, with the remaining gap
+    spelled out so the number she is agreeing to is the number she has to find."""
+    tgt = float(jar.get("target") or 0)
+    bal = float(jar.get("balance") or 0)
+    want = round(tgt * (pct / 100.0), 2)
+    add = round(max(0.0, want - bal), 2)
+    return {"type": "fund", "jar": jar.get("id"), "jar_name": jar.get("name"),
+            "pct": pct, "target_balance": want, "add": add,
+            "text": f"這一季把「{jar.get('name')}」補到 {pct:.0f}%（${want:,.0f}）",
+            "why": (f"目標 ${tgt:,.0f} 的 {pct:.0f}% 是 ${want:,.0f}；"
+                    f"罐裡已經有 ${bal:,.0f}，所以這一季要再放 ${add:,.0f}。")}
+
+
+# ── did last quarter's objectives happen? ────────────────────────────────────
+
+def _verdict(done: float, need: float) -> str:
+    if need <= 0:
+        return "hit"
+    r = done / need
+    return "hit" if r >= 0.995 else ("partial" if r >= 0.5 else "missed")
+
+
+async def score(session, objs: list[dict], lo: date, hi: date) -> list[dict]:
+    """Measure each objective against what actually happened.
+
+    Where the data can't answer, the verdict is ``unknown`` and says why — Rule 2 applies
+    to grading as much as to forecasting. An objective marked 「做到了」 on a guess is
+    worse than one left open.
+    """
+    from . import jars as J
+    out = []
+    js = await J.load(session)
+    for o in objs or []:
+        row = {**o, "verdict": "unknown", "detail": ""}
+        t = o.get("type")
+        try:
+            if t == "fund":
+                jar = J.get(js, o.get("jar")) or {}
+                bal = float(jar.get("balance") or 0.0)
+                need = float(o.get("target_balance") or 0.0)
+                row["verdict"] = _verdict(bal, need)
+                row["detail"] = f"罐裡現在 ${bal:,.0f}，目標是 ${need:,.0f}"
+            elif t == "chase":
+                from . import budget as B
+                from .models import Transaction
+                rows = (await session.execute(select(Transaction))).scalars().all()
+                got = sum(t_.amount for t_ in rows
+                          if B.is_income(t_) and (d := B.eff_date(t_)) and lo <= d <= hi)
+                need = float(o.get("amount") or 0.0)
+                row["verdict"] = _verdict(got, need)
+                row["detail"] = f"這一季實際進帳 ${got:,.0f}，目標是催回 ${need:,.0f}"
+            elif t == "book":
+                row["detail"] = "接了幾天要看案子紀錄，這裡先不打分數"
+            elif t == "trim":
+                row["detail"] = "花費的比較要跨期算，這裡先不打分數"
+        except Exception as e:                       # never let grading break the page
+            row["detail"] = f"算不出來（{type(e).__name__}）"
+        out.append(row)
+    return out
+
+
+async def last_quarter_objectives(session) -> dict | None:
+    """The previous quarter's objectives, scored, for the page to show as a record."""
+    rows = (await session.execute(
+        select(Settlement).where(Settlement.kind == "quarter")
+        .order_by(Settlement.at.desc()))).scalars().all()
+    for r in rows:
+        try:
+            objs = json.loads(r.objective or "[]")
+        except (TypeError, ValueError):
+            objs = []
+        if isinstance(objs, dict):
+            objs = [objs]
+        if not objs:
+            continue
+        end = r.period_key[len(QKEY):] if r.period_key.startswith(QKEY) else None
+        try:
+            hi = date.fromisoformat(end) if end else now().date()
+        except (TypeError, ValueError):
+            hi = now().date()
+        lo = hi - timedelta(days=92)
+        return {"key": r.period_key, "scored": await score(session, objs, lo, hi)}
+    return None
+
+
 # ── the generated reflection question ────────────────────────────────────────
 
 async def noticed_question(session, key: str) -> str | None:
@@ -373,19 +482,29 @@ def close_notice(clo: dict, base_url: str) -> str:
             "\n（結算完才會開下一期的額度，帳還是照記，不用擔心。）")
 
 
-async def current_objective(session) -> dict | None:
-    """The objective set at the last quarter close, if there is one."""
+async def current_objectives(session) -> list[dict]:
+    """This quarter's objectives, primary first. Stored as a list since Momo asked for
+    one 主目標 plus a couple of 次目標 — importance stated up front rather than inferred
+    later from which one she happened to chase."""
     rows = (await session.execute(
         select(Settlement).where(Settlement.kind == "quarter")
         .order_by(Settlement.at.desc()))).scalars().all()
     for r in rows:
         try:
-            o = json.loads(r.objective or "{}")
+            objs = json.loads(r.objective or "[]")
         except (TypeError, ValueError):
-            o = {}
-        if o.get("text"):
-            return o
-    return None
+            objs = []
+        if isinstance(objs, dict):                     # pre-list settlements
+            objs = [objs] if objs.get("text") else []
+        objs = [o for o in objs if o.get("text")]
+        if objs:
+            return sorted(objs, key=lambda o: 0 if o.get("rank") == "primary" else 1)
+    return []
+
+
+async def current_objective(session) -> dict | None:
+    objs = await current_objectives(session)
+    return objs[0] if objs else None
 
 
 async def open_message(session, key: str, quarter: dict | None = None) -> str:
@@ -406,7 +525,10 @@ async def open_message(session, key: str, quarter: dict | None = None) -> str:
                        + (f"（大概 {quarter['days_needed']:.0f} 天工作）"
                           if quarter.get("days_needed") else "")
                        + "。")
-    obj = await current_objective(session)
-    if obj and obj.get("text"):
-        out.append(f"這一季你自己定的目標：{obj['text']}。")
+    objs = await current_objectives(session)
+    if objs:
+        out.append(f"這一季你自己定的主目標：{objs[0]['text']}。")
+        rest = [o["text"] for o in objs[1:]]
+        if rest:
+            out.append("次要的：" + "、".join(rest) + "。")
     return "\n".join(out)
